@@ -49,8 +49,7 @@ type DoOp<AppState, Payloads extends PayloadsBase> = (
 
 type UndoOp<AppState, Payloads extends PayloadsBase> = (
   state: AppState,
-  forward: Payloads["forward"],
-  backward: Payloads["backward"],
+  payloads: Payloads,
 ) => AppState;
 
 export class SyncState<AppState, Payloads extends PayloadsBase> {
@@ -207,11 +206,10 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
     const appliedOp = this.headAppliedOp;
     if (appliedOp === undefined)
       throw new AssertFailed("Attempt to undo but no ops");
-    const appState1 = this.undoOp(
-      this.appState,
-      appliedOp.op.forward,
-      appliedOp.backward,
-    );
+    const appState1 = this.undoOp(this.appState, {
+      forward: appliedOp.op.forward,
+      backward: appliedOp.backward,
+    } as Payloads);
     const previousHeadForDevice = appliedOp.op.prev;
     const deviceOps1 = previousHeadForDevice
       ? mapWith(this.deviceOps, appliedOp.op.deviceId, previousHeadForDevice)

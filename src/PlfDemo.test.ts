@@ -2,6 +2,7 @@ import {DeviceId, Op, SyncState} from "./PlfDemo";
 import {asType, RoArray, RoMap, RoSet, setWithout} from "./helper/Collection";
 import {CountingClock} from "./helper/Clock.testing";
 import {expectDeepEqual, expectIdentical} from "./helper/Shared.testing";
+import {AssertFailed} from "./helper/Assert";
 
 describe("PlfDemo", () => {
   const deviceA = DeviceId.create("a");
@@ -19,7 +20,7 @@ describe("PlfDemo", () => {
       (state, deviceId, forward, ensureMerged) => {
         return {state: [...state, forward], backward: undefined};
       },
-      (state, forward, backward) => {
+      (state, p) => {
         return state.slice(0, -1);
       },
       RoArray<string>(),
@@ -124,21 +125,21 @@ describe("PlfDemo", () => {
           };
         }
       },
-      (state, forward, backward) => {
-        if (forward.type === "add")
+      (state, p) => {
+        if (p.forward.type === "add") {
           return {
             ...state,
             tokens: state.tokens.slice(0, -1),
           };
-        else {
+        } else if (p.forward.type === "remove writer") {
+          p = p as RemoveWriter;
           return {
             ...state,
-            // TODO: get type guards working for `backward`.
-            removedWriters: (backward as boolean)
+            removedWriters: p.backward
               ? state.removedWriters
-              : setWithout(state.removedWriters, forward.finalOp.deviceId),
+              : setWithout(state.removedWriters, p.forward.finalOp.deviceId),
           };
-        }
+        } else throw new AssertFailed("Unknown op type");
       },
       {tokens: RoArray<string>(), removedWriters: RoSet()},
     );
