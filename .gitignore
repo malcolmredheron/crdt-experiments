@@ -1,0 +1,13 @@
+# npm
+node_modules/
+
+# IJ
+.idea/
+*.iml
+
+# Emacs
+*~
+
+# Parcel
+.parcel-cache/
+dist/

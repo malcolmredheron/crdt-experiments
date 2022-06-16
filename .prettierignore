@@ -1,0 +1,12 @@
+/*
+!/*.js
+!/*.json
+!/*.ts
+!/src/
+
+*.conf
+*.crt
+*.env
+*.key
+*.sh
+Dockerfile

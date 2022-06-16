@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "strict": true,
+    "esModuleInterop": true,
+
+    // Output
+    "module": "commonjs",
+    "target": "ES2020",
+    "sourceMap": true,
+    "lib": ["ES2020"]
+  },
+
+  "ts-node": {
+    // Load files, include and exclude from tsconfig.json on startup
+    "files": true
+  },
+
+  "include": ["src/**/*"],
+  "exclude": ["node_modules"]
+}
