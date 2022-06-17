@@ -174,12 +174,14 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
         // `this`, not `state`, so that doOp can't call ensureMerged and then
         // skip the op. If this happens, we'll drop the results of ensureMerged.
         if (doOpReturnValue === "skip") return this;
+
         const {state: appState1, backward} = doOpReturnValue;
         if (state.deviceOps.get(op.deviceId) !== op.prev) {
           throw new AssertFailed(
             "Attempt to apply an op without its predecessor",
           );
         }
+
         return new SyncState(
           state.doOp,
           state.undoOp,
