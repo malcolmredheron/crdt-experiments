@@ -32,49 +32,92 @@ type AppliedOp<Payloads extends PayloadsBase> = Readonly<{
 
   op: Op<Payloads>;
   backward: Payloads["backward"];
-  backwardRemoteHeadOps: RoArray<Op<Payloads>>;
 }>;
 
 type DoOp<AppState, Payloads extends PayloadsBase> = (
   state: AppState,
   deviceId: DeviceId,
   forward: Payloads["forward"],
-  ensureMerged: (headRemoteOp: Op<Payloads>) => void,
-) =>
-  | {
-      state: AppState;
-      backward: Payloads["backward"];
-    }
-  | "skip";
+) => {
+  state: AppState;
+  backward: Payloads["backward"];
+};
 
 type UndoOp<AppState, Payloads extends PayloadsBase> = (
   state: AppState,
   payloads: Payloads,
 ) => AppState;
 
+type DesiredDeviceHeads<AppState, Payloads extends PayloadsBase> = (
+  state: AppState,
+) => RoMap<DeviceId, "open" | Op<Payloads>>;
+
 export class SyncState<AppState, Payloads extends PayloadsBase> {
   static create<AppState, Payloads extends PayloadsBase>(
     doOp: DoOp<AppState, Payloads>,
     undoOp: UndoOp<AppState, Payloads>,
+    desiredDeviceHeads: DesiredDeviceHeads<AppState, Payloads>,
     appState: AppState,
   ): SyncState<AppState, Payloads> {
-    return new SyncState(doOp, undoOp, appState, undefined, RoMap());
+    return new SyncState(
+      doOp,
+      undoOp,
+      desiredDeviceHeads,
+      appState,
+      undefined,
+      RoMap(),
+    );
   }
 
   private constructor(
     readonly doOp: DoOp<AppState, Payloads>,
     readonly undoOp: UndoOp<AppState, Payloads>,
+    readonly desiredDeviceHeads: DesiredDeviceHeads<AppState, Payloads>,
+
     readonly appState: AppState,
     readonly headAppliedOp: AppliedOp<Payloads> | undefined,
-    readonly deviceOps: RoMap<DeviceId, Op<Payloads>>,
+    readonly deviceHeads: RoMap<DeviceId, Op<Payloads>>,
   ) {}
 
-  // TODO: We'd like to be able to remove all ops from another device, but this
-  // method can't do that because it needs the device id from the op.
-  mergeFrom(headRemoteOp: Op<Payloads>): SyncState<AppState, Payloads> {
+  update(
+    remoteHeads: RoMap<DeviceId, Op<Payloads>>,
+  ): SyncState<AppState, Payloads> {
+    const desiredHeads = this.desiredDeviceHeads(this.appState);
+
+    // Add/update heads.
+    for (const [deviceId, desiredHead] of desiredHeads.entries()) {
+      if (desiredHead === "open") {
+        const remoteHead = remoteHeads.get(deviceId);
+        if (remoteHead && this.deviceHeads.get(deviceId) !== remoteHead) {
+          const state1 = this.mergeFrom(remoteHead.deviceId, remoteHead);
+          return state1.update(remoteHeads);
+        }
+      } else {
+        if (this.deviceHeads.get(deviceId) !== desiredHead) {
+          const state1 = this.mergeFrom(desiredHead.deviceId, desiredHead);
+          return state1.update(remoteHeads);
+        }
+      }
+    }
+
+    // Remove heads.
+    for (const [deviceId] of this.deviceHeads) {
+      if (!desiredHeads.has(deviceId)) {
+        const state1 = this.mergeFrom(deviceId, undefined);
+        return state1.update(remoteHeads);
+      }
+    }
+
+    return this;
+  }
+
+  private mergeFrom(
+    deviceId: DeviceId,
+    headRemoteOp: undefined | Op<Payloads>,
+  ): SyncState<AppState, Payloads> {
     const timestampToUndoPast = SyncState.earliestDivergentTimestamp(
       headRemoteOp,
-      this.deviceOps.get(headRemoteOp.deviceId),
+      this.deviceHeads.get(deviceId),
     );
 
     const {state: state1, undoneOps} =
@@ -88,10 +131,7 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
       newRemoteOps.push(remoteOp);
     }
     const opsToApply = arraySortedByKey(
-      [
-        ...undoneOps.filter((op) => op.deviceId !== headRemoteOp.deviceId),
-        ...newRemoteOps,
-      ],
+      [...undoneOps.filter((op) => op.deviceId !== deviceId), ...newRemoteOps],
       (op) => value(op.timestamp),
     );
 
@@ -150,58 +190,25 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
   }
 
   private doOnce(op: Op<Payloads>): SyncState<AppState, Payloads> {
-    class ReplaceStartingState extends Error {
-      constructor(readonly state: SyncState<AppState, Payloads>) {
-        super("ReplaceStartingState");
-      }
-    }
-    const oldRemoteHeadOps = new Array<Op<Payloads>>();
-    for (let state: SyncState<AppState, Payloads> = this; ; ) {
-      try {
-        const ensureMerged = (headRemoteOp: Op<Payloads>): void => {
-          const exisingRemoteOp = state.deviceOps.get(headRemoteOp.deviceId);
-          if (exisingRemoteOp !== headRemoteOp) {
-            oldRemoteHeadOps.push(exisingRemoteOp!);
-            throw new ReplaceStartingState(state.mergeFrom(headRemoteOp));
-          }
-        };
-        const doOpReturnValue = state.doOp(
-          state.appState,
-          op.deviceId,
-          op.forward,
-          ensureMerged,
-        );
-        // `this`, not `state`, so that doOp can't call ensureMerged and then
-        // skip the op. If this happens, we'll drop the results of ensureMerged.
-        if (doOpReturnValue === "skip") return this;
+    const doOpReturnValue = this.doOp(this.appState, op.deviceId, op.forward);
 
-        const {state: appState1, backward} = doOpReturnValue;
-        if (state.deviceOps.get(op.deviceId) !== op.prev) {
-          throw new AssertFailed(
-            "Attempt to apply an op without its predecessor",
-          );
-        }
-
-        return new SyncState(
-          state.doOp,
-          state.undoOp,
-          appState1,
-          {
-            op,
-            backward,
-            prev: state.headAppliedOp,
-            backwardRemoteHeadOps: oldRemoteHeadOps,
-          },
-          mapWith(state.deviceOps, op.deviceId, op),
-        );
-      } catch (e) {
-        if (e instanceof ReplaceStartingState) {
-          state = e.state;
-          continue;
-        }
-        throw e;
-      }
+    const {state: appState1, backward} = doOpReturnValue;
+    if (this.deviceHeads.get(op.deviceId) !== op.prev) {
+      throw new AssertFailed("Attempt to apply an op without its predecessor");
     }
+
+    return new SyncState(
+      this.doOp,
+      this.undoOp,
+      this.desiredDeviceHeads,
+      appState1,
+      {
+        op,
+        backward,
+        prev: this.headAppliedOp,
+      },
+      mapWith(this.deviceHeads, op.deviceId, op),
+    );
   }
 
   private undoOnce(): SyncState<AppState, Payloads> {
@@ -214,19 +221,15 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
     } as Payloads);
     const previousHeadForDevice = appliedOp.op.prev;
     const deviceOps1 = previousHeadForDevice
-      ? mapWith(this.deviceOps, appliedOp.op.deviceId, previousHeadForDevice)
-      : mapWithout(this.deviceOps, appliedOp.op.deviceId);
-    const state1 = new SyncState(
+      ? mapWith(this.deviceHeads, appliedOp.op.deviceId, previousHeadForDevice)
+      : mapWithout(this.deviceHeads, appliedOp.op.deviceId);
+    return new SyncState(
       this.doOp,
       this.undoOp,
+      this.desiredDeviceHeads,
       appState1,
       appliedOp.prev,
       deviceOps1,
     );
-    const state2 = appliedOp.backwardRemoteHeadOps.reduce(
-      (state, remoteHeadOp) => state.mergeFrom(remoteHeadOp),
-      state1,
-    );
-    return state2;
   }
 }
