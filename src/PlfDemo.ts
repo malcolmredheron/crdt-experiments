@@ -12,53 +12,53 @@ import {AssertFailed} from "./helper/Assert";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 
-type PayloadsBase = Readonly<{
+type OpPayloadsBase = Readonly<{
   forward: unknown;
   backward: unknown;
 }>;
 
-export type Op<Payloads extends PayloadsBase> = Readonly<{
+export type Op<OpPayloads extends OpPayloadsBase> = Readonly<{
   deviceId: DeviceId;
   timestamp: Timestamp;
   // Previous op from the same device.
-  prev: Op<Payloads> | undefined;
+  prev: Op<OpPayloads> | undefined;
 
-  forward: Payloads["forward"];
+  forward: OpPayloads["forward"];
 }>;
 
-type AppliedOp<Payloads extends PayloadsBase> = Readonly<{
+type AppliedOp<OpPayloads extends OpPayloadsBase> = Readonly<{
   // Previous applied op on this device, regardless of the author.
-  prev: AppliedOp<Payloads> | undefined;
+  prev: AppliedOp<OpPayloads> | undefined;
 
-  op: Op<Payloads>;
-  backward: Payloads["backward"];
+  op: Op<OpPayloads>;
+  backward: OpPayloads["backward"];
 }>;
 
-type DoOp<AppState, Payloads extends PayloadsBase> = (
+type DoOp<AppState, OpPayloads extends OpPayloadsBase> = (
   state: AppState,
   deviceId: DeviceId,
-  forward: Payloads["forward"],
+  forward: OpPayloads["forward"],
 ) => {
   state: AppState;
-  backward: Payloads["backward"];
+  backward: OpPayloads["backward"];
 };
 
-type UndoOp<AppState, Payloads extends PayloadsBase> = (
+type UndoOp<AppState, OpPayloads extends OpPayloadsBase> = (
   state: AppState,
-  payloads: Payloads,
+  payloads: OpPayloads,
 ) => AppState;
 
-type DesiredDeviceHeads<AppState, Payloads extends PayloadsBase> = (
+type DesiredDeviceHeads<AppState, OpPayloads extends OpPayloadsBase> = (
   state: AppState,
-) => RoMap<DeviceId, "open" | Op<Payloads>>;
+) => RoMap<DeviceId, "open" | Op<OpPayloads>>;
 
-export class SyncState<AppState, Payloads extends PayloadsBase> {
-  static create<AppState, Payloads extends PayloadsBase>(
-    doOp: DoOp<AppState, Payloads>,
-    undoOp: UndoOp<AppState, Payloads>,
-    desiredDeviceHeads: DesiredDeviceHeads<AppState, Payloads>,
+export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
+  static create<AppState, OpPayloads extends OpPayloadsBase>(
+    doOp: DoOp<AppState, OpPayloads>,
+    undoOp: UndoOp<AppState, OpPayloads>,
+    desiredDeviceHeads: DesiredDeviceHeads<AppState, OpPayloads>,
     appState: AppState,
-  ): SyncState<AppState, Payloads> {
+  ): SyncState<AppState, OpPayloads> {
     return new SyncState(
       doOp,
       undoOp,
@@ -70,18 +70,18 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
   }
 
   private constructor(
-    readonly doOp: DoOp<AppState, Payloads>,
-    readonly undoOp: UndoOp<AppState, Payloads>,
-    readonly desiredDeviceHeads: DesiredDeviceHeads<AppState, Payloads>,
+    readonly doOp: DoOp<AppState, OpPayloads>,
+    readonly undoOp: UndoOp<AppState, OpPayloads>,
+    readonly desiredDeviceHeads: DesiredDeviceHeads<AppState, OpPayloads>,
 
     readonly appState: AppState,
-    readonly headAppliedOp: AppliedOp<Payloads> | undefined,
-    readonly deviceHeads: RoMap<DeviceId, Op<Payloads>>,
+    readonly headAppliedOp: AppliedOp<OpPayloads> | undefined,
+    readonly deviceHeads: RoMap<DeviceId, Op<OpPayloads>>,
   ) {}
 
   update(
-    remoteHeads: RoMap<DeviceId, Op<Payloads>>,
-  ): SyncState<AppState, Payloads> {
+    remoteHeads: RoMap<DeviceId, Op<OpPayloads>>,
+  ): SyncState<AppState, OpPayloads> {
     const desiredHeads = this.desiredDeviceHeads(this.appState);
 
     // Add/update heads.
@@ -113,8 +113,8 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
 
   private mergeFrom(
     deviceId: DeviceId,
-    headRemoteOp: undefined | Op<Payloads>,
-  ): SyncState<AppState, Payloads> {
+    headRemoteOp: undefined | Op<OpPayloads>,
+  ): SyncState<AppState, OpPayloads> {
     const timestampToUndoPast = SyncState.earliestDivergentTimestamp(
       headRemoteOp,
       this.deviceHeads.get(deviceId),
@@ -122,9 +122,9 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
 
     const {state: state1, undoneOps} =
       this.undoToBeforeTimestamp(timestampToUndoPast);
-    const newRemoteOps = new Array<Op<Payloads>>();
+    const newRemoteOps = new Array<Op<OpPayloads>>();
     for (
-      let remoteOp: Op<Payloads> | undefined = headRemoteOp;
+      let remoteOp: Op<OpPayloads> | undefined = headRemoteOp;
       remoteOp && remoteOp.timestamp >= timestampToUndoPast;
       remoteOp = remoteOp.prev
     ) {
@@ -138,9 +138,9 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
     return opsToApply.reduce((state, op) => state.doOnce(op), state1);
   }
 
-  static earliestDivergentTimestamp<Payloads extends PayloadsBase>(
-    left: Op<Payloads> | undefined,
-    right: Op<Payloads> | undefined,
+  static earliestDivergentTimestamp<OpPayloads extends OpPayloadsBase>(
+    left: Op<OpPayloads> | undefined,
+    right: Op<OpPayloads> | undefined,
   ): Timestamp {
     let earliestLeft = undefined;
     let earliestRight = undefined;
@@ -171,11 +171,11 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
   }
 
   private undoToBeforeTimestamp(timestampToUndoPast: Timestamp): {
-    state: SyncState<AppState, Payloads>;
-    undoneOps: RoArray<Op<Payloads>>;
+    state: SyncState<AppState, OpPayloads>;
+    undoneOps: RoArray<Op<OpPayloads>>;
   } {
-    const undoneOps = asType<Array<Op<Payloads>>>([]);
-    let state: SyncState<AppState, Payloads> = this;
+    const undoneOps = asType<Array<Op<OpPayloads>>>([]);
+    let state: SyncState<AppState, OpPayloads> = this;
     while (
       state.headAppliedOp &&
       state.headAppliedOp.op.timestamp >= timestampToUndoPast
@@ -189,7 +189,7 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
     };
   }
 
-  private doOnce(op: Op<Payloads>): SyncState<AppState, Payloads> {
+  private doOnce(op: Op<OpPayloads>): SyncState<AppState, OpPayloads> {
     const doOpReturnValue = this.doOp(this.appState, op.deviceId, op.forward);
 
     const {state: appState1, backward} = doOpReturnValue;
@@ -211,14 +211,14 @@ export class SyncState<AppState, Payloads extends PayloadsBase> {
     );
   }
 
-  private undoOnce(): SyncState<AppState, Payloads> {
+  private undoOnce(): SyncState<AppState, OpPayloads> {
     const appliedOp = this.headAppliedOp;
     if (appliedOp === undefined)
       throw new AssertFailed("Attempt to undo but no ops");
     const appState1 = this.undoOp(this.appState, {
       forward: appliedOp.op.forward,
       backward: appliedOp.backward,
-    } as Payloads);
+    } as OpPayloads);
     const previousHeadForDevice = appliedOp.op.prev;
     const deviceOps1 = previousHeadForDevice
       ? mapWith(this.deviceHeads, appliedOp.op.deviceId, previousHeadForDevice)

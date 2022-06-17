@@ -10,13 +10,13 @@ describe("PlfDemo", () => {
 
   describe("basic", () => {
     type AppState = RoArray<string>;
-    type Payloads = {
+    type OpPayloads = {
       forward: string;
       backward: undefined;
     };
 
     const clock = new CountingClock();
-    const state = SyncState.create<AppState, Payloads>(
+    const state = SyncState.create<AppState, OpPayloads>(
       (state, deviceId, forward) => {
         return {state: [...state, forward], backward: undefined};
       },
@@ -30,19 +30,19 @@ describe("PlfDemo", () => {
         ]),
       RoArray<string>(),
     );
-    const opA0 = asType<Op<Payloads>>({
+    const opA0 = asType<Op<OpPayloads>>({
       deviceId: deviceA,
       forward: "a0",
       timestamp: clock.now(),
       prev: undefined,
     });
-    const opA1 = asType<Op<Payloads>>({
+    const opA1 = asType<Op<OpPayloads>>({
       deviceId: deviceA,
       forward: "a1",
       timestamp: clock.now(),
       prev: opA0,
     });
-    const opB0 = asType<Op<Payloads>>({
+    const opB0 = asType<Op<OpPayloads>>({
       deviceId: deviceB,
       forward: "b0",
       timestamp: clock.now(),
@@ -54,7 +54,7 @@ describe("PlfDemo", () => {
       expectDeepEqual(state1.appState, RoArray([opA0.forward]));
       expectDeepEqual(
         state1.deviceHeads,
-        RoMap<DeviceId, Op<Payloads>>([[deviceA, opA0]]),
+        RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA0]]),
       );
     });
 
@@ -63,7 +63,7 @@ describe("PlfDemo", () => {
       expectDeepEqual(state1.appState, RoArray([opA0.forward, opA1.forward]));
       expectDeepEqual(
         state1.deviceHeads,
-        RoMap<DeviceId, Op<Payloads>>([[deviceA, opA1]]),
+        RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA1]]),
       );
     });
 
@@ -93,7 +93,7 @@ describe("PlfDemo", () => {
       expectDeepEqual(state2.appState, RoArray([opA0.forward]));
       expectDeepEqual(
         state2.deviceHeads,
-        RoMap<DeviceId, Op<Payloads>>([[deviceA, opA0]]),
+        RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA0]]),
       );
     });
   });
@@ -111,23 +111,23 @@ describe("PlfDemo", () => {
         type: "add writer";
         deviceId: DeviceId;
       };
-      backward: undefined | "open" | Op<Payloads>;
+      backward: undefined | "open" | Op<OpPayloads>;
     };
     type RemoveWriter = {
       forward: {
         type: "remove writer";
-        finalOp: Op<Payloads>;
+        finalOp: Op<OpPayloads>;
       };
-      backward: undefined | "open" | Op<Payloads>;
+      backward: undefined | "open" | Op<OpPayloads>;
     };
-    type Payloads = AddToken | AddWriter | RemoveWriter;
+    type OpPayloads = AddToken | AddWriter | RemoveWriter;
     type AppState = {
       tokens: RoArray<string>;
-      desiredWriters: RoMap<DeviceId, "open" | Op<Payloads>>;
+      desiredWriters: RoMap<DeviceId, "open" | Op<OpPayloads>>;
     };
 
     const clock = new CountingClock();
-    const state = SyncState.create<AppState, Payloads>(
+    const state = SyncState.create<AppState, OpPayloads>(
       (state, deviceId, forward) => {
         if (forward.type === "add")
           return {
@@ -194,44 +194,44 @@ describe("PlfDemo", () => {
       (state) => state.desiredWriters,
       {tokens: RoArray<string>(), desiredWriters: RoMap([[deviceB, "open"]])},
     );
-    const opA0 = asType<Op<Payloads>>({
+    const opA0 = asType<Op<OpPayloads>>({
       deviceId: deviceA,
       forward: {type: "add", token: "a0"},
       timestamp: clock.now(),
       prev: undefined,
     });
-    const opA1 = asType<Op<Payloads>>({
+    const opA1 = asType<Op<OpPayloads>>({
       deviceId: deviceA,
       forward: {type: "add", token: "a1"},
       timestamp: clock.now(),
       prev: opA0,
     });
-    const opB0 = asType<Op<Payloads>>({
+    const opB0 = asType<Op<OpPayloads>>({
       deviceId: deviceB,
       forward: {type: "add writer", deviceId: deviceA},
       timestamp: clock.now(),
       prev: undefined,
     });
-    const opB1 = asType<Op<Payloads>>({
+    const opB1 = asType<Op<OpPayloads>>({
       deviceId: deviceB,
       forward: {type: "remove writer", finalOp: opA0},
       timestamp: clock.now(),
       prev: opB0,
     });
-    const opB2 = asType<Op<Payloads>>({
+    const opB2 = asType<Op<OpPayloads>>({
       deviceId: deviceB,
       forward: {type: "add writer", deviceId: deviceA},
       timestamp: clock.now(),
       prev: opB1,
     });
-    const opB0Alternate = asType<Op<Payloads>>({
+    const opB0Alternate = asType<Op<OpPayloads>>({
       deviceId: deviceB,
       forward: {type: "add", token: "b0Alternate"},
       timestamp: clock.now(),
       // TODO: would be nice to be able to chain ops of different types.
       prev: undefined,
     });
-    const opA2 = asType<Op<Payloads>>({
+    const opA2 = asType<Op<OpPayloads>>({
       deviceId: deviceA,
       forward: {type: "add", token: "a2"},
       timestamp: clock.now(),
@@ -245,7 +245,7 @@ describe("PlfDemo", () => {
 
     it("includes ops from an added writer", () => {
       const state1 = state.update(
-        RoMap<DeviceId, Op<Payloads>>([
+        RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB0],
         ]),
@@ -253,7 +253,7 @@ describe("PlfDemo", () => {
       expectDeepEqual(state1.appState.tokens, RoArray(["a0", "a1"]));
       expectDeepEqual(
         state1.deviceHeads,
-        RoMap<DeviceId, Op<Payloads>>([
+        RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB0],
         ]),
@@ -262,7 +262,7 @@ describe("PlfDemo", () => {
 
     it("closes a writer", () => {
       const state1 = state.update(
-        RoMap<DeviceId, Op<Payloads>>([
+        RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB0],
         ]),
@@ -271,7 +271,7 @@ describe("PlfDemo", () => {
 
       // Close deviceA after opA0.
       const state2 = state.update(
-        RoMap<DeviceId, Op<Payloads>>([
+        RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB1],
         ]),
@@ -280,7 +280,7 @@ describe("PlfDemo", () => {
       expectDeepEqual(state2.appState.tokens, RoArray(["a0"]));
       expectDeepEqual(
         state2.deviceHeads,
-        RoMap<DeviceId, Op<Payloads>>([
+        RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA0],
           [deviceB, opB1],
         ]),
@@ -289,7 +289,7 @@ describe("PlfDemo", () => {
 
     it("reopens a closed writer", () => {
       const state1 = state.update(
-        RoMap<DeviceId, Op<Payloads>>([
+        RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB1],
         ]),
@@ -298,7 +298,7 @@ describe("PlfDemo", () => {
 
       // Reopen deviceA.
       const state2 = state.update(
-        RoMap<DeviceId, Op<Payloads>>([
+        RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB2],
         ]),
@@ -306,7 +306,7 @@ describe("PlfDemo", () => {
       expectDeepEqual(state2.appState.tokens, RoArray(["a0", "a1"]));
       expectDeepEqual(
         state2.deviceHeads,
-        RoMap<DeviceId, Op<Payloads>>([
+        RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB2],
         ]),
@@ -332,7 +332,7 @@ describe("PlfDemo", () => {
       expectDeepEqual(state2.appState.tokens, RoArray(["a0"]));
       expectDeepEqual(
         state2.deviceHeads,
-        RoMap<DeviceId, Op<Payloads>>([
+        RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA0],
           [deviceB, opB1],
         ]),
@@ -341,7 +341,7 @@ describe("PlfDemo", () => {
 
     it("undo Add/Remove Writer", () => {
       const state1 = state.update(
-        RoMap<DeviceId, Op<Payloads>>([
+        RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB1],
         ]),
@@ -349,7 +349,7 @@ describe("PlfDemo", () => {
       expectDeepEqual(state1.appState.tokens, RoArray(["a0"]));
       // This forces b0 and b1 to be undone.
       const state2 = state1.update(
-        RoMap<DeviceId, Op<Payloads>>([
+        RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB0Alternate],
         ]),
@@ -358,7 +358,7 @@ describe("PlfDemo", () => {
       expectDeepEqual(state2.appState.tokens, RoArray(["b0Alternate"]));
       expectDeepEqual(
         state2.deviceHeads,
-        RoMap<DeviceId, Op<Payloads>>([[deviceB, opB0Alternate]]),
+        RoMap<DeviceId, Op<OpPayloads>>([[deviceB, opB0Alternate]]),
       );
     });
   });
