@@ -1,10 +1,10 @@
-import {DeviceId, Op, SyncState} from "./PlfDemo";
+import {DeviceId, Op, SyncState} from "./SyncState";
 import {asType, mapWith, mapWithout, RoArray, RoMap} from "./helper/Collection";
 import {CountingClock} from "./helper/Clock.testing";
 import {expectDeepEqual, expectIdentical} from "./helper/Shared.testing";
 import {AssertFailed} from "./helper/Assert";
 
-describe("PlfDemo", () => {
+describe("SyncState", () => {
   const deviceA = DeviceId.create("a");
   const deviceB = DeviceId.create("b");
 
