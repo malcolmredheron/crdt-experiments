@@ -47,7 +47,7 @@ type UndoOp<AppState, OpPayloads extends OpPayloadsBase> = (
   backward: OpPayloads["backward"],
 ) => AppState;
 
-type DesiredDeviceHeads<AppState, OpPayloads extends OpPayloadsBase> = (
+type DesiredHeads<AppState, OpPayloads extends OpPayloadsBase> = (
   state: AppState,
 ) => RoMap<DeviceId, "open" | Op<OpPayloads>>;
 
@@ -55,13 +55,13 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
   static create<AppState, OpPayloads extends OpPayloadsBase>(
     doOp: DoOp<AppState, OpPayloads>,
     undoOp: UndoOp<AppState, OpPayloads>,
-    desiredDeviceHeads: DesiredDeviceHeads<AppState, OpPayloads>,
+    desiredHeads: DesiredHeads<AppState, OpPayloads>,
     appState: AppState,
   ): SyncState<AppState, OpPayloads> {
     return new SyncState(
       doOp,
       undoOp,
-      desiredDeviceHeads,
+      desiredHeads,
       appState,
       undefined,
       RoMap(),
@@ -71,17 +71,17 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
   private constructor(
     readonly doOp: DoOp<AppState, OpPayloads>,
     readonly undoOp: UndoOp<AppState, OpPayloads>,
-    readonly desiredDeviceHeads: DesiredDeviceHeads<AppState, OpPayloads>,
+    readonly desiredHeads: DesiredHeads<AppState, OpPayloads>,
 
     readonly appState: AppState,
-    readonly headAppliedOp: AppliedOp<OpPayloads> | undefined,
-    readonly deviceHeads: RoMap<DeviceId, Op<OpPayloads>>,
+    readonly appliedHead: AppliedOp<OpPayloads> | undefined,
+    readonly heads: RoMap<DeviceId, Op<OpPayloads>>,
   ) {}
 
   update(
     remoteHeads: RoMap<DeviceId, Op<OpPayloads>>,
   ): SyncState<AppState, OpPayloads> {
-    const abstractDesiredHeads = this.desiredDeviceHeads(this.appState);
+    const abstractDesiredHeads = this.desiredHeads(this.appState);
     const filteredAbstractDesiredHeads = RoMap(
       Array.from(abstractDesiredHeads.entries()).filter(([deviceId]) =>
         remoteHeads.has(deviceId),
@@ -96,40 +96,49 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
         ),
       ],
     );
-    if (SyncState.headsEqual(desiredHeads, this.deviceHeads)) return this;
+    if (SyncState.headsEqual(desiredHeads, this.heads)) return this;
 
-    let actualState: SyncState<AppState, OpPayloads> = this;
+    let appState = this.appState;
+    let appliedHead = this.appliedHead;
     const ops = new Array<Op<OpPayloads>>();
 
     let remainingDesiredHeads = desiredHeads;
-    let remainingActualHeads = this.deviceHeads;
+    let remainingActualHeads = this.heads;
     while (!SyncState.headsEqual(remainingDesiredHeads, remainingActualHeads)) {
-      const {prev: prevRemainingDesiredHeads, op: desiredOp} =
-        SyncState.previousHeads(remainingDesiredHeads);
-      const {prev: prevActualHeads, op: actualOp} =
-        SyncState.previousHeads(remainingActualHeads);
+      const {heads: nextRemainingDesiredHeads, op: desiredOp} =
+        SyncState.undoHeadsOnce(remainingDesiredHeads);
+      const {heads: nextActualHeads, op: actualOp} =
+        SyncState.undoHeadsOnce(remainingActualHeads);
 
       if (
         desiredOp &&
         (!actualOp || desiredOp.timestamp > actualOp.timestamp)
       ) {
-        remainingDesiredHeads = prevRemainingDesiredHeads;
+        remainingDesiredHeads = nextRemainingDesiredHeads;
         ops.push(desiredOp);
       } else if (
         actualOp &&
         (!desiredOp || actualOp.timestamp > desiredOp.timestamp)
       ) {
-        remainingActualHeads = prevActualHeads;
-        actualState = actualState.undoOnce();
+        remainingActualHeads = nextActualHeads;
+        ({appState, headAppliedOp: appliedHead} = SyncState.undoOnce(
+          this.undoOp,
+          appState,
+          appliedHead!,
+        ));
       } else if (
         desiredOp &&
         actualOp &&
         desiredOp.timestamp === actualOp.timestamp
       ) {
-        remainingDesiredHeads = prevRemainingDesiredHeads;
+        remainingDesiredHeads = nextRemainingDesiredHeads;
         ops.push(desiredOp);
-        remainingActualHeads = prevActualHeads;
-        actualState = actualState.undoOnce();
+        remainingActualHeads = nextActualHeads;
+        ({appState, headAppliedOp: appliedHead} = SyncState.undoOnce(
+          this.undoOp,
+          appState,
+          appliedHead!,
+        ));
       } else {
         throw new AssertFailed(
           "If neither op exists then the heads should be equal",
@@ -142,14 +151,14 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
         ({appState, headAppliedOp}, op) =>
           SyncState.doOnce(this.doOp, appState, headAppliedOp, op),
         {
-          appState: actualState.appState,
-          headAppliedOp: actualState.headAppliedOp,
+          appState: appState,
+          headAppliedOp: appliedHead,
         },
       );
     const this1 = new SyncState(
       this.doOp,
       this.undoOp,
-      this.desiredDeviceHeads,
+      this.desiredHeads,
       appState1,
       headAppliedOp1,
       desiredHeads,
@@ -171,13 +180,13 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
     return true;
   }
 
-  private static previousHeads<OpPayloads extends OpPayloadsBase>(
+  private static undoHeadsOnce<OpPayloads extends OpPayloadsBase>(
     heads: RoMap<DeviceId, Op<OpPayloads>>,
   ): {
     op: undefined | Op<OpPayloads>;
-    prev: RoMap<DeviceId, Op<OpPayloads>>;
+    heads: RoMap<DeviceId, Op<OpPayloads>>;
   } {
-    if (heads.size === 0) return {op: undefined, prev: heads};
+    if (heads.size === 0) return {op: undefined, heads};
 
     const [newestDeviceId, newestOp] = Array.from(heads.entries()).reduce(
       (winner, current) => {
@@ -186,7 +195,7 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
     );
     return {
       op: newestOp,
-      prev: newestOp.prev
+      heads: newestOp.prev
         ? mapWith(heads, newestDeviceId, newestOp.prev)
         : mapWithout(heads, newestDeviceId),
     };
@@ -209,26 +218,21 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
     };
   }
 
-  private undoOnce(): SyncState<AppState, OpPayloads> {
-    const appliedOp = this.headAppliedOp;
+  private static undoOnce<AppState, OpPayloads extends OpPayloadsBase>(
+    undoOp: UndoOp<AppState, OpPayloads>,
+    appState: AppState,
+    headAppliedOp: AppliedOp<OpPayloads>,
+  ): {
+    appState: AppState;
+    headAppliedOp: undefined | AppliedOp<OpPayloads>;
+  } {
+    const appliedOp = headAppliedOp;
     if (appliedOp === undefined)
       throw new AssertFailed("Attempt to undo but no ops");
-    const appState1 = this.undoOp(
-      this.appState,
-      appliedOp.op,
-      appliedOp.backward,
-    );
-    const previousHeadForDevice = appliedOp.op.prev;
-    const deviceOps1 = previousHeadForDevice
-      ? mapWith(this.deviceHeads, appliedOp.op.deviceId, previousHeadForDevice)
-      : mapWithout(this.deviceHeads, appliedOp.op.deviceId);
-    return new SyncState(
-      this.doOp,
-      this.undoOp,
-      this.desiredDeviceHeads,
-      appState1,
-      appliedOp.prev,
-      deviceOps1,
-    );
+    const appState1 = undoOp(appState, appliedOp.op, appliedOp.backward);
+    return {
+      appState: appState1,
+      headAppliedOp: appliedOp.prev,
+    };
   }
 }

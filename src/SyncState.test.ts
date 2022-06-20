@@ -53,7 +53,7 @@ describe("SyncState", () => {
       const state1 = state.update(RoMap([[deviceA, opA0]]));
       expectDeepEqual(state1.appState, RoArray([opA0.forward]));
       expectDeepEqual(
-        state1.deviceHeads,
+        state1.heads,
         RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA0]]),
       );
     });
@@ -62,7 +62,7 @@ describe("SyncState", () => {
       const state1 = state.update(RoMap([[deviceA, opA1]]));
       expectDeepEqual(state1.appState, RoArray([opA0.forward, opA1.forward]));
       expectDeepEqual(
-        state1.deviceHeads,
+        state1.heads,
         RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA1]]),
       );
     });
@@ -92,7 +92,7 @@ describe("SyncState", () => {
       const state2 = state1.update(RoMap([[deviceA, opA0]]));
       expectDeepEqual(state2.appState, RoArray([opA0.forward]));
       expectDeepEqual(
-        state2.deviceHeads,
+        state2.heads,
         RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA0]]),
       );
     });
@@ -240,7 +240,7 @@ describe("SyncState", () => {
 
     it("ignores ops from a non-writer", () => {
       const state1 = state.update(RoMap([[deviceA, opA1]]));
-      expectIdentical(state1.headAppliedOp, undefined);
+      expectIdentical(state1.appliedHead, undefined);
     });
 
     it("includes ops from an added writer", () => {
@@ -252,7 +252,7 @@ describe("SyncState", () => {
       );
       expectDeepEqual(state1.appState.tokens, RoArray(["a0", "a1"]));
       expectDeepEqual(
-        state1.deviceHeads,
+        state1.heads,
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB0],
@@ -279,7 +279,7 @@ describe("SyncState", () => {
       // a1 was excluded because b0 closed that device.
       expectDeepEqual(state2.appState.tokens, RoArray(["a0"]));
       expectDeepEqual(
-        state2.deviceHeads,
+        state2.heads,
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA0],
           [deviceB, opB1],
@@ -305,7 +305,7 @@ describe("SyncState", () => {
       );
       expectDeepEqual(state2.appState.tokens, RoArray(["a0", "a1"]));
       expectDeepEqual(
-        state2.deviceHeads,
+        state2.heads,
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB2],
@@ -331,7 +331,7 @@ describe("SyncState", () => {
       // Even a2, which came after b1, which closed device A, is gone.
       expectDeepEqual(state2.appState.tokens, RoArray(["a0"]));
       expectDeepEqual(
-        state2.deviceHeads,
+        state2.heads,
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA0],
           [deviceB, opB1],
@@ -357,7 +357,7 @@ describe("SyncState", () => {
 
       expectDeepEqual(state2.appState.tokens, RoArray(["b0Alternate"]));
       expectDeepEqual(
-        state2.deviceHeads,
+        state2.heads,
         RoMap<DeviceId, Op<OpPayloads>>([[deviceB, opB0Alternate]]),
       );
     });
