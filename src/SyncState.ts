@@ -1,13 +1,12 @@
 import {Timestamp} from "./helper/Timestamp";
 import {
-  arraySortedByKey,
   asType,
+  mapMapToMap,
   mapWith,
   mapWithout,
-  RoArray,
   RoMap,
 } from "./helper/Collection";
-import {TypedValue, value} from "./helper/TypedValue";
+import {TypedValue} from "./helper/TypedValue";
 import {AssertFailed} from "./helper/Assert";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
@@ -82,110 +81,96 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
   update(
     remoteHeads: RoMap<DeviceId, Op<OpPayloads>>,
   ): SyncState<AppState, OpPayloads> {
-    const desiredHeads = this.desiredDeviceHeads(this.appState);
-
-    // Add/update heads.
-    for (const [deviceId, desiredHead] of desiredHeads.entries()) {
-      if (desiredHead === "open") {
-        const remoteHead = remoteHeads.get(deviceId);
-        if (remoteHead && this.deviceHeads.get(deviceId) !== remoteHead) {
-          const state1 = this.mergeFrom(remoteHead.deviceId, remoteHead);
-          return state1.update(remoteHeads);
-        }
-      } else {
-        if (this.deviceHeads.get(deviceId) !== desiredHead) {
-          const state1 = this.mergeFrom(desiredHead.deviceId, desiredHead);
-          return state1.update(remoteHeads);
-        }
-      }
-    }
-
-    // Remove heads.
-    for (const [deviceId] of this.deviceHeads) {
-      if (!desiredHeads.has(deviceId)) {
-        const state1 = this.mergeFrom(deviceId, undefined);
-        return state1.update(remoteHeads);
-      }
-    }
-
-    return this;
-  }
-
-  private mergeFrom(
-    deviceId: DeviceId,
-    headRemoteOp: undefined | Op<OpPayloads>,
-  ): SyncState<AppState, OpPayloads> {
-    const timestampToUndoPast = SyncState.earliestDivergentTimestamp(
-      headRemoteOp,
-      this.deviceHeads.get(deviceId),
-    );
-
-    const {state: state1, undoneOps} =
-      this.undoToBeforeTimestamp(timestampToUndoPast);
-    const newRemoteOps = new Array<Op<OpPayloads>>();
-    for (
-      let remoteOp: Op<OpPayloads> | undefined = headRemoteOp;
-      remoteOp && remoteOp.timestamp >= timestampToUndoPast;
-      remoteOp = remoteOp.prev
-    ) {
-      newRemoteOps.push(remoteOp);
-    }
-    const opsToApply = arraySortedByKey(
-      [...undoneOps.filter((op) => op.deviceId !== deviceId), ...newRemoteOps],
-      (op) => value(op.timestamp),
-    );
-
-    return opsToApply.reduce((state, op) => state.doOnce(op), state1);
-  }
-
-  static earliestDivergentTimestamp<OpPayloads extends OpPayloadsBase>(
-    left: Op<OpPayloads> | undefined,
-    right: Op<OpPayloads> | undefined,
-  ): Timestamp {
-    let earliestLeft = undefined;
-    let earliestRight = undefined;
-    while (true) {
-      if (left === right)
-        // Either both undefined or both pointing to the same op
-        break;
-      if (left && (!right || left!.timestamp > right.timestamp)) {
-        earliestLeft = left;
-        left = left!.prev;
-        continue;
-      }
-      if (right && (!left || right.timestamp > left.timestamp)) {
-        earliestRight = right;
-        right = right.prev;
-        continue;
-      }
-    }
-    return Timestamp.create(
-      // Returns infinity if the array is empty, which is perfect -- no need to
-      // undo anything.
-      Math.min(
-        ...[earliestLeft, earliestRight]
-          .filter((op) => op !== undefined)
-          .map((op) => value(op!.timestamp)),
+    const abstractDesiredHeads = this.desiredDeviceHeads(this.appState);
+    const filteredAbstractDesiredHeads = RoMap(
+      Array.from(abstractDesiredHeads.entries()).filter(([deviceId, head]) =>
+        remoteHeads.has(deviceId),
       ),
     );
+    let desiredHeads = mapMapToMap(
+      filteredAbstractDesiredHeads,
+      (deviceId, openOrOp) => [
+        deviceId,
+        asType<Op<OpPayloads>>(
+          openOrOp === "open" ? remoteHeads.get(deviceId)! : openOrOp,
+        ),
+      ],
+    );
+    let actualHeads = this.deviceHeads;
+    let actualState: SyncState<AppState, OpPayloads> = this;
+    if (this.headsEqual(desiredHeads, actualHeads)) return this;
+
+    const ops = new Array<Op<OpPayloads>>();
+    while (!this.headsEqual(desiredHeads, actualHeads)) {
+      const {prev: prevDesiredHeads, op: desiredOp} =
+        this.previousHeads(desiredHeads);
+      const {prev: prevActualHeads, op: actualOp} =
+        this.previousHeads(actualHeads);
+
+      if (
+        desiredOp &&
+        (!actualOp || desiredOp.timestamp > actualOp.timestamp)
+      ) {
+        desiredHeads = prevDesiredHeads;
+        ops.push(desiredOp);
+      } else if (
+        actualOp &&
+        (!desiredOp || actualOp.timestamp > desiredOp.timestamp)
+      ) {
+        actualHeads = prevActualHeads;
+        actualState = actualState.undoOnce();
+      } else if (
+        desiredOp &&
+        actualOp &&
+        desiredOp.timestamp === actualOp.timestamp
+      ) {
+        desiredHeads = prevDesiredHeads;
+        ops.push(desiredOp);
+        actualHeads = prevActualHeads;
+        actualState = actualState.undoOnce();
+      } else {
+        throw new AssertFailed(
+          "If neither op exists then the heads should be equal",
+        );
+      }
+    }
+
+    const actualState1 = ops.reduceRight(
+      (state, op) => state.doOnce(op),
+      actualState,
+    );
+
+    return actualState1.update(remoteHeads);
   }
 
-  private undoToBeforeTimestamp(timestampToUndoPast: Timestamp): {
-    state: SyncState<AppState, OpPayloads>;
-    undoneOps: RoArray<Op<OpPayloads>>;
-  } {
-    const undoneOps = asType<Array<Op<OpPayloads>>>([]);
-    let state: SyncState<AppState, OpPayloads> = this;
-    while (
-      state.headAppliedOp &&
-      state.headAppliedOp.op.timestamp >= timestampToUndoPast
-    ) {
-      undoneOps.push(state.headAppliedOp.op);
-      state = state.undoOnce();
+  headsEqual(
+    left: RoMap<DeviceId, Op<OpPayloads>>,
+    right: RoMap<DeviceId, Op<OpPayloads>>,
+  ): boolean {
+    if (left.size !== right.size) return false;
+    for (const [deviceId, leftHead] of left) {
+      const rightHead = right.get(deviceId);
+      if (leftHead !== rightHead) return false;
     }
+    return true;
+  }
+
+  previousHeads(heads: RoMap<DeviceId, Op<OpPayloads>>): {
+    op: undefined | Op<OpPayloads>;
+    prev: RoMap<DeviceId, Op<OpPayloads>>;
+  } {
+    if (heads.size === 0) return {op: undefined, prev: heads};
+
+    const [newestDeviceId, newestOp] = Array.from(heads.entries()).reduce(
+      (winner, current) => {
+        return winner[1].timestamp > current[1].timestamp ? winner : current;
+      },
+    );
     return {
-      state,
-      undoneOps: undoneOps,
+      op: newestOp,
+      prev: newestOp.prev
+        ? mapWith(heads, newestDeviceId, newestOp.prev)
+        : mapWithout(heads, newestDeviceId),
     };
   }
 
