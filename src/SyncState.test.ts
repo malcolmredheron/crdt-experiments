@@ -17,8 +17,8 @@ describe("SyncState", () => {
 
     const clock = new CountingClock();
     const state = SyncState.create<AppState, OpPayloads>(
-      (state, deviceId, forward) => {
-        return {state: [...state, forward], backward: undefined};
+      (state, op) => {
+        return {state: [...state, op.forward], backward: undefined};
       },
       (state, p) => {
         return state.slice(0, -1);
@@ -128,66 +128,66 @@ describe("SyncState", () => {
 
     const clock = new CountingClock();
     const state = SyncState.create<AppState, OpPayloads>(
-      (state, deviceId, forward) => {
-        if (forward.type === "add")
+      (state, op) => {
+        if (op.forward.type === "add")
           return {
             state: {
               ...state,
-              tokens: [...state.tokens, forward.token],
+              tokens: [...state.tokens, op.forward.token],
             },
             backward: undefined,
           };
-        else if (forward.type === "add writer") {
+        else if (op.forward.type === "add writer") {
           return {
             state: {
               ...state,
               desiredWriters: mapWith(
                 state.desiredWriters,
-                forward.deviceId,
+                op.forward.deviceId,
                 "open",
               ),
             },
-            backward: state.desiredWriters.get(forward.deviceId),
+            backward: state.desiredWriters.get(op.forward.deviceId),
           };
         } else {
-          const deviceId = forward.finalOp.deviceId;
+          const deviceId = op.forward.finalOp.deviceId;
           return {
             state: {
               ...state,
               desiredWriters: mapWith(
                 state.desiredWriters,
                 deviceId,
-                forward.finalOp,
+                op.forward.finalOp,
               ),
             },
             backward: state.desiredWriters.get(deviceId),
           };
         }
       },
-      (state, p) => {
-        if (p.forward.type === "add") {
+      (state, op, backward) => {
+        if (op.forward.type === "add") {
           return {
             ...state,
             tokens: state.tokens.slice(0, -1),
           };
-        } else if (p.forward.type === "add writer") {
-          p = p as AddWriter;
+        } else if (op.forward.type === "add writer") {
+          backward = backward as AddWriter["backward"];
           return {
             ...state,
             desiredWriters:
-              p.backward === undefined
-                ? mapWithout(state.desiredWriters, p.forward.deviceId)
-                : mapWith(state.desiredWriters, p.forward.deviceId, p.backward),
+              backward === undefined
+                ? mapWithout(state.desiredWriters, op.forward.deviceId)
+                : mapWith(state.desiredWriters, op.forward.deviceId, backward),
           };
-        } else if (p.forward.type === "remove writer") {
-          p = p as RemoveWriter;
-          const deviceId = p.forward.finalOp.deviceId;
+        } else if (op.forward.type === "remove writer") {
+          backward = backward as RemoveWriter["backward"];
+          const deviceId = op.forward.finalOp.deviceId;
           return {
             ...state,
             desiredWriters:
-              p.backward === undefined
+              backward === undefined
                 ? mapWithout(state.desiredWriters, deviceId)
-                : mapWith(state.desiredWriters, deviceId, p.backward),
+                : mapWith(state.desiredWriters, deviceId, backward),
           };
         } else throw new AssertFailed("Unknown op type");
       },

@@ -35,8 +35,7 @@ type AppliedOp<OpPayloads extends OpPayloadsBase> = Readonly<{
 
 type DoOp<AppState, OpPayloads extends OpPayloadsBase> = (
   state: AppState,
-  deviceId: DeviceId,
-  forward: OpPayloads["forward"],
+  op: Op<OpPayloads>,
 ) => {
   state: AppState;
   backward: OpPayloads["backward"];
@@ -44,7 +43,8 @@ type DoOp<AppState, OpPayloads extends OpPayloadsBase> = (
 
 type UndoOp<AppState, OpPayloads extends OpPayloadsBase> = (
   state: AppState,
-  payloads: OpPayloads,
+  op: Op<OpPayloads>,
+  backward: OpPayloads["backward"],
 ) => AppState;
 
 type DesiredDeviceHeads<AppState, OpPayloads extends OpPayloadsBase> = (
@@ -175,7 +175,7 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
   }
 
   private doOnce(op: Op<OpPayloads>): SyncState<AppState, OpPayloads> {
-    const doOpReturnValue = this.doOp(this.appState, op.deviceId, op.forward);
+    const doOpReturnValue = this.doOp(this.appState, op);
 
     const {state: appState1, backward} = doOpReturnValue;
     if (this.deviceHeads.get(op.deviceId) !== op.prev) {
@@ -200,10 +200,11 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
     const appliedOp = this.headAppliedOp;
     if (appliedOp === undefined)
       throw new AssertFailed("Attempt to undo but no ops");
-    const appState1 = this.undoOp(this.appState, {
-      forward: appliedOp.op.forward,
-      backward: appliedOp.backward,
-    } as OpPayloads);
+    const appState1 = this.undoOp(
+      this.appState,
+      appliedOp.op,
+      appliedOp.backward,
+    );
     const previousHeadForDevice = appliedOp.op.prev;
     const deviceOps1 = previousHeadForDevice
       ? mapWith(this.deviceHeads, appliedOp.op.deviceId, previousHeadForDevice)
