@@ -3,8 +3,9 @@ import {ControlledOpSet, DeviceId, Op} from "./ControlledOpSet";
 
 type SetWriter = {
   forward: {
+    authorDeviceId: DeviceId;
     type: "set writer";
-    deviceId: DeviceId;
+    writerDeviceId: DeviceId;
     priority: number;
     status: "open" | Op<OpPayloads>;
   };
@@ -23,10 +24,12 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
   return ControlledOpSet<PermissionedTreeValue, OpPayloads>.create(
     (value, op) => {
       const authorPriority = definedOrThrow(
-        value.writers.get(op.deviceId),
+        value.writers.get(op.forward.authorDeviceId),
         "Cannot find writer entry for op author",
       ).priority;
-      const targetPriority = value.writers.get(op.forward.deviceId)?.priority;
+      const targetPriority = value.writers.get(
+        op.forward.writerDeviceId,
+      )?.priority;
       if (targetPriority !== undefined && targetPriority <= authorPriority)
         return {value, backward: value};
       if (op.forward.priority <= authorPriority)
@@ -35,7 +38,7 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
       return {
         value: {
           ...value,
-          writers: mapWith(value.writers, op.forward.deviceId, {
+          writers: mapWith(value.writers, op.forward.writerDeviceId, {
             priority: op.forward.priority,
             status: op.forward.status,
           }),

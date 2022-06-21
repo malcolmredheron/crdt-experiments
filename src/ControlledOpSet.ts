@@ -18,7 +18,7 @@ type OpPayloadsBase = Readonly<{
 }>;
 
 export type Op<OpPayloads extends OpPayloadsBase> = Readonly<{
-  deviceId: DeviceId;
+  // deviceId: DeviceId;
   timestamp: Timestamp;
   // Previous op from the same device.
   prev: Op<OpPayloads> | undefined;

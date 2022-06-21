@@ -31,19 +31,16 @@ describe("ControlledOpSet", () => {
       RoArray<string>(),
     );
     const opA0 = asType<Op<OpPayloads>>({
-      deviceId: deviceA,
       forward: "a0",
       timestamp: clock.now(),
       prev: undefined,
     });
     const opA1 = asType<Op<OpPayloads>>({
-      deviceId: deviceA,
       forward: "a1",
       timestamp: clock.now(),
       prev: opA0,
     });
     const opB0 = asType<Op<OpPayloads>>({
-      deviceId: deviceB,
       forward: "b0",
       timestamp: clock.now(),
       prev: undefined,
@@ -116,6 +113,7 @@ describe("ControlledOpSet", () => {
     type RemoveWriter = {
       forward: {
         type: "remove writer";
+        deviceId: DeviceId;
         finalOp: Op<OpPayloads>;
       };
       backward: undefined | "open" | Op<OpPayloads>;
@@ -150,7 +148,7 @@ describe("ControlledOpSet", () => {
             backward: value.desiredWriters.get(op.forward.deviceId),
           };
         } else {
-          const deviceId = op.forward.finalOp.deviceId;
+          const deviceId = op.forward.deviceId;
           return {
             value: {
               ...value,
@@ -181,7 +179,7 @@ describe("ControlledOpSet", () => {
           };
         } else if (op.forward.type === "remove writer") {
           backward = backward as RemoveWriter["backward"];
-          const deviceId = op.forward.finalOp.deviceId;
+          const deviceId = op.forward.deviceId;
           return {
             ...value,
             desiredWriters:
@@ -195,44 +193,37 @@ describe("ControlledOpSet", () => {
       {tokens: RoArray<string>(), desiredWriters: RoMap([[deviceB, "open"]])},
     );
     const opA0 = asType<Op<OpPayloads>>({
-      deviceId: deviceA,
       forward: {type: "add", token: "a0"},
       timestamp: clock.now(),
       prev: undefined,
     });
     const opA1 = asType<Op<OpPayloads>>({
-      deviceId: deviceA,
       forward: {type: "add", token: "a1"},
       timestamp: clock.now(),
       prev: opA0,
     });
     const opB0 = asType<Op<OpPayloads>>({
-      deviceId: deviceB,
       forward: {type: "add writer", deviceId: deviceA},
       timestamp: clock.now(),
       prev: undefined,
     });
     const opB1 = asType<Op<OpPayloads>>({
-      deviceId: deviceB,
-      forward: {type: "remove writer", finalOp: opA0},
+      forward: {type: "remove writer", deviceId: deviceA, finalOp: opA0},
       timestamp: clock.now(),
       prev: opB0,
     });
     const opB2 = asType<Op<OpPayloads>>({
-      deviceId: deviceB,
       forward: {type: "add writer", deviceId: deviceA},
       timestamp: clock.now(),
       prev: opB1,
     });
     const opB0Alternate = asType<Op<OpPayloads>>({
-      deviceId: deviceB,
       forward: {type: "add", token: "b0Alternate"},
       timestamp: clock.now(),
       // TODO: would be nice to be able to chain ops of different types.
       prev: undefined,
     });
     const opA2 = asType<Op<OpPayloads>>({
-      deviceId: deviceA,
       forward: {type: "add", token: "a2"},
       timestamp: clock.now(),
       prev: opA1,
