@@ -1,29 +1,29 @@
-import {DeviceId, Op, SyncState} from "./SyncState";
+import {ControlledOpSet, DeviceId, Op} from "./ControlledOpSet";
 import {asType, mapWith, mapWithout, RoArray, RoMap} from "./helper/Collection";
 import {CountingClock} from "./helper/Clock.testing";
 import {expectDeepEqual, expectIdentical} from "./helper/Shared.testing";
 import {AssertFailed} from "./helper/Assert";
 
-describe("SyncState", () => {
+describe("ControlledOpSet", () => {
   const deviceA = DeviceId.create("a");
   const deviceB = DeviceId.create("b");
 
   describe("basic", () => {
-    type AppState = RoArray<string>;
+    type Value = RoArray<string>;
     type OpPayloads = {
       forward: string;
       backward: undefined;
     };
 
     const clock = new CountingClock();
-    const state = SyncState.create<AppState, OpPayloads>(
-      (state, op) => {
-        return {state: [...state, op.forward], backward: undefined};
+    const cos = ControlledOpSet.create<Value, OpPayloads>(
+      (value, op) => {
+        return {value: [...value, op.forward], backward: undefined};
       },
-      (state, p) => {
-        return state.slice(0, -1);
+      (value, p) => {
+        return value.slice(0, -1);
       },
-      (state) =>
+      (value) =>
         RoMap([
           [deviceA, "open"],
           [deviceB, "open"],
@@ -50,49 +50,49 @@ describe("SyncState", () => {
     });
 
     it("update merges single new op", () => {
-      const state1 = state.update(RoMap([[deviceA, opA0]]));
-      expectDeepEqual(state1.appState, RoArray([opA0.forward]));
+      const cos1 = cos.update(RoMap([[deviceA, opA0]]));
+      expectDeepEqual(cos1.value, RoArray([opA0.forward]));
       expectDeepEqual(
-        state1.heads,
+        cos1.heads,
         RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA0]]),
       );
     });
 
     it("update merges multiple new ops", () => {
-      const state1 = state.update(RoMap([[deviceA, opA1]]));
-      expectDeepEqual(state1.appState, RoArray([opA0.forward, opA1.forward]));
+      const cos1 = cos.update(RoMap([[deviceA, opA1]]));
+      expectDeepEqual(cos1.value, RoArray([opA0.forward, opA1.forward]));
       expectDeepEqual(
-        state1.heads,
+        cos1.heads,
         RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA1]]),
       );
     });
 
     it("update undoes before applying new ops", () => {
-      const state1 = state.update(RoMap([[deviceA, opA0]]));
-      const state2 = state1.update(
+      const cos1 = cos.update(RoMap([[deviceA, opA0]]));
+      const cos2 = cos1.update(
         RoMap([
           [deviceA, opA0],
           [deviceB, opB0],
         ]),
       );
-      const state3 = state2.update(
+      const cos3 = cos2.update(
         RoMap([
           [deviceA, opA1],
           [deviceB, opB0],
         ]),
       );
       expectDeepEqual(
-        state3.appState,
+        cos3.value,
         RoArray([opA0.forward, opA1.forward, opB0.forward]),
       );
     });
 
     it("update purges newer ops from a device if needed", () => {
-      const state1 = state.update(RoMap([[deviceA, opA1]]));
-      const state2 = state1.update(RoMap([[deviceA, opA0]]));
-      expectDeepEqual(state2.appState, RoArray([opA0.forward]));
+      const cos1 = cos.update(RoMap([[deviceA, opA1]]));
+      const cos2 = cos1.update(RoMap([[deviceA, opA0]]));
+      expectDeepEqual(cos2.value, RoArray([opA0.forward]));
       expectDeepEqual(
-        state2.heads,
+        cos2.heads,
         RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA0]]),
       );
     });
@@ -121,77 +121,77 @@ describe("SyncState", () => {
       backward: undefined | "open" | Op<OpPayloads>;
     };
     type OpPayloads = AddToken | AddWriter | RemoveWriter;
-    type AppState = {
+    type Value = {
       tokens: RoArray<string>;
       desiredWriters: RoMap<DeviceId, "open" | Op<OpPayloads>>;
     };
 
     const clock = new CountingClock();
-    const state = SyncState.create<AppState, OpPayloads>(
-      (state, op) => {
+    const cos = ControlledOpSet.create<Value, OpPayloads>(
+      (value, op) => {
         if (op.forward.type === "add")
           return {
-            state: {
-              ...state,
-              tokens: [...state.tokens, op.forward.token],
+            value: {
+              ...value,
+              tokens: [...value.tokens, op.forward.token],
             },
             backward: undefined,
           };
         else if (op.forward.type === "add writer") {
           return {
-            state: {
-              ...state,
+            value: {
+              ...value,
               desiredWriters: mapWith(
-                state.desiredWriters,
+                value.desiredWriters,
                 op.forward.deviceId,
                 "open",
               ),
             },
-            backward: state.desiredWriters.get(op.forward.deviceId),
+            backward: value.desiredWriters.get(op.forward.deviceId),
           };
         } else {
           const deviceId = op.forward.finalOp.deviceId;
           return {
-            state: {
-              ...state,
+            value: {
+              ...value,
               desiredWriters: mapWith(
-                state.desiredWriters,
+                value.desiredWriters,
                 deviceId,
                 op.forward.finalOp,
               ),
             },
-            backward: state.desiredWriters.get(deviceId),
+            backward: value.desiredWriters.get(deviceId),
           };
         }
       },
-      (state, op, backward) => {
+      (value, op, backward) => {
         if (op.forward.type === "add") {
           return {
-            ...state,
-            tokens: state.tokens.slice(0, -1),
+            ...value,
+            tokens: value.tokens.slice(0, -1),
           };
         } else if (op.forward.type === "add writer") {
           backward = backward as AddWriter["backward"];
           return {
-            ...state,
+            ...value,
             desiredWriters:
               backward === undefined
-                ? mapWithout(state.desiredWriters, op.forward.deviceId)
-                : mapWith(state.desiredWriters, op.forward.deviceId, backward),
+                ? mapWithout(value.desiredWriters, op.forward.deviceId)
+                : mapWith(value.desiredWriters, op.forward.deviceId, backward),
           };
         } else if (op.forward.type === "remove writer") {
           backward = backward as RemoveWriter["backward"];
           const deviceId = op.forward.finalOp.deviceId;
           return {
-            ...state,
+            ...value,
             desiredWriters:
               backward === undefined
-                ? mapWithout(state.desiredWriters, deviceId)
-                : mapWith(state.desiredWriters, deviceId, backward),
+                ? mapWithout(value.desiredWriters, deviceId)
+                : mapWith(value.desiredWriters, deviceId, backward),
           };
         } else throw new AssertFailed("Unknown op type");
       },
-      (state) => state.desiredWriters,
+      (value) => value.desiredWriters,
       {tokens: RoArray<string>(), desiredWriters: RoMap([[deviceB, "open"]])},
     );
     const opA0 = asType<Op<OpPayloads>>({
@@ -239,20 +239,20 @@ describe("SyncState", () => {
     });
 
     it("ignores ops from a non-writer", () => {
-      const state1 = state.update(RoMap([[deviceA, opA1]]));
-      expectIdentical(state1.appliedHead, undefined);
+      const cos1 = cos.update(RoMap([[deviceA, opA1]]));
+      expectIdentical(cos1.appliedHead, undefined);
     });
 
     it("includes ops from an added writer", () => {
-      const state1 = state.update(
+      const cos1 = cos.update(
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB0],
         ]),
       );
-      expectDeepEqual(state1.appState.tokens, RoArray(["a0", "a1"]));
+      expectDeepEqual(cos1.value.tokens, RoArray(["a0", "a1"]));
       expectDeepEqual(
-        state1.heads,
+        cos1.heads,
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB0],
@@ -261,25 +261,25 @@ describe("SyncState", () => {
     });
 
     it("closes a writer", () => {
-      const state1 = state.update(
+      const cos1 = cos.update(
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB0],
         ]),
       );
-      expectDeepEqual(state1.appState.tokens, RoArray(["a0", "a1"]));
+      expectDeepEqual(cos1.value.tokens, RoArray(["a0", "a1"]));
 
       // Close deviceA after opA0.
-      const state2 = state.update(
+      const cos2 = cos.update(
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB1],
         ]),
       );
       // a1 was excluded because b0 closed that device.
-      expectDeepEqual(state2.appState.tokens, RoArray(["a0"]));
+      expectDeepEqual(cos2.value.tokens, RoArray(["a0"]));
       expectDeepEqual(
-        state2.heads,
+        cos2.heads,
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA0],
           [deviceB, opB1],
@@ -288,24 +288,24 @@ describe("SyncState", () => {
     });
 
     it("reopens a closed writer", () => {
-      const state1 = state.update(
+      const cos1 = cos.update(
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB1],
         ]),
       );
-      expectDeepEqual(state1.appState.tokens, RoArray(["a0"]));
+      expectDeepEqual(cos1.value.tokens, RoArray(["a0"]));
 
       // Reopen deviceA.
-      const state2 = state.update(
+      const cos2 = cos.update(
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB2],
         ]),
       );
-      expectDeepEqual(state2.appState.tokens, RoArray(["a0", "a1"]));
+      expectDeepEqual(cos2.value.tokens, RoArray(["a0", "a1"]));
       expectDeepEqual(
-        state2.heads,
+        cos2.heads,
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB2],
@@ -314,24 +314,24 @@ describe("SyncState", () => {
     });
 
     it("avoids redoing later ops from a removed writer", () => {
-      const state1 = state.update(
+      const cos1 = cos.update(
         RoMap([
           [deviceA, opA2],
           [deviceB, opB0],
         ]),
       );
-      expectDeepEqual(state1.appState.tokens, RoArray(["a0", "a1", "a2"]));
+      expectDeepEqual(cos1.value.tokens, RoArray(["a0", "a1", "a2"]));
 
-      const state2 = state.update(
+      const cos2 = cos.update(
         RoMap([
           [deviceA, opA2],
           [deviceB, opB1],
         ]),
       );
       // Even a2, which came after b1, which closed device A, is gone.
-      expectDeepEqual(state2.appState.tokens, RoArray(["a0"]));
+      expectDeepEqual(cos2.value.tokens, RoArray(["a0"]));
       expectDeepEqual(
-        state2.heads,
+        cos2.heads,
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA0],
           [deviceB, opB1],
@@ -340,24 +340,24 @@ describe("SyncState", () => {
     });
 
     it("undo Add/Remove Writer", () => {
-      const state1 = state.update(
+      const cos1 = cos.update(
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB1],
         ]),
       );
-      expectDeepEqual(state1.appState.tokens, RoArray(["a0"]));
+      expectDeepEqual(cos1.value.tokens, RoArray(["a0"]));
       // This forces b0 and b1 to be undone.
-      const state2 = state1.update(
+      const cos2 = cos1.update(
         RoMap<DeviceId, Op<OpPayloads>>([
           [deviceA, opA1],
           [deviceB, opB0Alternate],
         ]),
       );
 
-      expectDeepEqual(state2.appState.tokens, RoArray(["b0Alternate"]));
+      expectDeepEqual(cos2.value.tokens, RoArray(["b0Alternate"]));
       expectDeepEqual(
-        state2.heads,
+        cos2.heads,
         RoMap<DeviceId, Op<OpPayloads>>([[deviceB, opB0Alternate]]),
       );
     });

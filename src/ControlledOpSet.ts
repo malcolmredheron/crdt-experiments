@@ -34,55 +34,55 @@ type AppliedOp<OpPayloads extends OpPayloadsBase> = Readonly<{
   backward: OpPayloads["backward"];
 }>;
 
-type DoOp<AppState, OpPayloads extends OpPayloadsBase> = (
-  state: AppState,
+type DoOp<Value, OpPayloads extends OpPayloadsBase> = (
+  value: Value,
   op: Op<OpPayloads>,
 ) => {
-  state: AppState;
+  value: Value;
   backward: OpPayloads["backward"];
 };
 
-type UndoOp<AppState, OpPayloads extends OpPayloadsBase> = (
-  state: AppState,
+type UndoOp<Value, OpPayloads extends OpPayloadsBase> = (
+  value: Value,
   op: Op<OpPayloads>,
   backward: OpPayloads["backward"],
-) => AppState;
+) => Value;
 
-type DesiredHeads<AppState, OpPayloads extends OpPayloadsBase> = (
-  state: AppState,
+type DesiredHeads<Value, OpPayloads extends OpPayloadsBase> = (
+  value: Value,
 ) => RoMap<DeviceId, "open" | Op<OpPayloads>>;
 
-export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
-  static create<AppState, OpPayloads extends OpPayloadsBase>(
-    doOp: DoOp<AppState, OpPayloads>,
-    undoOp: UndoOp<AppState, OpPayloads>,
-    desiredHeads: DesiredHeads<AppState, OpPayloads>,
-    appState: AppState,
-  ): SyncState<AppState, OpPayloads> {
-    return new SyncState(
+export class ControlledOpSet<Value, OpPayloads extends OpPayloadsBase> {
+  static create<Value, OpPayloads extends OpPayloadsBase>(
+    doOp: DoOp<Value, OpPayloads>,
+    undoOp: UndoOp<Value, OpPayloads>,
+    desiredHeads: DesiredHeads<Value, OpPayloads>,
+    value: Value,
+  ): ControlledOpSet<Value, OpPayloads> {
+    return new ControlledOpSet(
       doOp,
       undoOp,
       desiredHeads,
-      appState,
+      value,
       undefined,
       RoMap(),
     );
   }
 
   private constructor(
-    readonly doOp: DoOp<AppState, OpPayloads>,
-    readonly undoOp: UndoOp<AppState, OpPayloads>,
-    readonly desiredHeads: DesiredHeads<AppState, OpPayloads>,
+    readonly doOp: DoOp<Value, OpPayloads>,
+    readonly undoOp: UndoOp<Value, OpPayloads>,
+    readonly desiredHeads: DesiredHeads<Value, OpPayloads>,
 
-    readonly appState: AppState,
+    readonly value: Value,
     readonly appliedHead: AppliedOp<OpPayloads> | undefined,
     readonly heads: RoMap<DeviceId, Op<OpPayloads>>,
   ) {}
 
   update(
     remoteHeads: RoMap<DeviceId, Op<OpPayloads>>,
-  ): SyncState<AppState, OpPayloads> {
-    const abstractDesiredHeads = this.desiredHeads(this.appState);
+  ): ControlledOpSet<Value, OpPayloads> {
+    const abstractDesiredHeads = this.desiredHeads(this.value);
     const filteredAbstractDesiredHeads = RoMap(
       Array.from(abstractDesiredHeads.entries()).filter(([deviceId]) =>
         remoteHeads.has(deviceId),
@@ -97,21 +97,21 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
         ),
       ],
     );
-    if (SyncState.headsEqual(desiredHeads, this.heads)) return this;
+    if (ControlledOpSet.headsEqual(desiredHeads, this.heads)) return this;
 
-    const {appState, appliedHead, ops} = SyncState.commonStateAndDesiredOps(
+    const {value, appliedHead, ops} = ControlledOpSet.commonStateAndDesiredOps(
       this.undoOp,
       desiredHeads,
       this.heads,
-      this.appState,
+      this.value,
       this.appliedHead,
     );
-    const {appState: appState1, appliedHead: appliedHead1} = ops.reduce(
-      ({appState, appliedHead}, op) =>
-        SyncState.doOnce(this.doOp, appState, appliedHead, op),
-      {appState, appliedHead},
+    const {value: appState1, appliedHead: appliedHead1} = ops.reduce(
+      ({value, appliedHead}, op) =>
+        ControlledOpSet.doOnce(this.doOp, value, appliedHead, op),
+      {value, appliedHead},
     );
-    const this1 = new SyncState(
+    const this1 = new ControlledOpSet(
       this.doOp,
       this.undoOp,
       this.desiredHeads,
@@ -125,26 +125,26 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
   }
 
   private static commonStateAndDesiredOps<
-    AppState,
+    Value,
     OpPayloads extends OpPayloadsBase,
   >(
-    undoOp: UndoOp<AppState, OpPayloads>,
+    undoOp: UndoOp<Value, OpPayloads>,
     desiredHeads: RoMap<DeviceId, Op<OpPayloads>>,
     actualHeads: RoMap<DeviceId, Op<OpPayloads>>,
-    appState: AppState,
+    value: Value,
     appliedHead: undefined | AppliedOp<OpPayloads>,
   ): {
-    appState: AppState;
+    value: Value;
     appliedHead: undefined | AppliedOp<OpPayloads>;
     ops: RoArray<Op<OpPayloads>>;
   } {
     const ops = new Array<Op<OpPayloads>>();
 
-    while (!SyncState.headsEqual(desiredHeads, actualHeads)) {
+    while (!ControlledOpSet.headsEqual(desiredHeads, actualHeads)) {
       const {heads: nextRemainingDesiredHeads, op: desiredOp} =
-        SyncState.undoHeadsOnce(desiredHeads);
+        ControlledOpSet.undoHeadsOnce(desiredHeads);
       const {heads: nextActualHeads, op: actualOp} =
-        SyncState.undoHeadsOnce(actualHeads);
+        ControlledOpSet.undoHeadsOnce(actualHeads);
 
       if (
         desiredOp &&
@@ -157,9 +157,9 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
         (!desiredOp || actualOp.timestamp > desiredOp.timestamp)
       ) {
         actualHeads = nextActualHeads;
-        ({appState, appliedHead} = SyncState.undoOnce(
+        ({value, appliedHead} = ControlledOpSet.undoOnce(
           undoOp,
-          appState,
+          value,
           appliedHead!,
         ));
       } else if (
@@ -170,9 +170,9 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
         desiredHeads = nextRemainingDesiredHeads;
         ops.push(desiredOp);
         actualHeads = nextActualHeads;
-        ({appState, appliedHead} = SyncState.undoOnce(
+        ({value, appliedHead} = ControlledOpSet.undoOnce(
           undoOp,
-          appState,
+          value,
           appliedHead!,
         ));
       } else {
@@ -184,7 +184,7 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
 
     ops.reverse();
     return {
-      appState: appState,
+      value: value,
       appliedHead: appliedHead,
       ops,
     };
@@ -223,15 +223,15 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
     };
   }
 
-  private static doOnce<AppState, OpPayloads extends OpPayloadsBase>(
-    doOp: DoOp<AppState, OpPayloads>,
-    appState: AppState,
+  private static doOnce<Value, OpPayloads extends OpPayloadsBase>(
+    doOp: DoOp<Value, OpPayloads>,
+    value: Value,
     appliedHead: undefined | AppliedOp<OpPayloads>,
     op: Op<OpPayloads>,
-  ): {appState: AppState; appliedHead: AppliedOp<OpPayloads>} {
-    const {state: appState1, backward} = doOp(appState, op);
+  ): {value: Value; appliedHead: AppliedOp<OpPayloads>} {
+    const {value: appState1, backward} = doOp(value, op);
     return {
-      appState: appState1,
+      value: appState1,
       appliedHead: {
         op,
         backward,
@@ -240,20 +240,20 @@ export class SyncState<AppState, OpPayloads extends OpPayloadsBase> {
     };
   }
 
-  private static undoOnce<AppState, OpPayloads extends OpPayloadsBase>(
-    undoOp: UndoOp<AppState, OpPayloads>,
-    appState: AppState,
+  private static undoOnce<Value, OpPayloads extends OpPayloadsBase>(
+    undoOp: UndoOp<Value, OpPayloads>,
+    value: Value,
     appliedHead: AppliedOp<OpPayloads>,
   ): {
-    appState: AppState;
+    value: Value;
     appliedHead: undefined | AppliedOp<OpPayloads>;
   } {
     const appliedOp = appliedHead;
     if (appliedOp === undefined)
       throw new AssertFailed("Attempt to undo but no ops");
-    const appState1 = undoOp(appState, appliedOp.op, appliedOp.backward);
+    const appState1 = undoOp(value, appliedOp.op, appliedOp.backward);
     return {
-      appState: appState1,
+      value: appState1,
       appliedHead: appliedOp.prev,
     };
   }

@@ -1,5 +1,5 @@
 import {asType, definedOrThrow, mapWith, RoMap} from "./helper/Collection";
-import {DeviceId, Op, SyncState} from "./SyncState";
+import {ControlledOpSet, DeviceId, Op} from "./ControlledOpSet";
 
 type SetWriter = {
   forward: {
@@ -8,44 +8,44 @@ type SetWriter = {
     priority: number;
     status: "open" | Op<OpPayloads>;
   };
-  backward: AppState;
+  backward: PermissionedTreeValue;
 };
 
 type OpPayloads = SetWriter;
 
-type AppState = {
+type PermissionedTreeValue = {
   writers: RoMap<DeviceId, {priority: number; status: "open" | Op<OpPayloads>}>;
 };
 
-export function createPermissionedTree(
-  owner: DeviceId,
-): SyncState<AppState, OpPayloads> {
-  return SyncState<AppState, OpPayloads>.create(
-    (state, op) => {
+type PermissionedTree = ControlledOpSet<PermissionedTreeValue, OpPayloads>;
+
+export function createPermissionedTree(owner: DeviceId): PermissionedTree {
+  return ControlledOpSet<PermissionedTreeValue, OpPayloads>.create(
+    (value, op) => {
       const authorPriority = definedOrThrow(
-        state.writers.get(op.deviceId),
+        value.writers.get(op.deviceId),
         "Cannot find writer entry for op author",
       ).priority;
-      const targetPriority = state.writers.get(op.forward.deviceId)?.priority;
+      const targetPriority = value.writers.get(op.forward.deviceId)?.priority;
       if (targetPriority !== undefined && targetPriority <= authorPriority)
-        return {state, backward: state};
+        return {value, backward: value};
       if (op.forward.priority <= authorPriority)
-        return {state, backward: state};
+        return {value, backward: value};
 
       return {
-        state: {
-          ...state,
-          writers: mapWith(state.writers, op.forward.deviceId, {
+        value: {
+          ...value,
+          writers: mapWith(value.writers, op.forward.deviceId, {
             priority: op.forward.priority,
             status: op.forward.status,
           }),
         },
-        backward: state,
+        backward: value,
       };
     },
-    (state, op, backward) => backward,
-    (state) => RoMap(),
-    asType<AppState>({
+    (value, op, backward) => backward,
+    (value) => RoMap(),
+    asType<PermissionedTreeValue>({
       writers: RoMap([[owner, {priority: Number.MAX_VALUE, status: "open"}]]),
     }),
   );
