@@ -1,55 +1,65 @@
-import {asType, definedOrThrow, mapWith, RoMap} from "./helper/Collection";
-import {ControlledOpSet, DeviceId, Op} from "./ControlledOpSet";
+import {
+  asType,
+  definedOrThrow,
+  mapMapToMap,
+  mapWith,
+  RoMap,
+} from "./helper/Collection";
+import {ControlledOpSet, DeviceId, OpList} from "./ControlledOpSet";
+import {Timestamp} from "./helper/Timestamp";
 
-type SetWriter = {
-  forward: {
-    authorDeviceId: DeviceId;
+export type SetWriter = {
+  op: {
+    timestamp: Timestamp;
+    device: DeviceId;
     type: "set writer";
-    writerDeviceId: DeviceId;
+    targetWriter: DeviceId;
     priority: number;
-    status: "open" | Op<OpPayloads>;
+    status: "open" | OpList<AppliedOp>;
   };
-  backward: PermissionedTreeValue;
+  undoInfo: PermissionedTreeValue;
 };
 
-type OpPayloads = SetWriter;
+export type AppliedOp = SetWriter;
 
 type PermissionedTreeValue = {
-  writers: RoMap<DeviceId, {priority: number; status: "open" | Op<OpPayloads>}>;
+  writers: RoMap<
+    DeviceId,
+    {priority: number; status: "open" | OpList<AppliedOp>}
+  >;
 };
 
-type PermissionedTree = ControlledOpSet<PermissionedTreeValue, OpPayloads>;
+type PermissionedTree = ControlledOpSet<PermissionedTreeValue, AppliedOp>;
 
 export function createPermissionedTree(owner: DeviceId): PermissionedTree {
-  return ControlledOpSet<PermissionedTreeValue, OpPayloads>.create(
+  return ControlledOpSet<PermissionedTreeValue, AppliedOp>.create(
     (value, op) => {
-      const authorPriority = definedOrThrow(
-        value.writers.get(op.forward.authorDeviceId),
+      const devicePriority = definedOrThrow(
+        value.writers.get(op.device),
         "Cannot find writer entry for op author",
       ).priority;
-      const targetPriority = value.writers.get(
-        op.forward.writerDeviceId,
-      )?.priority;
-      if (targetPriority !== undefined && targetPriority <= authorPriority)
-        return {value, backward: value};
-      if (op.forward.priority <= authorPriority)
-        return {value, backward: value};
+      const writerPriority = value.writers.get(op.targetWriter)?.priority;
+      if (writerPriority !== undefined && writerPriority >= devicePriority)
+        return {value, appliedOp: {op, undoInfo: value}};
+      if (op.priority >= devicePriority)
+        return {value, appliedOp: {op, undoInfo: value}};
 
       return {
         value: {
           ...value,
-          writers: mapWith(value.writers, op.forward.writerDeviceId, {
-            priority: op.forward.priority,
-            status: op.forward.status,
+          writers: mapWith(value.writers, op.targetWriter, {
+            priority: op.priority,
+            status: op.status,
           }),
         },
-        backward: value,
+        appliedOp: {op, undoInfo: value},
       };
     },
-    (value, op, backward) => backward,
-    (value) => RoMap(),
+    (value, {op, undoInfo}) => undoInfo,
+    (value) =>
+      mapMapToMap(value.writers, (device, info) => [device, info.status]),
     asType<PermissionedTreeValue>({
-      writers: RoMap([[owner, {priority: Number.MAX_VALUE, status: "open"}]]),
+      writers: RoMap([[owner, {priority: 0, status: "open"}]]),
     }),
   );
 }

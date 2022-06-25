@@ -1,8 +1,9 @@
-import {ControlledOpSet, DeviceId, Op} from "./ControlledOpSet";
+import {ControlledOpSet, DeviceId, OpList} from "./ControlledOpSet";
 import {asType, mapWith, mapWithout, RoArray, RoMap} from "./helper/Collection";
 import {CountingClock} from "./helper/Clock.testing";
 import {expectDeepEqual, expectIdentical} from "./helper/Shared.testing";
 import {AssertFailed} from "./helper/Assert";
+import {Timestamp} from "./helper/Timestamp";
 
 describe("ControlledOpSet", () => {
   const deviceA = DeviceId.create("a");
@@ -10,15 +11,18 @@ describe("ControlledOpSet", () => {
 
   describe("basic", () => {
     type Value = RoArray<string>;
-    type OpPayloads = {
-      forward: string;
-      backward: undefined;
+    type AppliedOp = {
+      op: {token: string; timestamp: Timestamp};
+      undoInfo: undefined;
     };
 
     const clock = new CountingClock();
-    const cos = ControlledOpSet.create<Value, OpPayloads>(
+    const cos = ControlledOpSet.create<Value, AppliedOp>(
       (value, op) => {
-        return {value: [...value, op.forward], backward: undefined};
+        return {
+          value: [...value, op.token],
+          appliedOp: {op, undoInfo: undefined},
+        };
       },
       (value, p) => {
         return value.slice(0, -1);
@@ -30,37 +34,34 @@ describe("ControlledOpSet", () => {
         ]),
       RoArray<string>(),
     );
-    const opA0 = asType<Op<OpPayloads>>({
-      forward: "a0",
-      timestamp: clock.now(),
+    const opA0 = asType<OpList<AppliedOp>>({
+      op: {token: "a0", timestamp: clock.now()},
       prev: undefined,
     });
-    const opA1 = asType<Op<OpPayloads>>({
-      forward: "a1",
-      timestamp: clock.now(),
+    const opA1 = asType<OpList<AppliedOp>>({
+      op: {token: "a1", timestamp: clock.now()},
       prev: opA0,
     });
-    const opB0 = asType<Op<OpPayloads>>({
-      forward: "b0",
-      timestamp: clock.now(),
+    const opB0 = asType<OpList<AppliedOp>>({
+      op: {token: "b0", timestamp: clock.now()},
       prev: undefined,
     });
 
     it("update merges single new op", () => {
       const cos1 = cos.update(RoMap([[deviceA, opA0]]));
-      expectDeepEqual(cos1.value, RoArray([opA0.forward]));
+      expectDeepEqual(cos1.value, RoArray(["a0"]));
       expectDeepEqual(
         cos1.heads,
-        RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA0]]),
+        RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA0]]),
       );
     });
 
     it("update merges multiple new ops", () => {
       const cos1 = cos.update(RoMap([[deviceA, opA1]]));
-      expectDeepEqual(cos1.value, RoArray([opA0.forward, opA1.forward]));
+      expectDeepEqual(cos1.value, RoArray(["a0", "a1"]));
       expectDeepEqual(
         cos1.heads,
-        RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA1]]),
+        RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA1]]),
       );
     });
 
@@ -78,154 +79,155 @@ describe("ControlledOpSet", () => {
           [deviceB, opB0],
         ]),
       );
-      expectDeepEqual(
-        cos3.value,
-        RoArray([opA0.forward, opA1.forward, opB0.forward]),
-      );
+      expectDeepEqual(cos3.value, RoArray(["a0", "a1", "b0"]));
     });
 
     it("update purges newer ops from a device if needed", () => {
       const cos1 = cos.update(RoMap([[deviceA, opA1]]));
       const cos2 = cos1.update(RoMap([[deviceA, opA0]]));
-      expectDeepEqual(cos2.value, RoArray([opA0.forward]));
+      expectDeepEqual(cos2.value, RoArray(["a0"]));
       expectDeepEqual(
         cos2.heads,
-        RoMap<DeviceId, Op<OpPayloads>>([[deviceA, opA0]]),
+        RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA0]]),
       );
     });
   });
 
   describe("write permissions", () => {
     type AddToken = {
-      forward: {
+      op: {
+        timestamp: Timestamp;
         type: "add";
         token: string;
       };
-      backward: undefined;
+      undoInfo: undefined;
     };
     type AddWriter = {
-      forward: {
-        type: "add writer";
+      op: {
+        timestamp: Timestamp;
         deviceId: DeviceId;
+        type: "add writer";
       };
-      backward: undefined | "open" | Op<OpPayloads>;
+      undoInfo: undefined | "open" | OpList<AppliedOp>;
     };
     type RemoveWriter = {
-      forward: {
-        type: "remove writer";
+      op: {
+        timestamp: Timestamp;
         deviceId: DeviceId;
-        finalOp: Op<OpPayloads>;
+        type: "remove writer";
+        finalOp: OpList<AppliedOp>;
       };
-      backward: undefined | "open" | Op<OpPayloads>;
+      undoInfo: undefined | "open" | OpList<AppliedOp>;
     };
-    type OpPayloads = AddToken | AddWriter | RemoveWriter;
+    type AppliedOp = AddToken | AddWriter | RemoveWriter;
     type Value = {
       tokens: RoArray<string>;
-      desiredWriters: RoMap<DeviceId, "open" | Op<OpPayloads>>;
+      desiredWriters: RoMap<DeviceId, "open" | OpList<AppliedOp>>;
     };
 
     const clock = new CountingClock();
-    const cos = ControlledOpSet.create<Value, OpPayloads>(
+    const cos = ControlledOpSet.create<Value, AppliedOp>(
       (value, op) => {
-        if (op.forward.type === "add")
+        if (op.type === "add")
           return {
             value: {
               ...value,
-              tokens: [...value.tokens, op.forward.token],
+              tokens: [...value.tokens, op.token],
             },
-            backward: undefined,
+            appliedOp: {op, undoInfo: undefined},
           };
-        else if (op.forward.type === "add writer") {
+        else if (op.type === "add writer") {
           return {
             value: {
               ...value,
               desiredWriters: mapWith(
                 value.desiredWriters,
-                op.forward.deviceId,
+                op.deviceId,
                 "open",
               ),
             },
-            backward: value.desiredWriters.get(op.forward.deviceId),
+            appliedOp: {
+              op,
+              undoInfo: value.desiredWriters.get(op.deviceId),
+            },
           };
         } else {
-          const deviceId = op.forward.deviceId;
+          const deviceId = op.deviceId;
           return {
             value: {
               ...value,
               desiredWriters: mapWith(
                 value.desiredWriters,
                 deviceId,
-                op.forward.finalOp,
+                op.finalOp,
               ),
             },
-            backward: value.desiredWriters.get(deviceId),
+            appliedOp: {op, undoInfo: value.desiredWriters.get(deviceId)},
           };
         }
       },
-      (value, op, backward) => {
-        if (op.forward.type === "add") {
+      (value, {op, undoInfo}) => {
+        if (op.type === "add") {
           return {
             ...value,
             tokens: value.tokens.slice(0, -1),
           };
-        } else if (op.forward.type === "add writer") {
-          backward = backward as AddWriter["backward"];
+        } else if (op.type === "add writer") {
+          undoInfo = undoInfo as AddWriter["undoInfo"];
           return {
             ...value,
             desiredWriters:
-              backward === undefined
-                ? mapWithout(value.desiredWriters, op.forward.deviceId)
-                : mapWith(value.desiredWriters, op.forward.deviceId, backward),
+              undoInfo === undefined
+                ? mapWithout(value.desiredWriters, op.deviceId)
+                : mapWith(value.desiredWriters, op.deviceId, undoInfo),
           };
-        } else if (op.forward.type === "remove writer") {
-          backward = backward as RemoveWriter["backward"];
-          const deviceId = op.forward.deviceId;
+        } else if (op.type === "remove writer") {
+          undoInfo = undoInfo as RemoveWriter["undoInfo"];
+          const deviceId = op.deviceId;
           return {
             ...value,
             desiredWriters:
-              backward === undefined
+              undoInfo === undefined
                 ? mapWithout(value.desiredWriters, deviceId)
-                : mapWith(value.desiredWriters, deviceId, backward),
+                : mapWith(value.desiredWriters, deviceId, undoInfo),
           };
         } else throw new AssertFailed("Unknown op type");
       },
       (value) => value.desiredWriters,
       {tokens: RoArray<string>(), desiredWriters: RoMap([[deviceB, "open"]])},
     );
-    const opA0 = asType<Op<OpPayloads>>({
-      forward: {type: "add", token: "a0"},
-      timestamp: clock.now(),
+    const opA0 = asType<OpList<AppliedOp>>({
+      op: {type: "add", token: "a0", timestamp: clock.now()},
       prev: undefined,
     });
-    const opA1 = asType<Op<OpPayloads>>({
-      forward: {type: "add", token: "a1"},
-      timestamp: clock.now(),
+    const opA1 = asType<OpList<AppliedOp>>({
+      op: {type: "add", token: "a1", timestamp: clock.now()},
       prev: opA0,
     });
-    const opB0 = asType<Op<OpPayloads>>({
-      forward: {type: "add writer", deviceId: deviceA},
-      timestamp: clock.now(),
+    const opB0 = asType<OpList<AppliedOp>>({
+      op: {type: "add writer", deviceId: deviceA, timestamp: clock.now()},
       prev: undefined,
     });
-    const opB1 = asType<Op<OpPayloads>>({
-      forward: {type: "remove writer", deviceId: deviceA, finalOp: opA0},
-      timestamp: clock.now(),
+    const opB1 = asType<OpList<AppliedOp>>({
+      op: {
+        type: "remove writer",
+        deviceId: deviceA,
+        finalOp: opA0,
+        timestamp: clock.now(),
+      },
       prev: opB0,
     });
-    const opB2 = asType<Op<OpPayloads>>({
-      forward: {type: "add writer", deviceId: deviceA},
-      timestamp: clock.now(),
+    const opB2 = asType<OpList<AppliedOp>>({
+      op: {type: "add writer", deviceId: deviceA, timestamp: clock.now()},
       prev: opB1,
     });
-    const opB0Alternate = asType<Op<OpPayloads>>({
-      forward: {type: "add", token: "b0Alternate"},
-      timestamp: clock.now(),
+    const opB0Alternate = asType<OpList<AppliedOp>>({
+      op: {type: "add", token: "b0Alternate", timestamp: clock.now()},
       // TODO: would be nice to be able to chain ops of different types.
       prev: undefined,
     });
-    const opA2 = asType<Op<OpPayloads>>({
-      forward: {type: "add", token: "a2"},
-      timestamp: clock.now(),
+    const opA2 = asType<OpList<AppliedOp>>({
+      op: {type: "add", token: "a2", timestamp: clock.now()},
       prev: opA1,
     });
 
@@ -236,7 +238,7 @@ describe("ControlledOpSet", () => {
 
     it("includes ops from an added writer", () => {
       const cos1 = cos.update(
-        RoMap<DeviceId, Op<OpPayloads>>([
+        RoMap<DeviceId, OpList<AppliedOp>>([
           [deviceA, opA1],
           [deviceB, opB0],
         ]),
@@ -244,7 +246,7 @@ describe("ControlledOpSet", () => {
       expectDeepEqual(cos1.value.tokens, RoArray(["a0", "a1"]));
       expectDeepEqual(
         cos1.heads,
-        RoMap<DeviceId, Op<OpPayloads>>([
+        RoMap<DeviceId, OpList<AppliedOp>>([
           [deviceA, opA1],
           [deviceB, opB0],
         ]),
@@ -253,7 +255,7 @@ describe("ControlledOpSet", () => {
 
     it("closes a writer", () => {
       const cos1 = cos.update(
-        RoMap<DeviceId, Op<OpPayloads>>([
+        RoMap<DeviceId, OpList<AppliedOp>>([
           [deviceA, opA1],
           [deviceB, opB0],
         ]),
@@ -262,7 +264,7 @@ describe("ControlledOpSet", () => {
 
       // Close deviceA after opA0.
       const cos2 = cos.update(
-        RoMap<DeviceId, Op<OpPayloads>>([
+        RoMap<DeviceId, OpList<AppliedOp>>([
           [deviceA, opA1],
           [deviceB, opB1],
         ]),
@@ -271,7 +273,7 @@ describe("ControlledOpSet", () => {
       expectDeepEqual(cos2.value.tokens, RoArray(["a0"]));
       expectDeepEqual(
         cos2.heads,
-        RoMap<DeviceId, Op<OpPayloads>>([
+        RoMap<DeviceId, OpList<AppliedOp>>([
           [deviceA, opA0],
           [deviceB, opB1],
         ]),
@@ -280,7 +282,7 @@ describe("ControlledOpSet", () => {
 
     it("reopens a closed writer", () => {
       const cos1 = cos.update(
-        RoMap<DeviceId, Op<OpPayloads>>([
+        RoMap<DeviceId, OpList<AppliedOp>>([
           [deviceA, opA1],
           [deviceB, opB1],
         ]),
@@ -289,7 +291,7 @@ describe("ControlledOpSet", () => {
 
       // Reopen deviceA.
       const cos2 = cos.update(
-        RoMap<DeviceId, Op<OpPayloads>>([
+        RoMap<DeviceId, OpList<AppliedOp>>([
           [deviceA, opA1],
           [deviceB, opB2],
         ]),
@@ -297,7 +299,7 @@ describe("ControlledOpSet", () => {
       expectDeepEqual(cos2.value.tokens, RoArray(["a0", "a1"]));
       expectDeepEqual(
         cos2.heads,
-        RoMap<DeviceId, Op<OpPayloads>>([
+        RoMap<DeviceId, OpList<AppliedOp>>([
           [deviceA, opA1],
           [deviceB, opB2],
         ]),
@@ -323,7 +325,7 @@ describe("ControlledOpSet", () => {
       expectDeepEqual(cos2.value.tokens, RoArray(["a0"]));
       expectDeepEqual(
         cos2.heads,
-        RoMap<DeviceId, Op<OpPayloads>>([
+        RoMap<DeviceId, OpList<AppliedOp>>([
           [deviceA, opA0],
           [deviceB, opB1],
         ]),
@@ -332,7 +334,7 @@ describe("ControlledOpSet", () => {
 
     it("undo Add/Remove Writer", () => {
       const cos1 = cos.update(
-        RoMap<DeviceId, Op<OpPayloads>>([
+        RoMap<DeviceId, OpList<AppliedOp>>([
           [deviceA, opA1],
           [deviceB, opB1],
         ]),
@@ -340,7 +342,7 @@ describe("ControlledOpSet", () => {
       expectDeepEqual(cos1.value.tokens, RoArray(["a0"]));
       // This forces b0 and b1 to be undone.
       const cos2 = cos1.update(
-        RoMap<DeviceId, Op<OpPayloads>>([
+        RoMap<DeviceId, OpList<AppliedOp>>([
           [deviceA, opA1],
           [deviceB, opB0Alternate],
         ]),
@@ -349,7 +351,7 @@ describe("ControlledOpSet", () => {
       expectDeepEqual(cos2.value.tokens, RoArray(["b0Alternate"]));
       expectDeepEqual(
         cos2.heads,
-        RoMap<DeviceId, Op<OpPayloads>>([[deviceB, opB0Alternate]]),
+        RoMap<DeviceId, OpList<AppliedOp>>([[deviceB, opB0Alternate]]),
       );
     });
   });
