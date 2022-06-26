@@ -130,9 +130,9 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   ): {
     value: Value;
     appliedHead: undefined | AppliedOpList<AppliedOp>;
-    ops: RoArray<OpList<AppliedOp>>;
+    ops: RoArray<AppliedOp["op"]>;
   } {
-    const ops = new Array<OpList<AppliedOp>>();
+    const ops = new Array<AppliedOp["op"]>();
 
     while (!ControlledOpSet.headsEqual(desiredHeads, actualHeads)) {
       const {heads: nextRemainingDesiredHeads, op: desiredOp} =
@@ -142,13 +142,13 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
 
       if (
         desiredOp &&
-        (!actualOp || desiredOp.op.timestamp > actualOp.op.timestamp)
+        (!actualOp || desiredOp.timestamp > actualOp.timestamp)
       ) {
         desiredHeads = nextRemainingDesiredHeads;
         ops.push(desiredOp);
       } else if (
         actualOp &&
-        (!desiredOp || actualOp.op.timestamp > desiredOp.op.timestamp)
+        (!desiredOp || actualOp.timestamp > desiredOp.timestamp)
       ) {
         actualHeads = nextActualHeads;
         ({value, appliedHead} = ControlledOpSet.undoOnce(
@@ -159,7 +159,7 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
       } else if (
         desiredOp &&
         actualOp &&
-        desiredOp.op.timestamp === actualOp.op.timestamp
+        desiredOp.timestamp === actualOp.timestamp
       ) {
         desiredHeads = nextRemainingDesiredHeads;
         ops.push(desiredOp);
@@ -199,12 +199,12 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   private static undoHeadsOnce<AppliedOp extends AppliedOpBase>(
     heads: RoMap<DeviceId, OpList<AppliedOp>>,
   ): {
-    op: undefined | OpList<AppliedOp>;
+    op: undefined | AppliedOp["op"];
     heads: RoMap<DeviceId, OpList<AppliedOp>>;
   } {
     if (heads.size === 0) return {op: undefined, heads};
 
-    const [newestDeviceId, newestOp] = Array.from(heads.entries()).reduce(
+    const [newestDeviceId, newestOpList] = Array.from(heads.entries()).reduce(
       (winner, current) => {
         return winner[1].op.timestamp > current[1].op.timestamp
           ? winner
@@ -212,9 +212,9 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
       },
     );
     return {
-      op: newestOp,
-      heads: newestOp.prev
-        ? mapWith(heads, newestDeviceId, newestOp.prev)
+      op: newestOpList.op,
+      heads: newestOpList.prev
+        ? mapWith(heads, newestDeviceId, newestOpList.prev)
         : mapWithout(heads, newestDeviceId),
     };
   }
@@ -223,9 +223,9 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     doOp: DoOp<Value, AppliedOp>,
     value: Value,
     appliedHead: undefined | AppliedOpList<AppliedOp>,
-    op: OpList<AppliedOp>,
+    op: AppliedOp["op"],
   ): {value: Value; appliedHead: AppliedOpList<AppliedOp>} {
-    const {value: appState1, appliedOp} = doOp(value, op.op);
+    const {value: appState1, appliedOp} = doOp(value, op);
     return {
       value: appState1,
       appliedHead: {
@@ -243,13 +243,12 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     value: Value;
     appliedHead: undefined | AppliedOpList<AppliedOp>;
   } {
-    const appliedOp = appliedHead;
-    if (appliedOp === undefined)
+    if (appliedHead === undefined)
       throw new AssertFailed("Attempt to undo but no ops");
-    const appState1 = undoOp(value, appliedOp.appliedOp);
+    const appState1 = undoOp(value, appliedHead.appliedOp);
     return {
       value: appState1,
-      appliedHead: appliedOp.prev,
+      appliedHead: appliedHead.prev,
     };
   }
 }
