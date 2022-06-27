@@ -1,4 +1,4 @@
-import {AppliedOp, createPermissionedTree} from "./PermissionedTree";
+import {AppliedOp, createPermissionedTree, NodeId} from "./PermissionedTree";
 import {DeviceId, OpList} from "./ControlledOpSet";
 import {RoMap} from "./helper/Collection";
 import {CountingClock} from "./helper/Clock.testing";
@@ -9,6 +9,7 @@ describe("PermissionedTree", () => {
   const deviceA = DeviceId.create("A");
   const deviceB = DeviceId.create("B");
   const tree = createPermissionedTree(deviceA);
+  const rootNodeId = NodeId.create("root");
 
   function openWriterOp(
     device: DeviceId,
@@ -71,6 +72,94 @@ describe("PermissionedTree", () => {
         status: "open",
         priority: -1,
       });
+    });
+  });
+
+  describe("tree manipulation", () => {
+    const nodeA = NodeId.create("a");
+    const nodeB = NodeId.create("b");
+
+    const opA1: OpList<AppliedOp> = {
+      op: {
+        timestamp: clock.now(),
+        type: "set parent",
+        node: nodeA,
+        parent: rootNodeId,
+        position: 1,
+      },
+      prev: opA0,
+    };
+    const opA2: OpList<AppliedOp> = {
+      op: {
+        timestamp: clock.now(),
+        type: "set parent",
+        node: nodeB,
+        parent: rootNodeId,
+        position: 2,
+      },
+      prev: opA1,
+    };
+    const opB0: OpList<AppliedOp> = {
+      op: {
+        timestamp: clock.now(),
+        type: "set parent",
+        node: nodeA,
+        parent: nodeB,
+        position: 0,
+      },
+      prev: undefined,
+    };
+    const opA3: OpList<AppliedOp> = {
+      op: {
+        timestamp: clock.now(),
+        type: "set parent",
+        node: nodeB,
+        parent: nodeA,
+        position: 0,
+      },
+      prev: opA2,
+    };
+
+    it("adds a node", () => {
+      const tree1 = tree.update(
+        RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA3]]),
+      );
+      expectDeepEqual(
+        tree1.value.nodes,
+        RoMap([
+          [nodeA, {parent: rootNodeId, position: 1}],
+          [nodeB, {parent: nodeA, position: 0}],
+        ]),
+      );
+    });
+
+    it("moves a node", () => {
+      const tree1 = tree.update(
+        RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA3]]),
+      );
+      expectDeepEqual(
+        tree1.value.nodes,
+        RoMap([
+          [nodeA, {parent: rootNodeId, position: 1}],
+          [nodeB, {parent: nodeA, position: 0}],
+        ]),
+      );
+    });
+
+    it("avoids a cycle", () => {
+      const tree1 = tree.update(
+        RoMap<DeviceId, OpList<AppliedOp>>([
+          [deviceA, opA3],
+          [deviceB, opB0],
+        ]),
+      );
+      expectDeepEqual(
+        tree1.value.nodes,
+        RoMap([
+          [nodeA, {parent: nodeB, position: 0}],
+          [nodeB, {parent: rootNodeId, position: 2}],
+        ]),
+      );
     });
   });
 });

@@ -12,8 +12,9 @@ import {AssertFailed} from "./helper/Assert";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 
+export type OpBase = {timestamp: Timestamp};
 type AppliedOpBase = Readonly<{
-  op: {timestamp: Timestamp};
+  op: OpBase;
   undoInfo: unknown;
 }>;
 
@@ -29,7 +30,7 @@ type AppliedOpList<AppliedOp extends AppliedOpBase> = Readonly<{
   appliedOp: AppliedOp;
 }>;
 
-type DoOp<Value, AppliedOp extends AppliedOpBase> = (
+export type DoOp<Value, AppliedOp extends AppliedOpBase> = (
   value: Value,
   op: AppliedOp["op"],
 ) => {
@@ -37,7 +38,7 @@ type DoOp<Value, AppliedOp extends AppliedOpBase> = (
   appliedOp: AppliedOp;
 };
 
-type UndoOp<Value, AppliedOp extends AppliedOpBase> = (
+export type UndoOp<Value, AppliedOp extends AppliedOpBase> = (
   value: Value,
   appliedOp: AppliedOp,
 ) => Value;

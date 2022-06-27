@@ -4,6 +4,11 @@ import {CountingClock} from "./helper/Clock.testing";
 import {expectDeepEqual, expectIdentical} from "./helper/Shared.testing";
 import {AssertFailed} from "./helper/Assert";
 import {Timestamp} from "./helper/Timestamp";
+import {
+  PersistentAppliedOp,
+  persistentDoOpFactory,
+  persistentUndoOp,
+} from "./PersistentUndoHelper";
 
 describe("ControlledOpSet", () => {
   const deviceA = DeviceId.create("a");
@@ -11,22 +16,17 @@ describe("ControlledOpSet", () => {
 
   describe("basic", () => {
     type Value = RoArray<string>;
-    type AppliedOp = {
-      op: {token: string; timestamp: Timestamp};
-      undoInfo: undefined;
-    };
+    type AppliedOp = PersistentAppliedOp<
+      Value,
+      {token: string; timestamp: Timestamp}
+    >;
 
     const clock = new CountingClock();
     const cos = ControlledOpSet.create<Value, AppliedOp>(
-      (value, op) => {
-        return {
-          value: [...value, op.token],
-          appliedOp: {op, undoInfo: undefined},
-        };
-      },
-      (value, p) => {
-        return value.slice(0, -1);
-      },
+      persistentDoOpFactory((value, op) => {
+        return [...value, op.token];
+      }),
+      persistentUndoOp,
       (value) =>
         RoMap([
           [deviceA, "open"],
@@ -93,6 +93,7 @@ describe("ControlledOpSet", () => {
     });
   });
 
+  // Also demonstrates using custom undo code.
   describe("write permissions", () => {
     type AddToken = {
       op: {
