@@ -1,0 +1,7 @@
+body#MochaInBrowserBody {
+  display: flex;
+}
+
+#mocha {
+  flex-grow: 1;
+}

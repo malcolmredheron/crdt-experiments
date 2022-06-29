@@ -16,6 +16,10 @@ To run all tests on the command line (and rerun when files change):
 
 - `npm test`
 
+To run tests in the browser:
+
+- `num run testInBrowser`
+
 ## Upgrading
 
 Upgrade nix packages: Follow the instructions in default.nix
