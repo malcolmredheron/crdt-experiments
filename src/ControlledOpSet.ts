@@ -75,12 +75,12 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   ) {}
 
   update(
-    remoteHeads: RoMap<DeviceId, OpList<AppliedOp>>,
+    remoteHeads: RoMap<DeviceId, undefined | OpList<AppliedOp>>,
   ): ControlledOpSet<Value, AppliedOp> {
     const abstractDesiredHeads = this.desiredHeads(this.value);
     const filteredAbstractDesiredHeads = RoMap(
-      Array.from(abstractDesiredHeads.entries()).filter(([deviceId]) =>
-        remoteHeads.has(deviceId),
+      Array.from(abstractDesiredHeads.entries()).filter(
+        ([deviceId]) => remoteHeads.get(deviceId) !== undefined,
       ),
     );
     const desiredHeads = mapMapToMap(
@@ -101,6 +101,13 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
       this.value,
       this.appliedHead,
     );
+
+    // const undidBackTo = appliedHead?.appliedOp.op.timestamp;
+    // const undidFrom = this.appliedHead?.appliedOp.op.timestamp;
+    // if (undidBackTo !== undidFrom)
+    //   console.log("Undid back to ", undidBackTo, "from", undidFrom);
+    // console.log("doing ops", ops.length);
+
     const {value: appState1, appliedHead: appliedHead1} = ops.reduce(
       ({value, appliedHead}, op) =>
         ControlledOpSet.doOnce(this.doOp, value, appliedHead, op),

@@ -4,7 +4,10 @@
   "description": "",
   "license": "UNLICENSED",
   "private": true,
-  "dependencies": {},
+  "dependencies": {
+    "@types/seed-random": "^2.2.1",
+    "seed-random": "^2.2.0"
+  },
   "devDependencies": {
     "@babel/core": "^7.18.5",
     "@babel/plugin-proposal-decorators": "^7.18.2",

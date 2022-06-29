@@ -14,7 +14,10 @@ import {
   persistentUndoOp,
 } from "./PersistentUndoHelper";
 
-type PermissionedTree = ControlledOpSet<PermissionedTreeValue, AppliedOp>;
+export type PermissionedTree = ControlledOpSet<
+  PermissionedTreeValue,
+  AppliedOp
+>;
 
 type PermissionedTreeValue = {
   writers: RoMap<
