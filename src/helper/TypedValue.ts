@@ -8,6 +8,14 @@ export class TypedValue<Name extends string, T> {
 
   readonly typeName: Name = null as unknown as Name;
   readonly value: T = null as unknown as T;
+
+  equals(other: TypedValue<Name, T>): boolean {
+    throw "Calling equals on TypedValue";
+  }
+
+  hashCode(): number {
+    throw "Calling hashCode on TypedValue";
+  }
 }
 
 export function value<Name extends string, T>(

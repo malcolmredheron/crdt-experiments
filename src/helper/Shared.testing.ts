@@ -1,5 +1,6 @@
 import {expect} from "chai";
 import deepEqual from "deep-equal";
+import {HasEquals} from "prelude-ts";
 import {RoMap, RoSet, setDifference, setOnly} from "./Collection";
 
 // We have some functions that are useful to call in the console from tests
@@ -21,6 +22,16 @@ export function expectIdentical<T>(actual: T, expected: T): void {
 // Like `expect(...).deep.equal(...)` but statically typed.
 export function expectDeepEqual<T>(actual: T, expected: T): void {
   if (!deepEqual(actual, expected, {strict: true})) {
+    debugger;
+    expect(actual).deep.equal(expected);
+  }
+}
+
+export function expectPreludeEqual<T extends HasEquals>(
+  actual: T,
+  expected: T,
+): void {
+  if (!actual.equals(expected)) {
     debugger;
     expect(actual).deep.equal(expected);
   }

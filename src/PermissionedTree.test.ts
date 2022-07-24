@@ -2,7 +2,8 @@ import {AppliedOp, createPermissionedTree, NodeId} from "./PermissionedTree";
 import {DeviceId, OpList} from "./ControlledOpSet";
 import {RoMap} from "./helper/Collection";
 import {CountingClock} from "./helper/Clock.testing";
-import {expectDeepEqual} from "./helper/Shared.testing";
+import {expectDeepEqual, expectPreludeEqual} from "./helper/Shared.testing";
+import {HashMap} from "prelude-ts";
 
 describe("PermissionedTree", () => {
   const clock = new CountingClock();
@@ -124,12 +125,12 @@ describe("PermissionedTree", () => {
       const tree1 = tree.update(
         RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA3]]),
       );
-      expectDeepEqual(
+      expectPreludeEqual(
         tree1.value.nodes,
-        RoMap([
+        HashMap.of(
           [nodeA, {parent: rootNodeId, position: 1}],
           [nodeB, {parent: nodeA, position: 0}],
-        ]),
+        ),
       );
     });
 
@@ -137,12 +138,12 @@ describe("PermissionedTree", () => {
       const tree1 = tree.update(
         RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA3]]),
       );
-      expectDeepEqual(
+      expectPreludeEqual(
         tree1.value.nodes,
-        RoMap([
+        HashMap.of(
           [nodeA, {parent: rootNodeId, position: 1}],
           [nodeB, {parent: nodeA, position: 0}],
-        ]),
+        ),
       );
     });
 
@@ -153,12 +154,12 @@ describe("PermissionedTree", () => {
           [deviceB, opB0],
         ]),
       );
-      expectDeepEqual(
+      expectPreludeEqual(
         tree1.value.nodes,
-        RoMap([
+        HashMap.of(
           [nodeA, {parent: nodeB, position: 0}],
           [nodeB, {parent: rootNodeId, position: 2}],
-        ]),
+        ),
       );
     });
   });

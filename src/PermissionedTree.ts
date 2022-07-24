@@ -13,18 +13,44 @@ import {
   persistentDoOpFactory,
   persistentUndoOp,
 } from "./PersistentUndoHelper";
+import {areEqual, fieldsHashCode, HashMap} from "prelude-ts";
 
 export type PermissionedTree = ControlledOpSet<
   PermissionedTreeValue,
   AppliedOp
 >;
 
+class ParentPos {
+  public parent: NodeId;
+  public position: number;
+  constructor(parent: NodeId, position: number) {
+    this.parent = parent;
+    this.position = position;
+  }
+  equals(other: ParentPos | undefined): boolean {
+    if (other) {
+      return (
+        areEqual(this.parent, other.parent) &&
+        areEqual(this.position, other.position)
+      );
+    } else {
+      return false;
+    }
+  }
+  hashCode(): number {
+    return fieldsHashCode(this.parent, this.position);
+  }
+  toString(): string {
+    return `{parent:${this.parent}, position:${this.position}}`;
+  }
+}
+
 type PermissionedTreeValue = {
   writers: RoMap<
     DeviceId,
     {priority: number; status: "open" | OpList<AppliedOp>}
   >;
-  nodes: RoMap<NodeId, {parent: NodeId; position: number}>;
+  nodes: HashMap<NodeId, ParentPos>;
 };
 export class NodeId extends TypedValue<"NodeId", string> {}
 
@@ -72,10 +98,10 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
         if (ancestor(value.nodes, op.node, op.parent)) return value;
         return {
           ...value,
-          nodes: mapWith(value.nodes, op.node, {
-            parent: op.parent,
-            position: op.position,
-          }),
+          nodes: value.nodes.put(
+            op.node,
+            new ParentPos(op.parent, op.position),
+          ),
         };
       }
     }),
@@ -84,19 +110,20 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
       mapMapToMap(value.writers, (device, info) => [device, info.status]),
     asType<PermissionedTreeValue>({
       writers: RoMap([[owner, {priority: 0, status: "open"}]]),
-      nodes: RoMap([]),
+      nodes: HashMap.empty(),
     }),
   );
 }
 
 // Is `parent` an ancestor of (or identical to) `child`?
 function ancestor(
-  tree: RoMap<NodeId, {parent: NodeId; position: number}>,
+  tree: HashMap<NodeId, {parent: NodeId; position: number}>,
   parent: NodeId,
   child: NodeId,
 ): boolean {
   if (child === parent) return true;
   const childInfo = tree.get(child);
-  if (!childInfo) return false;
-  return ancestor(tree, parent, childInfo.parent);
+  return childInfo
+    .map((info) => ancestor(tree, parent, info.parent))
+    .getOrElse(false);
 }
