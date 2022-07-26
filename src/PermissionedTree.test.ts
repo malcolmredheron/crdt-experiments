@@ -1,4 +1,9 @@
-import {AppliedOp, createPermissionedTree, NodeId} from "./PermissionedTree";
+import {
+  AppliedOp,
+  createPermissionedTree,
+  NodeId,
+  ParentPos,
+} from "./PermissionedTree";
 import {DeviceId, OpList} from "./ControlledOpSet";
 import {RoMap} from "./helper/Collection";
 import {CountingClock} from "./helper/Clock.testing";
@@ -128,8 +133,8 @@ describe("PermissionedTree", () => {
       expectPreludeEqual(
         tree1.value.nodes,
         HashMap.of(
-          [nodeA, {parent: rootNodeId, position: 1}],
-          [nodeB, {parent: nodeA, position: 0}],
+          [nodeA, ParentPos.create({parent: rootNodeId, position: 1})],
+          [nodeB, ParentPos.create({parent: nodeA, position: 0})],
         ),
       );
     });
@@ -141,8 +146,8 @@ describe("PermissionedTree", () => {
       expectPreludeEqual(
         tree1.value.nodes,
         HashMap.of(
-          [nodeA, {parent: rootNodeId, position: 1}],
-          [nodeB, {parent: nodeA, position: 0}],
+          [nodeA, ParentPos.create({parent: rootNodeId, position: 1})],
+          [nodeB, ParentPos.create({parent: nodeA, position: 0})],
         ),
       );
     });
@@ -157,8 +162,8 @@ describe("PermissionedTree", () => {
       expectPreludeEqual(
         tree1.value.nodes,
         HashMap.of(
-          [nodeA, {parent: nodeB, position: 0}],
-          [nodeB, {parent: rootNodeId, position: 2}],
+          [nodeA, ParentPos.create({parent: nodeB, position: 0})],
+          [nodeB, ParentPos.create({parent: rootNodeId, position: 2})],
         ),
       );
     });
