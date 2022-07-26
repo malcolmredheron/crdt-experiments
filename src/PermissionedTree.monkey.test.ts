@@ -16,7 +16,7 @@ import {
 import {DeviceId} from "./ControlledOpSet";
 import {Clock} from "./helper/Clock";
 import {Timestamp} from "./helper/Timestamp";
-import {expectDeepEqual} from "./helper/Shared.testing";
+import {expectDeepEqual, expectPreludeEqual} from "./helper/Shared.testing";
 
 type OpType = "add" | "move" | "update";
 const rootNodeId = NodeId.create("root");
@@ -93,7 +93,7 @@ describe("PermissionedTree.monkey", function () {
       ]),
     );
 
-    for (let turn = 0; turn < 100; turn++) {
+    for (let turn = 0; turn < 1000; turn++) {
       const clock: Clock = {
         now(): Timestamp {
           return Timestamp.create(turn);
@@ -137,7 +137,14 @@ describe("PermissionedTree.monkey", function () {
           tree.update(remoteHeads),
         ]);
         for (const [, tree] of devices1) {
-          expectDeepEqual(tree, Array.from(devices1.values())[0]);
+          expectDeepEqual(
+            tree.value.writers,
+            Array.from(devices1.values())[0].value.writers,
+          );
+          expectPreludeEqual(
+            tree.value.nodes,
+            Array.from(devices1.values())[0].value.nodes,
+          );
         }
       }
     }
@@ -155,7 +162,7 @@ function opForOpType(
     const node = NodeId.create(`node${rand.seq()}`);
     const parent = randomInArray(rand, [
       rootNodeId,
-      ...tree.value.nodes.keys(),
+      ...tree.value.nodes.keySet().toArray(),
     ]);
     return {
       timestamp: clock.now(),
@@ -165,10 +172,13 @@ function opForOpType(
       position: rand.rand(),
     };
   } else if (optype === "move") {
-    const node = randomInArray(rand, [rootNodeId, ...tree.value.nodes.keys()]);
+    const node = randomInArray(rand, [
+      rootNodeId,
+      ...tree.value.nodes.keySet().toArray(),
+    ]);
     const parent = randomInArray(rand, [
       rootNodeId,
-      ...tree.value.nodes.keys(),
+      ...tree.value.nodes.keySet().toArray(),
     ]);
     return {
       timestamp: clock.now(),
