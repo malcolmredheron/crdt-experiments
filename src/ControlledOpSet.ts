@@ -1,14 +1,8 @@
 import {Timestamp} from "./helper/Timestamp";
-import {
-  asType,
-  mapMapToMap,
-  mapWith,
-  mapWithout,
-  RoArray,
-  RoMap,
-} from "./helper/Collection";
+import {asType, RoArray, RoMap} from "./helper/Collection";
 import {TypedValue} from "./helper/TypedValue";
 import {AssertFailed} from "./helper/Assert";
+import {HashMap} from "prelude-ts";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 
@@ -45,7 +39,7 @@ export type UndoOp<Value, AppliedOp extends AppliedOpBase> = (
 
 type DesiredHeads<Value, AppliedOp extends AppliedOpBase> = (
   value: Value,
-) => RoMap<DeviceId, "open" | OpList<AppliedOp>>;
+) => HashMap<DeviceId, "open" | OpList<AppliedOp>>;
 
 export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   static create<Value, AppliedOp extends AppliedOpBase>(
@@ -60,7 +54,7 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
       desiredHeads,
       value,
       undefined,
-      RoMap(),
+      HashMap.empty(),
     );
   }
 
@@ -71,28 +65,31 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
 
     readonly value: Value,
     readonly appliedHead: AppliedOpList<AppliedOp> | undefined,
-    readonly heads: RoMap<DeviceId, OpList<AppliedOp>>,
+    readonly heads: HashMap<DeviceId, OpList<AppliedOp>>,
   ) {}
 
   update(
-    remoteHeads: RoMap<DeviceId, undefined | OpList<AppliedOp>>,
+    remoteHeads: HashMap<DeviceId, undefined | OpList<AppliedOp>>,
   ): ControlledOpSet<Value, AppliedOp> {
     const abstractDesiredHeads = this.desiredHeads(this.value);
-    const filteredAbstractDesiredHeads = RoMap(
-      Array.from(abstractDesiredHeads.entries()).filter(
-        ([deviceId]) => remoteHeads.get(deviceId) !== undefined,
+    const filteredAbstractDesiredHeads = abstractDesiredHeads.filterKeys(
+      (deviceId) => remoteHeads.get(deviceId).getOrUndefined() !== undefined,
+    );
+    const desiredHeads = filteredAbstractDesiredHeads.map<
+      DeviceId,
+      OpList<AppliedOp>
+    >((deviceId, openOrOp) => [
+      deviceId,
+      asType<OpList<AppliedOp>>(
+        openOrOp === "open"
+          ? remoteHeads
+              .get(deviceId)
+              .getOrThrow("There should be a remote head for this deviceId")!
+          : openOrOp,
       ),
-    );
-    const desiredHeads = mapMapToMap(
-      filteredAbstractDesiredHeads,
-      (deviceId, openOrOp) => [
-        deviceId,
-        asType<OpList<AppliedOp>>(
-          openOrOp === "open" ? remoteHeads.get(deviceId)! : openOrOp,
-        ),
-      ],
-    );
-    if (ControlledOpSet.headsEqual(desiredHeads, this.heads)) return this;
+    ]);
+
+    if (desiredHeads.equals(this.heads)) return this;
 
     const {value, appliedHead, ops} = ControlledOpSet.commonStateAndDesiredOps(
       this.undoOp,
@@ -131,8 +128,8 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     AppliedOp extends AppliedOpBase,
   >(
     undoOp: UndoOp<Value, AppliedOp>,
-    desiredHeads: RoMap<DeviceId, OpList<AppliedOp>>,
-    actualHeads: RoMap<DeviceId, OpList<AppliedOp>>,
+    desiredHeads: HashMap<DeviceId, OpList<AppliedOp>>,
+    actualHeads: HashMap<DeviceId, OpList<AppliedOp>>,
     value: Value,
     appliedHead: undefined | AppliedOpList<AppliedOp>,
   ): {
@@ -142,7 +139,7 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   } {
     const ops = new Array<AppliedOp["op"]>();
 
-    while (!ControlledOpSet.headsEqual(desiredHeads, actualHeads)) {
+    while (!desiredHeads.equals(actualHeads)) {
       const {heads: nextRemainingDesiredHeads, op: desiredOp} =
         ControlledOpSet.undoHeadsOnce(desiredHeads);
       const {heads: nextActualHeads, op: actualOp} =
@@ -205,25 +202,25 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   }
 
   private static undoHeadsOnce<AppliedOp extends AppliedOpBase>(
-    heads: RoMap<DeviceId, OpList<AppliedOp>>,
+    heads: HashMap<DeviceId, OpList<AppliedOp>>,
   ): {
     op: undefined | AppliedOp["op"];
-    heads: RoMap<DeviceId, OpList<AppliedOp>>;
+    heads: HashMap<DeviceId, OpList<AppliedOp>>;
   } {
-    if (heads.size === 0) return {op: undefined, heads};
+    if (heads.length() === 0) return {op: undefined, heads};
 
-    const [newestDeviceId, newestOpList] = Array.from(heads.entries()).reduce(
-      (winner, current) => {
+    const [newestDeviceId, newestOpList] = heads
+      .reduce((winner, current) => {
         return winner[1].op.timestamp > current[1].op.timestamp
           ? winner
           : current;
-      },
-    );
+      })
+      .getOrThrow("Reducing over empty heads");
     return {
       op: newestOpList.op,
       heads: newestOpList.prev
-        ? mapWith(heads, newestDeviceId, newestOpList.prev)
-        : mapWithout(heads, newestDeviceId),
+        ? heads.put(newestDeviceId, newestOpList.prev)
+        : heads.remove(newestDeviceId),
     };
   }
 

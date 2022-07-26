@@ -1,4 +1,6 @@
-export class TypedValue<Name extends string, T> {
+import {HasEquals} from "prelude-ts";
+
+export class TypedValue<Name extends string, T> implements HasEquals {
   static create<Name extends string, T>(
     this: new (raw: T) => TypedValue<Name, T>,
     raw: T,
