@@ -1,12 +1,5 @@
 import seedRandom from "seed-random";
-import {
-  asType,
-  definedOrThrow,
-  mapMapToMap,
-  mapWith,
-  RoArray,
-  RoMap,
-} from "./helper/Collection";
+import {asType, definedOrThrow, RoArray} from "./helper/Collection";
 import {
   AppliedOp,
   createPermissionedTree,
@@ -16,6 +9,7 @@ import {
 import {DeviceId} from "./ControlledOpSet";
 import {Clock} from "./helper/Clock";
 import {Timestamp} from "./helper/Timestamp";
+import {HashMap} from "prelude-ts";
 import {expectPreludeEqual} from "./helper/Shared.testing";
 
 type OpType = "add" | "move" | "update";
@@ -86,11 +80,11 @@ describe("PermissionedTree.monkey", function () {
       priority: -1,
       status: "open",
     });
-    let devices = RoMap<DeviceId, PermissionedTree>(
-      Array.from(Array(4).keys()).map((index) => [
-        DeviceId.create(`device${index}`),
-        initialTree,
-      ]),
+    let devices = HashMap<DeviceId, PermissionedTree>.of(
+      [DeviceId.create("device1"), initialTree],
+      [DeviceId.create("device2"), initialTree],
+      [DeviceId.create("device3"), initialTree],
+      [DeviceId.create("device4"), initialTree],
     );
 
     for (let turn = 0; turn < 10000; turn++) {
@@ -107,38 +101,42 @@ describe("PermissionedTree.monkey", function () {
 
       // Update a device.
       {
-        const device = randomInArray(rand, Array.from(devices.keys()))!;
-        const tree = devices.get(device)!;
+        const device = randomInArray(rand, Array.from(devices.keySet()))!;
+        const tree = devices.get(device).getOrThrow("Device should be listed");
         const opType = randomOpType(rand);
 
         log(`turn ${turn}, device ${device}, op type ${opType}`);
         if (opType === "update") {
-          const remoteHeads = mapMapToMap(devices, (device, tree) => [
+          const remoteHeads = devices.map((device, tree) => [
             device,
-            tree.heads.get(device),
+            tree.heads
+              .get(device)
+              .getOrThrow("Couldn't get device in tree heads"),
           ]);
           const tree1 = tree.update(remoteHeads);
-          devices = mapWith(devices, device, tree1);
+          devices = devices.put(device, tree1);
         } else {
           const op = opForOpType(clock, log, rand, opType, tree);
           const tree1 = applyNewOp(tree, device, op);
-          devices = mapWith(devices, device, tree1);
+          devices = devices.put(device, tree1);
         }
       }
 
       // Check the devices.
       if (turn % 10 === 0) {
-        const remoteHeads = mapMapToMap(devices, (device, tree) => [
+        const remoteHeads = devices.map((device, tree) => [
           device,
-          tree.heads.get(device),
+          tree.heads
+            .get(device)
+            .getOrThrow("Couldn't retrieve device from tree heads"),
         ]);
-        const devices1 = mapMapToMap(devices, (device, tree) => [
+        const devices1 = devices.map((device, tree) => [
           device,
           tree.update(remoteHeads),
         ]);
-        // for (const [, tree] of devices1) {
-        //   expectPreludeEqual(tree, Array.from(devices1.values())[0]);
-        // }
+        for (const [, tree] of devices1) {
+          expectPreludeEqual(tree, Array.from(devices1.values())[0]);
+        }
       }
     }
   });
@@ -190,7 +188,10 @@ function applyNewOp(
   device: DeviceId,
   op: AppliedOp["op"],
 ): PermissionedTree {
-  const opList1 = {prev: tree.heads.get(device), op};
-  const heads1 = mapWith(tree.heads, device, opList1);
+  const opList1 = {
+    prev: tree.heads.get(device).getOrThrow("Couldn't construct op list 1"),
+    op,
+  };
+  const heads1 = tree.heads.put(device, opList1);
   return tree.update(heads1);
 }
