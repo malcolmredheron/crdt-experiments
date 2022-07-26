@@ -1,6 +1,7 @@
 import {CaseClass} from "./CaseClass";
 import {expect} from "chai";
 import {RoArray} from "./Collection";
+import {expectIdentical} from "./Shared.testing";
 
 describe("CaseClass", () => {
   it("allows writable fields in create, not in copyWith", () => {
@@ -70,5 +71,26 @@ describe("CaseClass", () => {
     child.p.ar.push("bar");
     // @ts-expect-error: junk is not a valid property
     child.copyWith({junk: 5});
+  });
+
+  it("equals and hashCode work", () => {
+    class CC extends CaseClass<{
+      mutable: string;
+      readonly immutable: string;
+    }> {}
+
+    const cc = CC.create({mutable: "hello", immutable: "there"});
+    const ccSame = CC.create({mutable: "hello", immutable: "there"});
+    const ccModified = cc.copyWith({mutable: "bye"});
+
+    expectIdentical(cc.equals(ccSame), true);
+    expectIdentical(ccSame.equals(cc), true);
+    expectIdentical(cc.hashCode(), ccSame.hashCode());
+
+    expectIdentical(!cc.equals(ccModified), true);
+    expectIdentical(ccModified.equals(cc), false);
+    expectIdentical(cc.hashCode() === ccModified.hashCode(), false);
+
+    expectIdentical(cc.equals({}), false);
   });
 });
