@@ -13,37 +13,15 @@ import {
   persistentDoOpFactory,
   persistentUndoOp,
 } from "./PersistentUndoHelper";
-import {areEqual, fieldsHashCode, HashMap} from "prelude-ts";
+import {HashMap} from "prelude-ts";
+import {CaseClass} from "./helper/CaseClass";
 
 export type PermissionedTree = ControlledOpSet<
   PermissionedTreeValue,
   AppliedOp
 >;
 
-class ParentPos {
-  public parent: NodeId;
-  public position: number;
-  constructor(parent: NodeId, position: number) {
-    this.parent = parent;
-    this.position = position;
-  }
-  equals(other: ParentPos | undefined): boolean {
-    if (other) {
-      return (
-        areEqual(this.parent, other.parent) &&
-        areEqual(this.position, other.position)
-      );
-    } else {
-      return false;
-    }
-  }
-  hashCode(): number {
-    return fieldsHashCode(this.parent, this.position);
-  }
-  toString(): string {
-    return `{parent:${this.parent}, position:${this.position}}`;
-  }
-}
+export class ParentPos extends CaseClass<{parent: NodeId; position: number}> {}
 
 type PermissionedTreeValue = {
   writers: RoMap<
@@ -100,7 +78,7 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
           ...value,
           nodes: value.nodes.put(
             op.node,
-            new ParentPos(op.parent, op.position),
+            ParentPos.create({parent: op.parent, position: op.position}),
           ),
         };
       }
@@ -117,13 +95,13 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
 
 // Is `parent` an ancestor of (or identical to) `child`?
 function ancestor(
-  tree: HashMap<NodeId, {parent: NodeId; position: number}>,
+  tree: HashMap<NodeId, ParentPos>,
   parent: NodeId,
   child: NodeId,
 ): boolean {
   if (child === parent) return true;
   const childInfo = tree.get(child);
   return childInfo
-    .map((info) => ancestor(tree, parent, info.parent))
+    .map((info) => ancestor(tree, parent, info.p.parent))
     .getOrElse(false);
 }
