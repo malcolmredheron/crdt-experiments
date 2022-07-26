@@ -10,11 +10,11 @@ export class TypedValue<Name extends string, T> {
   readonly value: T = null as unknown as T;
 
   equals(other: TypedValue<Name, T>): boolean {
-    throw "Calling equals on TypedValue";
+    throw "TypedValue.equals should never be called since this is stripped at runtime";
   }
 
   hashCode(): number {
-    throw "Calling hashCode on TypedValue";
+    throw "TypedValue.hashCode should never be called since this is stripped at runtime";
   }
 }
 
