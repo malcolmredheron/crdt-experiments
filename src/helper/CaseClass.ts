@@ -26,7 +26,7 @@ Notes:
  */
 
 import {asType, scalarComparison} from "./Collection";
-import {MutableProps, ReadonlyProps, ReallyEmptyIfEmpty} from "./TypeMapping";
+import {ReadonlyProps, ReallyEmptyIfEmpty, WritableProps} from "./TypeMapping";
 import {areEqual, fieldsHashCode, Vector} from "prelude-ts";
 
 export class CaseClass<Props extends object> {
@@ -43,8 +43,8 @@ export class CaseClass<Props extends object> {
 
   public copyWith(
     modifyObject:
-      | ReallyEmptyIfEmpty<Partial<MutableProps<Props>>>
-      | ((object: this) => ReallyEmptyIfEmpty<Partial<MutableProps<Props>>>),
+      | ReallyEmptyIfEmpty<Partial<WritableProps<Props>>>
+      | ((object: this) => ReallyEmptyIfEmpty<Partial<WritableProps<Props>>>),
   ): this {
     const props = asType<ReadonlyProps<Props>>({
       ...this.p,
