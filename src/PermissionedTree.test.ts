@@ -133,8 +133,8 @@ describe("PermissionedTree", () => {
       expectPreludeEqual(
         tree1.value.nodes,
         HashMap.of(
-          [nodeA, ParentPos.create({parent: rootNodeId, position: 1})],
-          [nodeB, ParentPos.create({parent: nodeA, position: 0})],
+          [nodeA, new ParentPos({parent: rootNodeId, position: 1})],
+          [nodeB, new ParentPos({parent: nodeA, position: 0})],
         ),
       );
     });
@@ -146,8 +146,8 @@ describe("PermissionedTree", () => {
       expectPreludeEqual(
         tree1.value.nodes,
         HashMap.of(
-          [nodeA, ParentPos.create({parent: rootNodeId, position: 1})],
-          [nodeB, ParentPos.create({parent: nodeA, position: 0})],
+          [nodeA, new ParentPos({parent: rootNodeId, position: 1})],
+          [nodeB, new ParentPos({parent: nodeA, position: 0})],
         ),
       );
     });
@@ -162,8 +162,8 @@ describe("PermissionedTree", () => {
       expectPreludeEqual(
         tree1.value.nodes,
         HashMap.of(
-          [nodeA, ParentPos.create({parent: nodeB, position: 0})],
-          [nodeB, ParentPos.create({parent: rootNodeId, position: 2})],
+          [nodeA, new ParentPos({parent: nodeB, position: 0})],
+          [nodeB, new ParentPos({parent: rootNodeId, position: 2})],
         ),
       );
     });

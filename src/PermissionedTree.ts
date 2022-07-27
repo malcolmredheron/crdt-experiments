@@ -78,7 +78,7 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
           ...value,
           nodes: value.nodes.put(
             op.node,
-            ParentPos.create({parent: op.parent, position: op.position}),
+            new ParentPos({parent: op.parent, position: op.position}),
           ),
         };
       }

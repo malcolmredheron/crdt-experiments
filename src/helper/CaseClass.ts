@@ -15,33 +15,27 @@ TODOs
   compilation error when `copyWith` is called on any type since TS thinks that
   the type of `this.constructor` is `Function`.
 - Remove .p. Ideally, we'd use Object.assign to copy values directly into the
-  object. The problem is that TS doesn't seem to let us declare a class that has
-  instance variables that are defined by a generic. https://stackoverflow.com/questions/71571789/how-to-derive-properties-from-parameter-of-generic-class
-  is trying to do the same thing and got no good answers.
-
-Notes:
-- We use `create` instead `new` because `new` will infer template properties
-  when constructing an instance of a class that leaves its props type open (such
-  as `Parent` in the tests for this file). `create`, OTOH, will not.
- */
+  object. Here is what we have tried so far:
+  - TS doesn't seem to let us declare a class that has instance variables that
+    are defined by a generic. https://stackoverflow.com/questions/71571789/how-to-derive-properties-from-parameter-of-generic-class
+    is trying to do the same thing and got no good answers.
+  - Declaring the properties in the class instead of in the generic params. When
+    we do this we have to ts-ignore each line in a separate comment above the
+    line since there is no initializer in the constructor. We can't init the
+    props with dummy values because these will run after the inherited
+    constructor and overwrite the work done there.
+*/
 
 import {asType, scalarComparison} from "./Collection";
 import {ReadonlyProps, ReallyEmptyIfEmpty, WritableProps} from "./TypeMapping";
 import {areEqual, fieldsHashCode, Vector} from "prelude-ts";
 
 export class CaseClass<Props extends object> {
-  static create<Props extends object, CC>(
-    this: new (props: Readonly<Props>) => CC,
-    props: Readonly<Props>,
-  ): CC {
-    return new this(props);
-  }
-
   constructor(props: Readonly<Props>) {
     this.p = props;
   }
 
-  public copyWith(
+  public copy(
     modifyObject:
       | ReallyEmptyIfEmpty<Partial<WritableProps<Props>>>
       | ((object: this) => ReallyEmptyIfEmpty<Partial<WritableProps<Props>>>),
