@@ -4,8 +4,6 @@ import {
   RoSet,
   setAddAll,
   setFirst,
-  setIntersection,
-  setMap,
   writable,
 } from "./Collection";
 import {expect} from "chai";
@@ -57,17 +55,6 @@ describe("Collection", () => {
       const set = new Set<number>();
       setAddAll(set, [0, 2, 2, 3]);
       expect(set).eqls(new Set([0, 2, 3]));
-    });
-
-    it("setIntersection", () => {
-      const setA = RoSet([0, 1, 2]);
-      const setB = RoSet([1, 2, 3]);
-      expect(setIntersection(setA, setB)).eqls(new Set([1, 2]));
-    });
-
-    it("setMap", () => {
-      const set = RoSet([0, 1, 3]);
-      expect(setMap(set, (v) => "a" + v)).eqls(RoSet(["a0", "a1", "a3"]));
     });
   });
 });

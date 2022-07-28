@@ -13,10 +13,11 @@ import {
   NodeId,
   PermissionedTree,
 } from "./PermissionedTree";
-import {DeviceId} from "./ControlledOpSet";
+import {DeviceId, OpList} from "./ControlledOpSet";
 import {Clock} from "./helper/Clock";
 import {Timestamp} from "./helper/Timestamp";
 import {expectDeepEqual, expectPreludeEqual} from "./helper/Shared.testing";
+import {HashMap} from "prelude-ts";
 
 type OpType = "add" | "move" | "update";
 const rootNodeId = NodeId.create("root");
@@ -113,10 +114,7 @@ describe("PermissionedTree.monkey", function () {
 
         log(`turn ${turn}, device ${device}, op type ${opType}`);
         if (opType === "update") {
-          const remoteHeads = mapMapToMap(devices, (device, tree) => [
-            device,
-            tree.heads.get(device),
-          ]);
+          const remoteHeads = remoteHeadsForDevices(devices);
           const tree1 = tree.update(remoteHeads);
           devices = mapWith(devices, device, tree1);
         } else {
@@ -128,10 +126,7 @@ describe("PermissionedTree.monkey", function () {
 
       // Check the devices.
       if (turn % 10 === 0) {
-        const remoteHeads = mapMapToMap(devices, (device, tree) => [
-          device,
-          tree.heads.get(device),
-        ]);
+        const remoteHeads = remoteHeadsForDevices(devices);
         const devices1 = mapMapToMap(devices, (device, tree) => [
           device,
           tree.update(remoteHeads),
@@ -192,12 +187,27 @@ function opForOpType(
   }
 }
 
+function remoteHeadsForDevices(
+  devices: RoMap<DeviceId, PermissionedTree>,
+): HashMap<DeviceId, OpList<AppliedOp>> {
+  const hashMapDevices = HashMap.ofIterable(devices.entries());
+  return hashMapDevices.flatMap((device, tree) =>
+    tree.heads
+      .get(device)
+      .map((head) => [asType<[DeviceId, OpList<AppliedOp>]>([device, head])])
+      .getOrElse([]),
+  );
+}
+
 function applyNewOp(
   tree: PermissionedTree,
   device: DeviceId,
   op: AppliedOp["op"],
 ): PermissionedTree {
-  const opList1 = {prev: tree.heads.get(device), op};
-  const heads1 = mapWith(tree.heads, device, opList1);
+  const opList1 = new OpList<AppliedOp>({
+    prev: tree.heads.get(device).getOrUndefined(),
+    op,
+  });
+  const heads1 = tree.heads.put(device, opList1);
   return tree.update(heads1);
 }

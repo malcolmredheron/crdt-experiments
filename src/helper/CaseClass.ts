@@ -73,9 +73,12 @@ export class CaseClass<Props extends object> {
       const otherFields = Vector.ofIterable(
         (other as this).orderedFieldValues(),
       );
-      return ourFields
-        .zip(otherFields)
-        .allMatch(([ours, other]) => areEqual(ours, other));
+      return ourFields.zip(otherFields).allMatch(([ours, other]) => {
+        // areEqual is null-safe but not undefined-safe, so...
+        if ((ours === undefined) !== (other === undefined)) return false;
+        if (ours === other) return true;
+        return areEqual(ours, other);
+      });
     } else {
       return false;
     }

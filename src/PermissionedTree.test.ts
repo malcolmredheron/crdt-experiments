@@ -5,7 +5,6 @@ import {
   ParentPos,
 } from "./PermissionedTree";
 import {DeviceId, OpList} from "./ControlledOpSet";
-import {RoMap} from "./helper/Collection";
 import {CountingClock} from "./helper/Clock.testing";
 import {expectDeepEqual, expectPreludeEqual} from "./helper/Shared.testing";
 import {HashMap} from "prelude-ts";
@@ -31,14 +30,14 @@ describe("PermissionedTree", () => {
       status: "open",
     };
   }
-  const opA0: OpList<AppliedOp> = {
+  const opA0 = new OpList<AppliedOp>({
     op: openWriterOp(deviceA, deviceB, -1),
     prev: undefined,
-  };
+  });
 
   describe("permissions", () => {
     it("adds a lower-ranked writer", () => {
-      const tree1 = tree.update(RoMap([[deviceA, opA0]]));
+      const tree1 = tree.update(HashMap.of([deviceA, opA0]));
       expectDeepEqual(tree1.value.writers.get(deviceB), {
         priority: -1,
         status: "open",
@@ -47,15 +46,12 @@ describe("PermissionedTree", () => {
 
     it("ignores a SetWriter to add an equal-priority writer", () => {
       const tree1 = tree.update(
-        RoMap([
-          [
-            deviceA,
-            {
-              op: openWriterOp(deviceA, deviceB, 0),
-              prev: undefined,
-              timestamp: clock.now(),
-            },
-          ],
+        HashMap.of([
+          deviceA,
+          new OpList<AppliedOp>({
+            op: openWriterOp(deviceA, deviceB, 0),
+            prev: undefined,
+          }),
         ]),
       );
       expectDeepEqual(tree1.value.writers.get(deviceB), undefined);
@@ -63,15 +59,12 @@ describe("PermissionedTree", () => {
 
     it("ignores a SetWriter to modify an equal-priority writer", () => {
       const tree1 = tree.update(
-        RoMap([
-          [
-            deviceA,
-            {
-              op: openWriterOp(deviceB, deviceB, -2),
-              prev: opA0,
-              timestamp: clock.now(),
-            },
-          ],
+        HashMap.of([
+          deviceA,
+          new OpList<AppliedOp>({
+            op: openWriterOp(deviceB, deviceB, -2),
+            prev: opA0,
+          }),
         ]),
       );
       expectDeepEqual(tree1.value.writers.get(deviceB), {
@@ -85,7 +78,7 @@ describe("PermissionedTree", () => {
     const nodeA = NodeId.create("a");
     const nodeB = NodeId.create("b");
 
-    const opA1: OpList<AppliedOp> = {
+    const opA1 = new OpList<AppliedOp>({
       op: {
         timestamp: clock.now(),
         type: "set parent",
@@ -94,8 +87,8 @@ describe("PermissionedTree", () => {
         position: 1,
       },
       prev: opA0,
-    };
-    const opA2: OpList<AppliedOp> = {
+    });
+    const opA2 = new OpList<AppliedOp>({
       op: {
         timestamp: clock.now(),
         type: "set parent",
@@ -104,8 +97,8 @@ describe("PermissionedTree", () => {
         position: 2,
       },
       prev: opA1,
-    };
-    const opB0: OpList<AppliedOp> = {
+    });
+    const opB0 = new OpList<AppliedOp>({
       op: {
         timestamp: clock.now(),
         type: "set parent",
@@ -114,8 +107,8 @@ describe("PermissionedTree", () => {
         position: 0,
       },
       prev: undefined,
-    };
-    const opA3: OpList<AppliedOp> = {
+    });
+    const opA3 = new OpList<AppliedOp>({
       op: {
         timestamp: clock.now(),
         type: "set parent",
@@ -124,11 +117,11 @@ describe("PermissionedTree", () => {
         position: 0,
       },
       prev: opA2,
-    };
+    });
 
     it("adds a node", () => {
       const tree1 = tree.update(
-        RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA3]]),
+        HashMap.of<DeviceId, OpList<AppliedOp>>([deviceA, opA3]),
       );
       expectPreludeEqual(
         tree1.value.nodes,
@@ -141,7 +134,7 @@ describe("PermissionedTree", () => {
 
     it("moves a node", () => {
       const tree1 = tree.update(
-        RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA3]]),
+        HashMap.of<DeviceId, OpList<AppliedOp>>([deviceA, opA3]),
       );
       expectPreludeEqual(
         tree1.value.nodes,
@@ -154,10 +147,10 @@ describe("PermissionedTree", () => {
 
     it("avoids a cycle", () => {
       const tree1 = tree.update(
-        RoMap<DeviceId, OpList<AppliedOp>>([
+        HashMap.of<DeviceId, OpList<AppliedOp>>(
           [deviceA, opA3],
           [deviceB, opB0],
-        ]),
+        ),
       );
       expectPreludeEqual(
         tree1.value.nodes,

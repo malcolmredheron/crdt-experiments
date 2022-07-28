@@ -159,51 +159,6 @@ export function arraySorted<V>(
   return mutable;
 }
 
-export function arraySortedByKey<V, K extends Scalar>(
-  array: RoArray<V>,
-  key: (v: V) => K,
-): RoArray<V> {
-  return arraySorted(array, (a, b) => {
-    const keyA = key(a);
-    const keyB = key(b);
-    return scalarComparison(keyA, keyB);
-  });
-}
-
-export function arrayStartsWith<T>(
-  array: RoArray<T>,
-  subArray: RoArray<T>,
-): boolean {
-  return arrayEqual(array.slice(0, subArray.length), subArray);
-}
-
-export function mapAddAll<K, V>(
-  map: Map<K, V>,
-  tuples: Iterable<[K, V]>,
-): void {
-  for (const tuple of tuples) {
-    mapAdd(map, tuple[0], tuple[1]);
-  }
-}
-
-export function mapAdd<K, V>(map: Map<K, V>, key: K, value: V): void {
-  if (map.has(key)) {
-    throw new AssertFailed(`mapAdd found existing key: ` + key);
-  }
-  map.set(key, value);
-}
-
-export function mapGetOrAdd<K, V>(
-  map: Map<K, V>,
-  key: K,
-  defaultValue: () => V,
-): V {
-  if (map.has(key)) return map.get(key)!;
-  const value = defaultValue();
-  map.set(key, value);
-  return value;
-}
-
 export function mapMapToMap<K, V, K1, V1>(
   map: RoMap<K, V>,
   func: (key: K, value: V) => [K1, V1],
@@ -211,29 +166,6 @@ export function mapMapToMap<K, V, K1, V1>(
   return new Map(
     Array.from(map.entries()).map((entry) => func(entry[0], entry[1])),
   );
-}
-
-export function mapMap<K, V, T>(
-  map: RoMap<K, V>,
-  func: (key: K, value: V) => T,
-): Iterable<T> {
-  return Array.from(map.entries()).map((entry) => func(entry[0], entry[1]));
-}
-
-export function mapReplace<K, V>(map: Map<K, V>, key: K, value: V): void {
-  if (!map.has(key)) {
-    throw new AssertFailed(`mapReplace did not find existing key: ` + key);
-  }
-  map.set(key, value);
-}
-
-export function mapSetAll<K, V>(
-  map: Map<K, V>,
-  tuples: Iterable<[K, V]>,
-): void {
-  for (const tuple of tuples) {
-    map.set(tuple[0], tuple[1]);
-  }
 }
 
 export function mapWith<K, V>(map: RoMap<K, V>, key: K, value: V): RoMap<K, V> {
@@ -244,20 +176,9 @@ export function mapWithout<K, V>(map: RoMap<K, V>, key: K): RoMap<K, V> {
   return RoMap(Array.from(map).filter(([k, v]) => k !== key));
 }
 
-export function setAddChecked<V>(set: Set<V>, value: V): void {
-  if (set.has(value)) throw new AssertFailed("Set already contains value");
-  set.add(value);
-}
-
 export function setAddAll<V>(set: Set<V>, values: Iterable<V>): void {
   for (const v of values) {
     set.add(v);
-  }
-}
-
-export function setDeleteAll<V>(set: Set<V>, values: Iterable<V>): void {
-  for (const v of values) {
-    set.delete(v);
   }
 }
 
@@ -278,57 +199,12 @@ export function setFirst<V>(set: RoSet<V>): V | undefined {
   }
 }
 
-export function setIntersection<V>(setA: RoSet<V>, setB: RoSet<V>): Set<V> {
-  const intersection = new Set<V>();
-  for (const v of setA) {
-    if (setB.has(v)) intersection.add(v);
-  }
-  return intersection;
-}
-
-export function setMap<V, W>(set: RoSet<V>, func: (v: V) => W): RoSet<W> {
-  const result = new Set<W>();
-  for (const v of set) {
-    result.add(func(v));
-  }
-  return result;
-}
-
 export function setOnly<V>(set: RoSet<V>): V | undefined {
   if (set.size === 1) {
     return set.values().next().value;
   } else {
     return undefined;
   }
-}
-
-export function setUnion<V>(setA: Iterable<V>, setB: Iterable<V>): Set<V> {
-  const union = new Set<V>();
-  setAddAll(union, setA);
-  setAddAll(union, setB);
-  return union;
-}
-
-export function setWith<V>(set: Iterable<V>, value: V): RoSet<V> {
-  return RoSet([...set, value]);
-}
-
-export function setWithout<V>(set: Iterable<V>, value: V): RoSet<V> {
-  return RoSet([...set].filter((v) => v !== value));
-}
-
-// Dicts
-// Dicts are objects with string index types like {[key: string]: V}
-
-export function dictMapValues<V1, V2>(
-  dict: {[key: string]: V1},
-  fn: (key: string, val: V1) => V2,
-): {[key: string]: V2} {
-  const newDict: {[key: string]: V2} = {};
-  for (const key in dict) {
-    newDict[key] = fn(key, dict[key]);
-  }
-  return newDict;
 }
 
 // Transforms a value through a sequence of functions.

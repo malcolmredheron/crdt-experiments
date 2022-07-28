@@ -21,6 +21,10 @@ export type PermissionedTree = ControlledOpSet<
   AppliedOp
 >;
 
+export class PriorityStatus extends CaseClass<{
+  priority: number;
+  status: "open" | OpList<AppliedOp>;
+}> {}
 export class ParentPos extends CaseClass<{parent: NodeId; position: number}> {}
 
 type PermissionedTreeValue = {
@@ -85,7 +89,12 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
     }),
     persistentUndoOp,
     (value) =>
-      mapMapToMap(value.writers, (device, info) => [device, info.status]),
+      HashMap.ofIterable(
+        mapMapToMap(value.writers, (device, info) => [
+          device,
+          info.status,
+        ]).entries(),
+      ),
     asType<PermissionedTreeValue>({
       writers: RoMap([[owner, {priority: 0, status: "open"}]]),
       nodes: HashMap.empty(),

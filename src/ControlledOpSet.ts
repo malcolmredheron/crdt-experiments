@@ -1,14 +1,9 @@
 import {Timestamp} from "./helper/Timestamp";
-import {
-  asType,
-  mapMapToMap,
-  mapWith,
-  mapWithout,
-  RoArray,
-  RoMap,
-} from "./helper/Collection";
+import {asType, RoArray} from "./helper/Collection";
 import {TypedValue} from "./helper/TypedValue";
 import {AssertFailed} from "./helper/Assert";
+import {HashMap, Option} from "prelude-ts";
+import {CaseClass} from "./helper/CaseClass";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 
@@ -18,11 +13,11 @@ type AppliedOpBase = Readonly<{
   undoInfo: unknown;
 }>;
 
-export type OpList<AppliedOp extends AppliedOpBase> = Readonly<{
+export class OpList<AppliedOp extends AppliedOpBase> extends CaseClass<{
   // Previous op from the same device.
   prev: OpList<AppliedOp> | undefined;
   op: AppliedOp["op"];
-}>;
+}> {}
 
 type AppliedOpList<AppliedOp extends AppliedOpBase> = Readonly<{
   // Previous applied op on this device, regardless of the author.
@@ -45,7 +40,7 @@ export type UndoOp<Value, AppliedOp extends AppliedOpBase> = (
 
 type DesiredHeads<Value, AppliedOp extends AppliedOpBase> = (
   value: Value,
-) => RoMap<DeviceId, "open" | OpList<AppliedOp>>;
+) => HashMap<DeviceId, "open" | OpList<AppliedOp>>;
 
 export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   static create<Value, AppliedOp extends AppliedOpBase>(
@@ -60,7 +55,7 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
       desiredHeads,
       value,
       undefined,
-      RoMap(),
+      HashMap.of(),
     );
   }
 
@@ -71,26 +66,21 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
 
     readonly value: Value,
     readonly appliedHead: AppliedOpList<AppliedOp> | undefined,
-    readonly heads: RoMap<DeviceId, OpList<AppliedOp>>,
+    readonly heads: HashMap<DeviceId, OpList<AppliedOp>>,
   ) {}
 
   update(
-    remoteHeads: RoMap<DeviceId, undefined | OpList<AppliedOp>>,
+    remoteHeads: HashMap<DeviceId, OpList<AppliedOp>>,
   ): ControlledOpSet<Value, AppliedOp> {
     const abstractDesiredHeads = this.desiredHeads(this.value);
-    const filteredAbstractDesiredHeads = RoMap(
-      Array.from(abstractDesiredHeads.entries()).filter(
-        ([deviceId]) => remoteHeads.get(deviceId) !== undefined,
-      ),
-    );
-    const desiredHeads = mapMapToMap(
-      filteredAbstractDesiredHeads,
-      (deviceId, openOrOp) => [
-        deviceId,
-        asType<OpList<AppliedOp>>(
-          openOrOp === "open" ? remoteHeads.get(deviceId)! : openOrOp,
-        ),
-      ],
+    const desiredHeads = abstractDesiredHeads.flatMap((deviceId, openOrOp) =>
+      openOrOp === "open"
+        ? asType<Option<[DeviceId, OpList<AppliedOp>][]>>(
+            remoteHeads
+              .get(deviceId)
+              .map((remoteHead) => [[deviceId, remoteHead]]),
+          ).getOrElse([])
+        : [[deviceId, openOrOp]],
     );
     if (ControlledOpSet.headsEqual(desiredHeads, this.heads)) return this;
 
@@ -131,8 +121,8 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     AppliedOp extends AppliedOpBase,
   >(
     undoOp: UndoOp<Value, AppliedOp>,
-    desiredHeads: RoMap<DeviceId, OpList<AppliedOp>>,
-    actualHeads: RoMap<DeviceId, OpList<AppliedOp>>,
+    desiredHeads: HashMap<DeviceId, OpList<AppliedOp>>,
+    actualHeads: HashMap<DeviceId, OpList<AppliedOp>>,
     value: Value,
     appliedHead: undefined | AppliedOpList<AppliedOp>,
   ): {
@@ -193,37 +183,37 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   }
 
   private static headsEqual<AppliedOp extends AppliedOpBase>(
-    left: RoMap<DeviceId, OpList<AppliedOp>>,
-    right: RoMap<DeviceId, OpList<AppliedOp>>,
+    left: HashMap<DeviceId, OpList<AppliedOp>>,
+    right: HashMap<DeviceId, OpList<AppliedOp>>,
   ): boolean {
-    if (left.size !== right.size) return false;
+    if (left.length() !== right.length()) return false;
     for (const [deviceId, leftHead] of left) {
       const rightHead = right.get(deviceId);
-      if (leftHead !== rightHead) return false;
+      if (leftHead !== rightHead.getOrUndefined()) return false;
     }
     return true;
   }
 
   private static undoHeadsOnce<AppliedOp extends AppliedOpBase>(
-    heads: RoMap<DeviceId, OpList<AppliedOp>>,
+    heads: HashMap<DeviceId, OpList<AppliedOp>>,
   ): {
     op: undefined | AppliedOp["op"];
-    heads: RoMap<DeviceId, OpList<AppliedOp>>;
+    heads: HashMap<DeviceId, OpList<AppliedOp>>;
   } {
-    if (heads.size === 0) return {op: undefined, heads};
+    if (heads.isEmpty()) return {op: undefined, heads};
 
-    const [newestDeviceId, newestOpList] = Array.from(heads.entries()).reduce(
-      (winner, current) => {
-        return winner[1].op.timestamp > current[1].op.timestamp
-          ? winner
-          : current;
-      },
-    );
+    const newestDeviceAndOpList = heads.reduce((winner, current) => {
+      return winner[1].p.op.timestamp > current[1].p.op.timestamp
+        ? winner
+        : current;
+    });
+    if (Option.isNone(newestDeviceAndOpList)) return {op: undefined, heads};
+    const [newestDeviceId, newestOpList] = newestDeviceAndOpList.get();
     return {
-      op: newestOpList.op,
-      heads: newestOpList.prev
-        ? mapWith(heads, newestDeviceId, newestOpList.prev)
-        : mapWithout(heads, newestDeviceId),
+      op: newestOpList.p.op,
+      heads: newestOpList.p.prev
+        ? heads.put(newestDeviceId, newestOpList.p.prev)
+        : heads.remove(newestDeviceId),
     };
   }
 

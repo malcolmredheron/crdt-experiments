@@ -1,7 +1,11 @@
 import {ControlledOpSet, DeviceId, OpList} from "./ControlledOpSet";
-import {asType, mapWith, mapWithout, RoArray, RoMap} from "./helper/Collection";
+import {mapWith, mapWithout, RoArray, RoMap} from "./helper/Collection";
 import {CountingClock} from "./helper/Clock.testing";
-import {expectDeepEqual, expectIdentical} from "./helper/Shared.testing";
+import {
+  expectDeepEqual,
+  expectIdentical,
+  expectPreludeEqual,
+} from "./helper/Shared.testing";
 import {AssertFailed} from "./helper/Assert";
 import {Timestamp} from "./helper/Timestamp";
 import {
@@ -9,6 +13,7 @@ import {
   persistentDoOpFactory,
   persistentUndoOp,
 } from "./PersistentUndoHelper";
+import {HashMap} from "prelude-ts";
 
 describe("ControlledOpSet", () => {
   const deviceA = DeviceId.create("a");
@@ -27,69 +32,46 @@ describe("ControlledOpSet", () => {
         return [...value, op.token];
       }),
       persistentUndoOp,
-      (value) =>
-        RoMap([
-          [deviceA, "open"],
-          [deviceB, "open"],
-        ]),
+      (value) => HashMap.of([deviceA, "open"], [deviceB, "open"]),
       RoArray<string>(),
     );
-    const opA0 = asType<OpList<AppliedOp>>({
+    const opA0 = new OpList<AppliedOp>({
       op: {token: "a0", timestamp: clock.now()},
       prev: undefined,
     });
-    const opA1 = asType<OpList<AppliedOp>>({
+    const opA1 = new OpList<AppliedOp>({
       op: {token: "a1", timestamp: clock.now()},
       prev: opA0,
     });
-    const opB0 = asType<OpList<AppliedOp>>({
+    const opB0 = new OpList<AppliedOp>({
       op: {token: "b0", timestamp: clock.now()},
       prev: undefined,
     });
 
     it("update merges single new op", () => {
-      const cos1 = cos.update(RoMap([[deviceA, opA0]]));
+      const cos1 = cos.update(HashMap.of([deviceA, opA0]));
       expectDeepEqual(cos1.value, RoArray(["a0"]));
-      expectDeepEqual(
-        cos1.heads,
-        RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA0]]),
-      );
+      expectDeepEqual(cos1.heads, HashMap.of([deviceA, opA0]));
     });
 
     it("update merges multiple new ops", () => {
-      const cos1 = cos.update(RoMap([[deviceA, opA1]]));
+      const cos1 = cos.update(HashMap.of([deviceA, opA1]));
       expectDeepEqual(cos1.value, RoArray(["a0", "a1"]));
-      expectDeepEqual(
-        cos1.heads,
-        RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA1]]),
-      );
+      expectDeepEqual(cos1.heads, HashMap.of([deviceA, opA1]));
     });
 
     it("update undoes before applying new ops", () => {
-      const cos1 = cos.update(RoMap([[deviceA, opA0]]));
-      const cos2 = cos1.update(
-        RoMap([
-          [deviceA, opA0],
-          [deviceB, opB0],
-        ]),
-      );
-      const cos3 = cos2.update(
-        RoMap([
-          [deviceA, opA1],
-          [deviceB, opB0],
-        ]),
-      );
+      const cos1 = cos.update(HashMap.of([deviceA, opA0]));
+      const cos2 = cos1.update(HashMap.of([deviceA, opA0], [deviceB, opB0]));
+      const cos3 = cos2.update(HashMap.of([deviceA, opA1], [deviceB, opB0]));
       expectDeepEqual(cos3.value, RoArray(["a0", "a1", "b0"]));
     });
 
     it("update purges newer ops from a device if needed", () => {
-      const cos1 = cos.update(RoMap([[deviceA, opA1]]));
-      const cos2 = cos1.update(RoMap([[deviceA, opA0]]));
+      const cos1 = cos.update(HashMap.of([deviceA, opA1]));
+      const cos2 = cos1.update(HashMap.of([deviceA, opA0]));
       expectDeepEqual(cos2.value, RoArray(["a0"]));
-      expectDeepEqual(
-        cos2.heads,
-        RoMap<DeviceId, OpList<AppliedOp>>([[deviceA, opA0]]),
-      );
+      expectDeepEqual(cos2.heads, HashMap.of([deviceA, opA0]));
     });
   });
 
@@ -194,22 +176,25 @@ describe("ControlledOpSet", () => {
           };
         } else throw new AssertFailed("Unknown op type");
       },
-      (value) => value.desiredWriters,
-      {tokens: RoArray<string>(), desiredWriters: RoMap([[deviceB, "open"]])},
+      (value) => HashMap.ofIterable(value.desiredWriters),
+      {
+        tokens: RoArray<string>(),
+        desiredWriters: RoMap([[deviceB, "open"]]),
+      },
     );
-    const opA0 = asType<OpList<AppliedOp>>({
+    const opA0 = new OpList<AppliedOp>({
       op: {type: "add", token: "a0", timestamp: clock.now()},
       prev: undefined,
     });
-    const opA1 = asType<OpList<AppliedOp>>({
+    const opA1 = new OpList<AppliedOp>({
       op: {type: "add", token: "a1", timestamp: clock.now()},
       prev: opA0,
     });
-    const opB0 = asType<OpList<AppliedOp>>({
+    const opB0 = new OpList<AppliedOp>({
       op: {type: "add writer", deviceId: deviceA, timestamp: clock.now()},
       prev: undefined,
     });
-    const opB1 = asType<OpList<AppliedOp>>({
+    const opB1 = new OpList<AppliedOp>({
       op: {
         type: "remove writer",
         deviceId: deviceA,
@@ -218,142 +203,84 @@ describe("ControlledOpSet", () => {
       },
       prev: opB0,
     });
-    const opB2 = asType<OpList<AppliedOp>>({
+    const opB2 = new OpList<AppliedOp>({
       op: {type: "add writer", deviceId: deviceA, timestamp: clock.now()},
       prev: opB1,
     });
-    const opB0Alternate = asType<OpList<AppliedOp>>({
+    const opB0Alternate = new OpList<AppliedOp>({
       op: {type: "add", token: "b0Alternate", timestamp: clock.now()},
       // TODO: would be nice to be able to chain ops of different types.
       prev: undefined,
     });
-    const opA2 = asType<OpList<AppliedOp>>({
+    const opA2 = new OpList<AppliedOp>({
       op: {type: "add", token: "a2", timestamp: clock.now()},
       prev: opA1,
     });
 
     it("ignores ops from a non-writer", () => {
-      const cos1 = cos.update(RoMap([[deviceA, opA1]]));
+      const cos1 = cos.update(HashMap.of([deviceA, opA1]));
       expectIdentical(cos1.appliedHead, undefined);
     });
 
     it("includes ops from an added writer", () => {
-      const cos1 = cos.update(
-        RoMap<DeviceId, OpList<AppliedOp>>([
-          [deviceA, opA1],
-          [deviceB, opB0],
-        ]),
-      );
+      const cos1 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB0]));
       expectDeepEqual(cos1.value.tokens, RoArray(["a0", "a1"]));
-      expectDeepEqual(
+      expectPreludeEqual(
         cos1.heads,
-        RoMap<DeviceId, OpList<AppliedOp>>([
-          [deviceA, opA1],
-          [deviceB, opB0],
-        ]),
+        HashMap.of([deviceA, opA1], [deviceB, opB0]),
       );
     });
 
     it("closes a writer", () => {
-      const cos1 = cos.update(
-        RoMap<DeviceId, OpList<AppliedOp>>([
-          [deviceA, opA1],
-          [deviceB, opB0],
-        ]),
-      );
+      const cos1 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB0]));
       expectDeepEqual(cos1.value.tokens, RoArray(["a0", "a1"]));
 
       // Close deviceA after opA0.
-      const cos2 = cos.update(
-        RoMap<DeviceId, OpList<AppliedOp>>([
-          [deviceA, opA1],
-          [deviceB, opB1],
-        ]),
-      );
+      const cos2 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB1]));
       // a1 was excluded because b0 closed that device.
       expectDeepEqual(cos2.value.tokens, RoArray(["a0"]));
-      expectDeepEqual(
+      expectPreludeEqual(
         cos2.heads,
-        RoMap<DeviceId, OpList<AppliedOp>>([
-          [deviceA, opA0],
-          [deviceB, opB1],
-        ]),
+        HashMap.of([deviceA, opA0], [deviceB, opB1]),
       );
     });
 
     it("reopens a closed writer", () => {
-      const cos1 = cos.update(
-        RoMap<DeviceId, OpList<AppliedOp>>([
-          [deviceA, opA1],
-          [deviceB, opB1],
-        ]),
-      );
+      const cos1 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB1]));
       expectDeepEqual(cos1.value.tokens, RoArray(["a0"]));
 
       // Reopen deviceA.
-      const cos2 = cos.update(
-        RoMap<DeviceId, OpList<AppliedOp>>([
-          [deviceA, opA1],
-          [deviceB, opB2],
-        ]),
-      );
+      const cos2 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB2]));
       expectDeepEqual(cos2.value.tokens, RoArray(["a0", "a1"]));
-      expectDeepEqual(
+      expectPreludeEqual(
         cos2.heads,
-        RoMap<DeviceId, OpList<AppliedOp>>([
-          [deviceA, opA1],
-          [deviceB, opB2],
-        ]),
+        HashMap.of([deviceA, opA1], [deviceB, opB2]),
       );
     });
 
     it("avoids redoing later ops from a removed writer", () => {
-      const cos1 = cos.update(
-        RoMap([
-          [deviceA, opA2],
-          [deviceB, opB0],
-        ]),
-      );
+      const cos1 = cos.update(HashMap.of([deviceA, opA2], [deviceB, opB0]));
       expectDeepEqual(cos1.value.tokens, RoArray(["a0", "a1", "a2"]));
 
-      const cos2 = cos.update(
-        RoMap([
-          [deviceA, opA2],
-          [deviceB, opB1],
-        ]),
-      );
+      const cos2 = cos.update(HashMap.of([deviceA, opA2], [deviceB, opB1]));
       // Even a2, which came after b1, which closed device A, is gone.
       expectDeepEqual(cos2.value.tokens, RoArray(["a0"]));
-      expectDeepEqual(
+      expectPreludeEqual(
         cos2.heads,
-        RoMap<DeviceId, OpList<AppliedOp>>([
-          [deviceA, opA0],
-          [deviceB, opB1],
-        ]),
+        HashMap.of([deviceA, opA0], [deviceB, opB1]),
       );
     });
 
     it("undo Add/Remove Writer", () => {
-      const cos1 = cos.update(
-        RoMap<DeviceId, OpList<AppliedOp>>([
-          [deviceA, opA1],
-          [deviceB, opB1],
-        ]),
-      );
+      const cos1 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB1]));
       expectDeepEqual(cos1.value.tokens, RoArray(["a0"]));
       // This forces b0 and b1 to be undone.
       const cos2 = cos1.update(
-        RoMap<DeviceId, OpList<AppliedOp>>([
-          [deviceA, opA1],
-          [deviceB, opB0Alternate],
-        ]),
+        HashMap.of([deviceA, opA1], [deviceB, opB0Alternate]),
       );
 
       expectDeepEqual(cos2.value.tokens, RoArray(["b0Alternate"]));
-      expectDeepEqual(
-        cos2.heads,
-        RoMap<DeviceId, OpList<AppliedOp>>([[deviceB, opB0Alternate]]),
-      );
+      expectDeepEqual(cos2.heads, HashMap.of([deviceB, opB0Alternate]));
     });
   });
 });
