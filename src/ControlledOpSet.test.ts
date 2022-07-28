@@ -1,11 +1,6 @@
 import {ControlledOpSet, DeviceId, OpList} from "./ControlledOpSet";
-import {mapWith, mapWithout, RoArray, RoMap} from "./helper/Collection";
 import {CountingClock} from "./helper/Clock.testing";
-import {
-  expectDeepEqual,
-  expectIdentical,
-  expectPreludeEqual,
-} from "./helper/Shared.testing";
+import {expectIdentical, expectPreludeEqual} from "./helper/Shared.testing";
 import {AssertFailed} from "./helper/Assert";
 import {Timestamp} from "./helper/Timestamp";
 import {
@@ -13,14 +8,14 @@ import {
   persistentDoOpFactory,
   persistentUndoOp,
 } from "./PersistentUndoHelper";
-import {HashMap} from "prelude-ts";
+import {HashMap, Vector} from "prelude-ts";
 
 describe("ControlledOpSet", () => {
   const deviceA = DeviceId.create("a");
   const deviceB = DeviceId.create("b");
 
   describe("basic", () => {
-    type Value = RoArray<string>;
+    type Value = Vector<string>;
     type AppliedOp = PersistentAppliedOp<
       Value,
       {token: string; timestamp: Timestamp}
@@ -29,11 +24,11 @@ describe("ControlledOpSet", () => {
     const clock = new CountingClock();
     const cos = ControlledOpSet.create<Value, AppliedOp>(
       persistentDoOpFactory((value, op) => {
-        return [...value, op.token];
+        return value.append(op.token);
       }),
       persistentUndoOp,
       (value) => HashMap.of([deviceA, "open"], [deviceB, "open"]),
-      RoArray<string>(),
+      Vector<string>.of(),
     );
     const opA0 = new OpList<AppliedOp>({
       op: {token: "a0", timestamp: clock.now()},
@@ -50,28 +45,28 @@ describe("ControlledOpSet", () => {
 
     it("update merges single new op", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA0]));
-      expectDeepEqual(cos1.value, RoArray(["a0"]));
-      expectDeepEqual(cos1.heads, HashMap.of([deviceA, opA0]));
+      expectPreludeEqual(cos1.value, Vector.of("a0"));
+      expectPreludeEqual(cos1.heads, HashMap.of([deviceA, opA0]));
     });
 
     it("update merges multiple new ops", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1]));
-      expectDeepEqual(cos1.value, RoArray(["a0", "a1"]));
-      expectDeepEqual(cos1.heads, HashMap.of([deviceA, opA1]));
+      expectPreludeEqual(cos1.value, Vector.of("a0", "a1"));
+      expectPreludeEqual(cos1.heads, HashMap.of([deviceA, opA1]));
     });
 
     it("update undoes before applying new ops", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA0]));
       const cos2 = cos1.update(HashMap.of([deviceA, opA0], [deviceB, opB0]));
       const cos3 = cos2.update(HashMap.of([deviceA, opA1], [deviceB, opB0]));
-      expectDeepEqual(cos3.value, RoArray(["a0", "a1", "b0"]));
+      expectPreludeEqual(cos3.value, Vector.of("a0", "a1", "b0"));
     });
 
     it("update purges newer ops from a device if needed", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1]));
       const cos2 = cos1.update(HashMap.of([deviceA, opA0]));
-      expectDeepEqual(cos2.value, RoArray(["a0"]));
-      expectDeepEqual(cos2.heads, HashMap.of([deviceA, opA0]));
+      expectPreludeEqual(cos2.value, Vector.of("a0"));
+      expectPreludeEqual(cos2.heads, HashMap.of([deviceA, opA0]));
     });
   });
 
@@ -104,8 +99,8 @@ describe("ControlledOpSet", () => {
     };
     type AppliedOp = AddToken | AddWriter | RemoveWriter;
     type Value = {
-      tokens: RoArray<string>;
-      desiredWriters: RoMap<DeviceId, "open" | OpList<AppliedOp>>;
+      tokens: Vector<string>;
+      desiredWriters: HashMap<DeviceId, "open" | OpList<AppliedOp>>;
     };
 
     const clock = new CountingClock();
@@ -115,7 +110,7 @@ describe("ControlledOpSet", () => {
           return {
             value: {
               ...value,
-              tokens: [...value.tokens, op.token],
+              tokens: value.tokens.append(op.token),
             },
             appliedOp: {op, undoInfo: undefined},
           };
@@ -123,15 +118,11 @@ describe("ControlledOpSet", () => {
           return {
             value: {
               ...value,
-              desiredWriters: mapWith(
-                value.desiredWriters,
-                op.deviceId,
-                "open",
-              ),
+              desiredWriters: value.desiredWriters.put(op.deviceId, "open"),
             },
             appliedOp: {
               op,
-              undoInfo: value.desiredWriters.get(op.deviceId),
+              undoInfo: value.desiredWriters.get(op.deviceId).getOrUndefined(),
             },
           };
         } else {
@@ -139,13 +130,12 @@ describe("ControlledOpSet", () => {
           return {
             value: {
               ...value,
-              desiredWriters: mapWith(
-                value.desiredWriters,
-                deviceId,
-                op.finalOp,
-              ),
+              desiredWriters: value.desiredWriters.put(deviceId, op.finalOp),
             },
-            appliedOp: {op, undoInfo: value.desiredWriters.get(deviceId)},
+            appliedOp: {
+              op,
+              undoInfo: value.desiredWriters.get(deviceId).getOrUndefined(),
+            },
           };
         }
       },
@@ -153,7 +143,7 @@ describe("ControlledOpSet", () => {
         if (op.type === "add") {
           return {
             ...value,
-            tokens: value.tokens.slice(0, -1),
+            tokens: value.tokens.dropRight(1),
           };
         } else if (op.type === "add writer") {
           undoInfo = undoInfo as AddWriter["undoInfo"];
@@ -161,8 +151,8 @@ describe("ControlledOpSet", () => {
             ...value,
             desiredWriters:
               undoInfo === undefined
-                ? mapWithout(value.desiredWriters, op.deviceId)
-                : mapWith(value.desiredWriters, op.deviceId, undoInfo),
+                ? value.desiredWriters.remove(op.deviceId)
+                : value.desiredWriters.put(op.deviceId, undoInfo),
           };
         } else if (op.type === "remove writer") {
           undoInfo = undoInfo as RemoveWriter["undoInfo"];
@@ -171,15 +161,15 @@ describe("ControlledOpSet", () => {
             ...value,
             desiredWriters:
               undoInfo === undefined
-                ? mapWithout(value.desiredWriters, deviceId)
-                : mapWith(value.desiredWriters, deviceId, undoInfo),
+                ? value.desiredWriters.remove(deviceId)
+                : value.desiredWriters.put(deviceId, undoInfo),
           };
         } else throw new AssertFailed("Unknown op type");
       },
       (value) => HashMap.ofIterable(value.desiredWriters),
       {
-        tokens: RoArray<string>(),
-        desiredWriters: RoMap([[deviceB, "open"]]),
+        tokens: Vector.of(),
+        desiredWriters: HashMap.of([deviceB, "open"]),
       },
     );
     const opA0 = new OpList<AppliedOp>({
@@ -224,7 +214,7 @@ describe("ControlledOpSet", () => {
 
     it("includes ops from an added writer", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB0]));
-      expectDeepEqual(cos1.value.tokens, RoArray(["a0", "a1"]));
+      expectPreludeEqual(cos1.value.tokens, Vector.of("a0", "a1"));
       expectPreludeEqual(
         cos1.heads,
         HashMap.of([deviceA, opA1], [deviceB, opB0]),
@@ -233,12 +223,12 @@ describe("ControlledOpSet", () => {
 
     it("closes a writer", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB0]));
-      expectDeepEqual(cos1.value.tokens, RoArray(["a0", "a1"]));
+      expectPreludeEqual(cos1.value.tokens, Vector.of("a0", "a1"));
 
       // Close deviceA after opA0.
       const cos2 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB1]));
       // a1 was excluded because b0 closed that device.
-      expectDeepEqual(cos2.value.tokens, RoArray(["a0"]));
+      expectPreludeEqual(cos2.value.tokens, Vector.of("a0"));
       expectPreludeEqual(
         cos2.heads,
         HashMap.of([deviceA, opA0], [deviceB, opB1]),
@@ -247,11 +237,11 @@ describe("ControlledOpSet", () => {
 
     it("reopens a closed writer", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB1]));
-      expectDeepEqual(cos1.value.tokens, RoArray(["a0"]));
+      expectPreludeEqual(cos1.value.tokens, Vector.of("a0"));
 
       // Reopen deviceA.
       const cos2 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB2]));
-      expectDeepEqual(cos2.value.tokens, RoArray(["a0", "a1"]));
+      expectPreludeEqual(cos2.value.tokens, Vector.of("a0", "a1"));
       expectPreludeEqual(
         cos2.heads,
         HashMap.of([deviceA, opA1], [deviceB, opB2]),
@@ -260,11 +250,11 @@ describe("ControlledOpSet", () => {
 
     it("avoids redoing later ops from a removed writer", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA2], [deviceB, opB0]));
-      expectDeepEqual(cos1.value.tokens, RoArray(["a0", "a1", "a2"]));
+      expectPreludeEqual(cos1.value.tokens, Vector.of("a0", "a1", "a2"));
 
       const cos2 = cos.update(HashMap.of([deviceA, opA2], [deviceB, opB1]));
       // Even a2, which came after b1, which closed device A, is gone.
-      expectDeepEqual(cos2.value.tokens, RoArray(["a0"]));
+      expectPreludeEqual(cos2.value.tokens, Vector.of("a0"));
       expectPreludeEqual(
         cos2.heads,
         HashMap.of([deviceA, opA0], [deviceB, opB1]),
@@ -273,14 +263,14 @@ describe("ControlledOpSet", () => {
 
     it("undo Add/Remove Writer", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB1]));
-      expectDeepEqual(cos1.value.tokens, RoArray(["a0"]));
+      expectPreludeEqual(cos1.value.tokens, Vector.of("a0"));
       // This forces b0 and b1 to be undone.
       const cos2 = cos1.update(
         HashMap.of([deviceA, opA1], [deviceB, opB0Alternate]),
       );
 
-      expectDeepEqual(cos2.value.tokens, RoArray(["b0Alternate"]));
-      expectDeepEqual(cos2.heads, HashMap.of([deviceB, opB0Alternate]));
+      expectPreludeEqual(cos2.value.tokens, Vector.of("b0Alternate"));
+      expectPreludeEqual(cos2.heads, HashMap.of([deviceB, opB0Alternate]));
     });
   });
 });
