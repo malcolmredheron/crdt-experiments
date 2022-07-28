@@ -1,10 +1,3 @@
-import {
-  asType,
-  definedOrThrow,
-  mapMapToMap,
-  mapWith,
-  RoMap,
-} from "./helper/Collection";
 import {ControlledOpSet, DeviceId, OpList} from "./ControlledOpSet";
 import {Timestamp} from "./helper/Timestamp";
 import {TypedValue} from "./helper/TypedValue";
@@ -28,10 +21,7 @@ export class PriorityStatus extends CaseClass<{
 export class ParentPos extends CaseClass<{parent: NodeId; position: number}> {}
 
 type PermissionedTreeValue = {
-  writers: RoMap<
-    DeviceId,
-    {priority: number; status: "open" | OpList<AppliedOp>}
-  >;
+  writers: HashMap<DeviceId, PriorityStatus>;
   nodes: HashMap<NodeId, ParentPos>;
 };
 export class NodeId extends TypedValue<"NodeId", string> {}
@@ -60,21 +50,25 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
   return ControlledOpSet<PermissionedTreeValue, AppliedOp>.create(
     persistentDoOpFactory((value, op) => {
       if (op.type === "set writer") {
-        const devicePriority = definedOrThrow(
-          value.writers.get(op.device),
-          "Cannot find writer entry for op author",
-        ).priority;
-        const writerPriority = value.writers.get(op.targetWriter)?.priority;
+        const devicePriority = value.writers
+          .get(op.device)
+          .getOrThrow("Cannot find writer entry for op author").p.priority;
+        const writerPriority = value.writers
+          .get(op.targetWriter)
+          .getOrUndefined()?.p.priority;
         if (writerPriority !== undefined && writerPriority >= devicePriority)
           return value;
         if (op.priority >= devicePriority) return value;
 
         return {
           ...value,
-          writers: mapWith(value.writers, op.targetWriter, {
-            priority: op.priority,
-            status: op.status,
-          }),
+          writers: value.writers.put(
+            op.targetWriter,
+            new PriorityStatus({
+              priority: op.priority,
+              status: op.status,
+            }),
+          ),
         };
       } else {
         if (ancestor(value.nodes, op.node, op.parent)) return value;
@@ -88,17 +82,14 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
       }
     }),
     persistentUndoOp,
-    (value) =>
-      HashMap.ofIterable(
-        mapMapToMap(value.writers, (device, info) => [
-          device,
-          info.status,
-        ]).entries(),
-      ),
-    asType<PermissionedTreeValue>({
-      writers: RoMap([[owner, {priority: 0, status: "open"}]]),
+    (value) => value.writers.map((device, info) => [device, info.p.status]),
+    {
+      writers: HashMap.of([
+        owner,
+        new PriorityStatus({priority: 0, status: "open"}),
+      ]),
       nodes: HashMap.empty(),
-    }),
+    },
   );
 }
 

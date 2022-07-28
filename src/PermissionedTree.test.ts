@@ -3,10 +3,15 @@ import {
   createPermissionedTree,
   NodeId,
   ParentPos,
+  PriorityStatus,
 } from "./PermissionedTree";
 import {DeviceId, OpList} from "./ControlledOpSet";
 import {CountingClock} from "./helper/Clock.testing";
-import {expectDeepEqual, expectPreludeEqual} from "./helper/Shared.testing";
+import {
+  expectDeepEqual,
+  expectIdentical,
+  expectPreludeEqual,
+} from "./helper/Shared.testing";
 import {HashMap} from "prelude-ts";
 
 describe("PermissionedTree", () => {
@@ -38,10 +43,13 @@ describe("PermissionedTree", () => {
   describe("permissions", () => {
     it("adds a lower-ranked writer", () => {
       const tree1 = tree.update(HashMap.of([deviceA, opA0]));
-      expectDeepEqual(tree1.value.writers.get(deviceB), {
-        priority: -1,
-        status: "open",
-      });
+      expectDeepEqual(
+        tree1.value.writers.get(deviceB).getOrUndefined(),
+        new PriorityStatus({
+          priority: -1,
+          status: "open",
+        }),
+      );
     });
 
     it("ignores a SetWriter to add an equal-priority writer", () => {
@@ -54,7 +62,10 @@ describe("PermissionedTree", () => {
           }),
         ]),
       );
-      expectDeepEqual(tree1.value.writers.get(deviceB), undefined);
+      expectIdentical(
+        tree1.value.writers.get(deviceB).getOrUndefined(),
+        undefined,
+      );
     });
 
     it("ignores a SetWriter to modify an equal-priority writer", () => {
@@ -67,10 +78,13 @@ describe("PermissionedTree", () => {
           }),
         ]),
       );
-      expectDeepEqual(tree1.value.writers.get(deviceB), {
-        status: "open",
-        priority: -1,
-      });
+      expectDeepEqual(
+        tree1.value.writers.get(deviceB).getOrThrow(),
+        new PriorityStatus({
+          status: "open",
+          priority: -1,
+        }),
+      );
     });
   });
 

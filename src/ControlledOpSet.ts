@@ -1,9 +1,10 @@
 import {Timestamp} from "./helper/Timestamp";
-import {asType, RoArray} from "./helper/Collection";
+import {asType} from "./helper/Collection";
 import {TypedValue} from "./helper/TypedValue";
 import {AssertFailed} from "./helper/Assert";
-import {HashMap, Option} from "prelude-ts";
+import {HashMap, LinkedList, Option} from "prelude-ts";
 import {CaseClass} from "./helper/CaseClass";
+import {Seq} from "prelude-ts/dist/src/Seq";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 
@@ -98,10 +99,10 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     //   console.log("Undid back to ", undidBackTo, "from", undidFrom);
     // console.log("doing ops", ops.length);
 
-    const {value: appState1, appliedHead: appliedHead1} = ops.reduce(
+    const {value: appState1, appliedHead: appliedHead1} = ops.foldLeft(
+      {value, appliedHead},
       ({value, appliedHead}, op) =>
         ControlledOpSet.doOnce(this.doOp, value, appliedHead, op),
-      {value, appliedHead},
     );
     const this1 = new ControlledOpSet(
       this.doOp,
@@ -128,9 +129,9 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   ): {
     value: Value;
     appliedHead: undefined | AppliedOpList<AppliedOp>;
-    ops: RoArray<AppliedOp["op"]>;
+    ops: Seq<AppliedOp["op"]>;
   } {
-    const ops = new Array<AppliedOp["op"]>();
+    let ops = LinkedList.of<AppliedOp["op"]>();
 
     while (!ControlledOpSet.headsEqual(desiredHeads, actualHeads)) {
       const {heads: nextRemainingDesiredHeads, op: desiredOp} =
@@ -143,7 +144,7 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
         (!actualOp || desiredOp.timestamp > actualOp.timestamp)
       ) {
         desiredHeads = nextRemainingDesiredHeads;
-        ops.push(desiredOp);
+        ops = ops.prepend(desiredOp);
       } else if (
         actualOp &&
         (!desiredOp || actualOp.timestamp > desiredOp.timestamp)
@@ -160,7 +161,7 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
         desiredOp.timestamp === actualOp.timestamp
       ) {
         desiredHeads = nextRemainingDesiredHeads;
-        ops.push(desiredOp);
+        ops = ops.prepend(desiredOp);
         actualHeads = nextActualHeads;
         ({value, appliedHead} = ControlledOpSet.undoOnce(
           undoOp,
@@ -174,7 +175,6 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
       }
     }
 
-    ops.reverse();
     return {
       value: value,
       appliedHead: appliedHead,
