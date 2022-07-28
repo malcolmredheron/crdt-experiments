@@ -6,7 +6,7 @@
   "private": true,
   "dependencies": {
     "@types/seed-random": "^2.2.1",
-    "prelude-ts": "^1.0.4",
+    "prelude-ts": "github:malcolmredheron/prelude-ts#master",
     "seed-random": "^2.2.0"
   },
   "devDependencies": {
