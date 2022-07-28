@@ -28,10 +28,6 @@ export type RoArray<T> = ReadonlyArray<T>;
 export type RoMap<K, V> = ReadonlyMap<K, V>;
 export type RoSet<T> = ReadonlySet<T>;
 
-export function RoArray<T>(values?: Iterable<T>): RoArray<T> {
-  return values === undefined ? [] : Array.from(values);
-}
-
 export function RoMap<K, V>(values?: Iterable<[K, V]>): RoMap<K, V> {
   if (values === undefined) return new Map();
 
@@ -46,14 +42,6 @@ export function RoMap<K, V>(values?: Iterable<[K, V]>): RoMap<K, V> {
 export function RoSet<T>(values?: Iterable<T>): RoSet<T> {
   return new Set(values);
 }
-
-export type ReadonlyType<T> = T extends Array<infer V>
-  ? ReadonlyArray<V>
-  : T extends Map<infer K, infer V>
-  ? ReadonlyMap<K, V>
-  : T extends Set<infer V>
-  ? ReadonlySet<V>
-  : T;
 
 export function writable<V>(collection: ReadonlyArray<V>): Array<V>;
 export function writable<K, V>(collection: ReadonlyMap<K, V>): Map<K, V>;
@@ -72,18 +60,6 @@ export function writable(
     return new Set(collection);
   }
   throw new AssertFailed("Unexpected input type");
-}
-
-export function readonly<V>(collection: Array<V>): ReadonlyArray<V>;
-export function readonly<K, V>(collection: Map<K, V>): ReadonlyMap<K, V>;
-export function readonly<V>(collection: Set<V>): ReadonlySet<V>;
-export function readonly(
-  collection: Array<unknown> | Map<unknown, unknown> | Set<unknown>,
-):
-  | ReadonlyArray<unknown>
-  | ReadonlyMap<unknown, unknown>
-  | ReadonlySet<unknown> {
-  return collection;
 }
 
 type Scalar = boolean | number | string;
@@ -118,70 +94,6 @@ export function arrayEqual<V>(left: RoArray<V>, right: RoArray<V>): boolean {
   return true;
 }
 
-export function arrayFirst<V>(array: RoArray<V>): V | undefined {
-  return array.length === 0 ? undefined : array[0];
-}
-
-export function arrayLast<V>(array: RoArray<V>): V | undefined {
-  return array[array.length - 1];
-}
-
-export function arrayOnly<V>(array: RoArray<V>): V | undefined {
-  if (array.length === 1) {
-    return array[0];
-  } else {
-    return undefined;
-  }
-}
-
-export function arrayLastOrThrow<V>(array: RoArray<V>): V {
-  if (array.length === 0)
-    throw new AssertFailed("Cannot get last from empty array");
-  return array[array.length - 1];
-}
-
-export function arrayPushAll<V>(array: Array<V>, values: Iterable<V>): void {
-  for (const v of values) {
-    array.push(v);
-  }
-}
-
-export function arrayRemove<V>(array: Array<V>, index: number): void {
-  array.splice(index, 1);
-}
-
-export function arraySorted<V>(
-  array: RoArray<V>,
-  comparator: (a: V, b: V) => number,
-): RoArray<V> {
-  const mutable = writable(array);
-  mutable.sort(comparator);
-  return mutable;
-}
-
-export function mapMapToMap<K, V, K1, V1>(
-  map: RoMap<K, V>,
-  func: (key: K, value: V) => [K1, V1],
-): RoMap<K1, V1> {
-  return new Map(
-    Array.from(map.entries()).map((entry) => func(entry[0], entry[1])),
-  );
-}
-
-export function mapWith<K, V>(map: RoMap<K, V>, key: K, value: V): RoMap<K, V> {
-  return new Map(map).set(key, value);
-}
-
-export function mapWithout<K, V>(map: RoMap<K, V>, key: K): RoMap<K, V> {
-  return RoMap(Array.from(map).filter(([k, v]) => k !== key));
-}
-
-export function setAddAll<V>(set: Set<V>, values: Iterable<V>): void {
-  for (const v of values) {
-    set.add(v);
-  }
-}
-
 // Returns left - right.
 export function setDifference<V>(left: RoSet<V>, right: Iterable<V>): RoSet<V> {
   const output = writable(left);
@@ -189,14 +101,6 @@ export function setDifference<V>(left: RoSet<V>, right: Iterable<V>): RoSet<V> {
     output.delete(v);
   }
   return output;
-}
-
-export function setFirst<V>(set: RoSet<V>): V | undefined {
-  if (set.size > 0) {
-    return set.values().next().value;
-  } else {
-    return undefined;
-  }
 }
 
 export function setOnly<V>(set: RoSet<V>): V | undefined {

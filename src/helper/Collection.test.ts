@@ -1,28 +1,7 @@
-import {
-  arrayComparison,
-  readonly,
-  RoSet,
-  setAddAll,
-  setFirst,
-  writable,
-} from "./Collection";
+import {arrayComparison} from "./Collection";
 import {expect} from "chai";
 
 describe("Collection", () => {
-  it("readonly and writable", () => {
-    const o0 = {};
-    const o1 = {};
-    const set0 = readonly(new Set<{}>([o0]));
-    const set1 = writable(set0);
-    set1.add(o1);
-    expect(set0.has(o0)).equals(true);
-    expect(set0.has(o1)).equals(false);
-    expect(set0.has(6)).equals(false);
-    expect(set1.has(o0)).equals(true);
-    expect(set1.has(o1)).equals(true);
-    expect(set1.has(6)).equals(false);
-  });
-
   describe("Array", () => {
     describe("arrayComparison", () => {
       const numberComparison = (left: number, right: number): number =>
@@ -39,22 +18,6 @@ describe("Collection", () => {
         expect(arrayNumberComparison([1], [2])).equals(-1);
         expect(arrayNumberComparison([2], [1])).equals(1);
       });
-    });
-  });
-
-  describe("Set", () => {
-    it("setFirst returns undefined when set empty", () => {
-      expect(setFirst(RoSet([]))).equals(undefined);
-    });
-
-    it("setFirst returns first vaue when set not empty", () => {
-      expect(setFirst(RoSet([0, -3]))).equals(0);
-    });
-
-    it("setAddAll", () => {
-      const set = new Set<number>();
-      setAddAll(set, [0, 2, 2, 3]);
-      expect(set).eqls(new Set([0, 2, 3]));
     });
   });
 });
