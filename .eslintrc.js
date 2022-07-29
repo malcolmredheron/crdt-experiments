@@ -78,7 +78,8 @@ module.exports = {
     // to do this.
     "@typescript-eslint/no-this-alias": "off",
 
-    "@typescript-eslint/strict-boolean-expressions": ["error", {}],
+    // Disabled because it runs slowly. (Test with TIMING=1)
+    "@typescript-eslint/strict-boolean-expressions": "off",
 
     // We fix these automatically with prettier. There's no need to treat them
     // as errors while editing a file.
