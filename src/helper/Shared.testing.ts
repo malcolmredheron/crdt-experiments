@@ -1,7 +1,6 @@
 import {expect} from "chai";
 import deepEqual from "deep-equal";
-import {HasEquals} from "prelude-ts";
-import {RoMap, RoSet, setDifference, setOnly} from "./Collection";
+import {HasEquals, HashMap, HashSet} from "prelude-ts";
 
 // We have some functions that are useful to call in the console from tests
 // while debugging. However, the compiler complains if the symbols aren't used.
@@ -51,11 +50,11 @@ export function expectIdenticalMismatches<T>(
     return {actual, expected};
   } else if (typeof actual === "number" && typeof expected === "number") {
     return {actual, expected};
-  } else if (actual instanceof Set && expected instanceof Set) {
-    const onlyActual = setDifference(actual, expected);
-    const onlyExpected = setDifference(expected, actual);
-    const singleOnlyActual = setOnly(onlyActual);
-    const singleOnlyExpected = setOnly(onlyExpected);
+  } else if (actual instanceof HashSet && expected instanceof HashSet) {
+    const onlyActual = actual.removeAll(expected);
+    const onlyExpected = expected.removeAll(actual);
+    const singleOnlyActual = onlyActual.single().getOrUndefined();
+    const singleOnlyExpected = onlyExpected.single().getOrUndefined();
     if (singleOnlyActual !== undefined && singleOnlyExpected !== undefined) {
       mismatches["only difference, difference"] = expectIdenticalMismatches(
         singleOnlyActual,
@@ -73,12 +72,12 @@ export function expectIdenticalMismatches<T>(
       }
     }
   } else {
-    const actualMap = RoMap(Object.entries(actual));
-    const expectedMap = RoMap(Object.entries(expected));
-    const keys = RoSet([...actualMap.keys(), ...expectedMap.keys()]);
+    const actualMap = HashMap.ofIterable(Object.entries(actual));
+    const expectedMap = HashMap.ofIterable(Object.entries(expected));
+    const keys = actualMap.keySet().addAll(expectedMap.keySet());
     for (const key of keys) {
-      const actualValue = actualMap.get(key);
-      const expectedValue = expectedMap.get(key);
+      const actualValue = actualMap.get(key).getOrUndefined();
+      const expectedValue = expectedMap.get(key).getOrUndefined();
       mismatches[key] = expectIdenticalMismatches(actualValue, expectedValue);
     }
   }
