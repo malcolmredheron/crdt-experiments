@@ -12,7 +12,7 @@ import {
   expectIdentical,
   expectPreludeEqual,
 } from "./helper/Shared.testing";
-import {HashMap} from "prelude-ts";
+import {HashMap, LinkedList} from "prelude-ts";
 
 describe("PermissionedTree", () => {
   const clock = new CountingClock();
@@ -35,10 +35,9 @@ describe("PermissionedTree", () => {
       status: "open",
     };
   }
-  const opA0 = new OpList<AppliedOp>({
-    op: openWriterOp(deviceA, deviceB, -1),
-    prev: undefined,
-  });
+  const opA0 = LinkedList.of<AppliedOp["op"]>(
+    openWriterOp(deviceA, deviceB, -1),
+  );
 
   describe("permissions", () => {
     it("adds a lower-ranked writer", () => {
@@ -54,13 +53,7 @@ describe("PermissionedTree", () => {
 
     it("ignores a SetWriter to add an equal-priority writer", () => {
       const tree1 = tree.update(
-        HashMap.of([
-          deviceA,
-          new OpList<AppliedOp>({
-            op: openWriterOp(deviceA, deviceB, 0),
-            prev: undefined,
-          }),
-        ]),
+        HashMap.of([deviceA, LinkedList.of(openWriterOp(deviceA, deviceB, 0))]),
       );
       expectIdentical(
         tree1.value.writers.get(deviceB).getOrUndefined(),
@@ -70,13 +63,7 @@ describe("PermissionedTree", () => {
 
     it("ignores a SetWriter to modify an equal-priority writer", () => {
       const tree1 = tree.update(
-        HashMap.of([
-          deviceA,
-          new OpList<AppliedOp>({
-            op: openWriterOp(deviceB, deviceB, -2),
-            prev: opA0,
-          }),
-        ]),
+        HashMap.of([deviceA, opA0.prepend(openWriterOp(deviceB, deviceB, -2))]),
       );
       expectDeepEqual(
         tree1.value.writers.get(deviceB).getOrThrow(),
@@ -92,45 +79,33 @@ describe("PermissionedTree", () => {
     const nodeA = NodeId.create("a");
     const nodeB = NodeId.create("b");
 
-    const opA1 = new OpList<AppliedOp>({
-      op: {
-        timestamp: clock.now(),
-        type: "set parent",
-        node: nodeA,
-        parent: rootNodeId,
-        position: 1,
-      },
-      prev: opA0,
+    const opA1 = opA0.prepend({
+      timestamp: clock.now(),
+      type: "set parent",
+      node: nodeA,
+      parent: rootNodeId,
+      position: 1,
     });
-    const opA2 = new OpList<AppliedOp>({
-      op: {
-        timestamp: clock.now(),
-        type: "set parent",
-        node: nodeB,
-        parent: rootNodeId,
-        position: 2,
-      },
-      prev: opA1,
+    const opA2 = opA1.prepend({
+      timestamp: clock.now(),
+      type: "set parent",
+      node: nodeB,
+      parent: rootNodeId,
+      position: 2,
     });
-    const opB0 = new OpList<AppliedOp>({
-      op: {
-        timestamp: clock.now(),
-        type: "set parent",
-        node: nodeA,
-        parent: nodeB,
-        position: 0,
-      },
-      prev: undefined,
+    const opB0 = LinkedList.of<AppliedOp["op"]>({
+      timestamp: clock.now(),
+      type: "set parent",
+      node: nodeA,
+      parent: nodeB,
+      position: 0,
     });
-    const opA3 = new OpList<AppliedOp>({
-      op: {
-        timestamp: clock.now(),
-        type: "set parent",
-        node: nodeB,
-        parent: nodeA,
-        position: 0,
-      },
-      prev: opA2,
+    const opA3 = opA2.prepend({
+      timestamp: clock.now(),
+      type: "set parent",
+      node: nodeB,
+      parent: nodeA,
+      position: 0,
     });
 
     it("adds a node", () => {

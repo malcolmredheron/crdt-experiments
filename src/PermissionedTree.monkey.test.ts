@@ -10,7 +10,7 @@ import {DeviceId, OpList} from "./ControlledOpSet";
 import {Clock} from "./helper/Clock";
 import {Timestamp} from "./helper/Timestamp";
 import {expectPreludeEqual} from "./helper/Shared.testing";
-import {HashMap} from "prelude-ts";
+import {HashMap, LinkedList} from "prelude-ts";
 
 type OpType = "add" | "move" | "update";
 const rootNodeId = NodeId.create("root");
@@ -188,10 +188,10 @@ function applyNewOp(
   device: DeviceId,
   op: AppliedOp["op"],
 ): PermissionedTree {
-  const opList1 = new OpList<AppliedOp>({
-    prev: tree.heads.get(device).getOrUndefined(),
-    op,
-  });
+  const opList1 = tree.heads
+    .get(device)
+    .map((ops) => ops.prepend(op))
+    .getOrCall(() => LinkedList.of(op));
   const heads1 = tree.heads.put(device, opList1);
   return tree.update(heads1);
 }

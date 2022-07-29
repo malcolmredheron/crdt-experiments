@@ -8,7 +8,7 @@ import {
   persistentDoOpFactory,
   persistentUndoOp,
 } from "./PersistentUndoHelper";
-import {HashMap, Vector} from "prelude-ts";
+import {HashMap, LinkedList, Vector} from "prelude-ts";
 
 describe("ControlledOpSet", () => {
   const deviceA = DeviceId.create("a");
@@ -30,29 +30,35 @@ describe("ControlledOpSet", () => {
       (value) => HashMap.of([deviceA, "open"], [deviceB, "open"]),
       Vector<string>.of(),
     );
-    const opA0 = new OpList<AppliedOp>({
-      op: {token: "a0", timestamp: clock.now()},
-      prev: undefined,
+    const opA0 = LinkedList.of<AppliedOp["op"]>({
+      token: "a0",
+      timestamp: clock.now(),
     });
-    const opA1 = new OpList<AppliedOp>({
-      op: {token: "a1", timestamp: clock.now()},
-      prev: opA0,
+    const opA1 = opA0.prepend({
+      token: "a1",
+      timestamp: clock.now(),
     });
-    const opB0 = new OpList<AppliedOp>({
-      op: {token: "b0", timestamp: clock.now()},
-      prev: undefined,
+    const opB0 = LinkedList.of<AppliedOp["op"]>({
+      token: "b0",
+      timestamp: clock.now(),
     });
 
     it("update merges single new op", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA0]));
       expectPreludeEqual(cos1.value, Vector.of("a0"));
-      expectPreludeEqual(cos1.heads, HashMap.of([deviceA, opA0]));
+      expectIdentical(
+        ControlledOpSet.headsEqual(cos1.heads, HashMap.of([deviceA, opA0])),
+        true,
+      );
     });
 
     it("update merges multiple new ops", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1]));
       expectPreludeEqual(cos1.value, Vector.of("a0", "a1"));
-      expectPreludeEqual(cos1.heads, HashMap.of([deviceA, opA1]));
+      expectIdentical(
+        ControlledOpSet.headsEqual(cos1.heads, HashMap.of([deviceA, opA1])),
+        true,
+      );
     });
 
     it("update undoes before applying new ops", () => {
@@ -66,7 +72,10 @@ describe("ControlledOpSet", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1]));
       const cos2 = cos1.update(HashMap.of([deviceA, opA0]));
       expectPreludeEqual(cos2.value, Vector.of("a0"));
-      expectPreludeEqual(cos2.heads, HashMap.of([deviceA, opA0]));
+      expectIdentical(
+        ControlledOpSet.headsEqual(cos2.heads, HashMap.of([deviceA, opA0])),
+        true,
+      );
     });
   });
 
@@ -172,39 +181,41 @@ describe("ControlledOpSet", () => {
         desiredWriters: HashMap.of([deviceB, "open"]),
       },
     );
-    const opA0 = new OpList<AppliedOp>({
-      op: {type: "add", token: "a0", timestamp: clock.now()},
-      prev: undefined,
+    const opA0 = LinkedList.of<AppliedOp["op"]>({
+      type: "add",
+      token: "a0",
+      timestamp: clock.now(),
     });
-    const opA1 = new OpList<AppliedOp>({
-      op: {type: "add", token: "a1", timestamp: clock.now()},
-      prev: opA0,
+    const opA1 = opA0.prepend({
+      type: "add",
+      token: "a1",
+      timestamp: clock.now(),
     });
-    const opB0 = new OpList<AppliedOp>({
-      op: {type: "add writer", deviceId: deviceA, timestamp: clock.now()},
-      prev: undefined,
+    const opB0 = LinkedList.of<AppliedOp["op"]>({
+      type: "add writer",
+      deviceId: deviceA,
+      timestamp: clock.now(),
     });
-    const opB1 = new OpList<AppliedOp>({
-      op: {
-        type: "remove writer",
-        deviceId: deviceA,
-        finalOp: opA0,
-        timestamp: clock.now(),
-      },
-      prev: opB0,
+    const opB1 = opB0.prepend({
+      type: "remove writer",
+      deviceId: deviceA,
+      finalOp: opA0,
+      timestamp: clock.now(),
     });
-    const opB2 = new OpList<AppliedOp>({
-      op: {type: "add writer", deviceId: deviceA, timestamp: clock.now()},
-      prev: opB1,
+    const opB2 = opB1.prepend({
+      type: "add writer",
+      deviceId: deviceA,
+      timestamp: clock.now(),
     });
-    const opB0Alternate = new OpList<AppliedOp>({
-      op: {type: "add", token: "b0Alternate", timestamp: clock.now()},
-      // TODO: would be nice to be able to chain ops of different types.
-      prev: undefined,
+    const opB0Alternate = LinkedList.of<AppliedOp["op"]>({
+      type: "add",
+      token: "b0Alternate",
+      timestamp: clock.now(),
     });
-    const opA2 = new OpList<AppliedOp>({
-      op: {type: "add", token: "a2", timestamp: clock.now()},
-      prev: opA1,
+    const opA2 = opA1.prepend({
+      type: "add",
+      token: "a2",
+      timestamp: clock.now(),
     });
 
     it("ignores ops from a non-writer", () => {
@@ -215,9 +226,12 @@ describe("ControlledOpSet", () => {
     it("includes ops from an added writer", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB0]));
       expectPreludeEqual(cos1.value.tokens, Vector.of("a0", "a1"));
-      expectPreludeEqual(
-        cos1.heads,
-        HashMap.of([deviceA, opA1], [deviceB, opB0]),
+      expectIdentical(
+        ControlledOpSet.headsEqual(
+          cos1.heads,
+          HashMap.of([deviceA, opA1], [deviceB, opB0]),
+        ),
+        true,
       );
     });
 
@@ -229,9 +243,12 @@ describe("ControlledOpSet", () => {
       const cos2 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB1]));
       // a1 was excluded because b0 closed that device.
       expectPreludeEqual(cos2.value.tokens, Vector.of("a0"));
-      expectPreludeEqual(
-        cos2.heads,
-        HashMap.of([deviceA, opA0], [deviceB, opB1]),
+      expectIdentical(
+        ControlledOpSet.headsEqual(
+          cos2.heads,
+          HashMap.of([deviceA, opA0], [deviceB, opB1]),
+        ),
+        true,
       );
     });
 
@@ -242,9 +259,12 @@ describe("ControlledOpSet", () => {
       // Reopen deviceA.
       const cos2 = cos.update(HashMap.of([deviceA, opA1], [deviceB, opB2]));
       expectPreludeEqual(cos2.value.tokens, Vector.of("a0", "a1"));
-      expectPreludeEqual(
-        cos2.heads,
-        HashMap.of([deviceA, opA1], [deviceB, opB2]),
+      expectIdentical(
+        ControlledOpSet.headsEqual(
+          cos2.heads,
+          HashMap.of([deviceA, opA1], [deviceB, opB2]),
+        ),
+        true,
       );
     });
 
@@ -255,9 +275,12 @@ describe("ControlledOpSet", () => {
       const cos2 = cos.update(HashMap.of([deviceA, opA2], [deviceB, opB1]));
       // Even a2, which came after b1, which closed device A, is gone.
       expectPreludeEqual(cos2.value.tokens, Vector.of("a0"));
-      expectPreludeEqual(
-        cos2.heads,
-        HashMap.of([deviceA, opA0], [deviceB, opB1]),
+      expectIdentical(
+        ControlledOpSet.headsEqual(
+          cos2.heads,
+          HashMap.of([deviceA, opA0], [deviceB, opB1]),
+        ),
+        true,
       );
     });
 
@@ -270,7 +293,13 @@ describe("ControlledOpSet", () => {
       );
 
       expectPreludeEqual(cos2.value.tokens, Vector.of("b0Alternate"));
-      expectPreludeEqual(cos2.heads, HashMap.of([deviceB, opB0Alternate]));
+      expectIdentical(
+        ControlledOpSet.headsEqual(
+          cos2.heads,
+          HashMap.of([deviceB, opB0Alternate]),
+        ),
+        true,
+      );
     });
   });
 });

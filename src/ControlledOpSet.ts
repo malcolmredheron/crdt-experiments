@@ -2,8 +2,7 @@ import {Timestamp} from "./helper/Timestamp";
 import {asType} from "./helper/Collection";
 import {TypedValue} from "./helper/TypedValue";
 import {AssertFailed} from "./helper/Assert";
-import {HashMap, LinkedList, Option} from "prelude-ts";
-import {CaseClass} from "./helper/CaseClass";
+import {ConsLinkedList, HashMap, LinkedList, Option} from "prelude-ts";
 import {Seq} from "prelude-ts/dist/src/Seq";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
@@ -14,11 +13,9 @@ type AppliedOpBase = Readonly<{
   undoInfo: unknown;
 }>;
 
-export class OpList<AppliedOp extends AppliedOpBase> extends CaseClass<{
-  // Previous op from the same device.
-  prev: OpList<AppliedOp> | undefined;
-  op: AppliedOp["op"];
-}> {}
+export type OpList<AppliedOp extends AppliedOpBase> = ConsLinkedList<
+  AppliedOp["op"]
+>;
 
 export type DoOp<Value, AppliedOp extends AppliedOpBase> = (
   value: Value,
@@ -177,7 +174,7 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     };
   }
 
-  private static headsEqual<AppliedOp extends AppliedOpBase>(
+  static headsEqual<AppliedOp extends AppliedOpBase>(
     left: HashMap<DeviceId, OpList<AppliedOp>>,
     right: HashMap<DeviceId, OpList<AppliedOp>>,
   ): boolean {
@@ -198,17 +195,19 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     if (heads.isEmpty()) return {op: undefined, heads};
 
     const newestDeviceAndOpList = heads.reduce((winner, current) => {
-      return winner[1].p.op.timestamp > current[1].p.op.timestamp
+      return winner[1].head().get().timestamp >
+        current[1].head().get().timestamp
         ? winner
         : current;
     });
     if (Option.isNone(newestDeviceAndOpList)) return {op: undefined, heads};
     const [newestDeviceId, newestOpList] = newestDeviceAndOpList.get();
+    const heads1 = newestOpList.tail().getOrElse(LinkedList.of());
     return {
-      op: newestOpList.p.op,
-      heads: newestOpList.p.prev
-        ? heads.put(newestDeviceId, newestOpList.p.prev)
-        : heads.remove(newestDeviceId),
+      op: newestOpList.head().get(),
+      heads: heads1.isEmpty()
+        ? heads.remove(newestDeviceId)
+        : heads.put(newestDeviceId, heads1),
     };
   }
 
