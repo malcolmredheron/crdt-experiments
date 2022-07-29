@@ -209,7 +209,7 @@ describe("ControlledOpSet", () => {
 
     it("ignores ops from a non-writer", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1]));
-      expectIdentical(cos1.appliedHead, undefined);
+      expectIdentical(cos1.appliedOps.isEmpty(), true);
     });
 
     it("includes ops from an added writer", () => {

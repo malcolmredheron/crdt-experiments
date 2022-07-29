@@ -20,12 +20,6 @@ export class OpList<AppliedOp extends AppliedOpBase> extends CaseClass<{
   op: AppliedOp["op"];
 }> {}
 
-type AppliedOpList<AppliedOp extends AppliedOpBase> = Readonly<{
-  // Previous applied op on this device, regardless of the author.
-  prev: AppliedOpList<AppliedOp> | undefined;
-  appliedOp: AppliedOp;
-}>;
-
 export type DoOp<Value, AppliedOp extends AppliedOpBase> = (
   value: Value,
   op: AppliedOp["op"],
@@ -55,7 +49,7 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
       undoOp,
       desiredHeads,
       value,
-      undefined,
+      LinkedList.of(),
       HashMap.of(),
     );
   }
@@ -66,7 +60,8 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     readonly desiredHeads: DesiredHeads<Value, AppliedOp>,
 
     readonly value: Value,
-    readonly appliedHead: AppliedOpList<AppliedOp> | undefined,
+    // The most recent op is at the head of the list.
+    readonly appliedOps: LinkedList<AppliedOp>,
     readonly heads: HashMap<DeviceId, OpList<AppliedOp>>,
   ) {}
 
@@ -85,12 +80,12 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     );
     if (ControlledOpSet.headsEqual(desiredHeads, this.heads)) return this;
 
-    const {value, appliedHead, ops} = ControlledOpSet.commonStateAndDesiredOps(
+    const {value, appliedOps, ops} = ControlledOpSet.commonStateAndDesiredOps(
       this.undoOp,
       desiredHeads,
       this.heads,
       this.value,
-      this.appliedHead,
+      this.appliedOps,
     );
 
     // const undidBackTo = appliedHead?.appliedOp.op.timestamp;
@@ -99,17 +94,17 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     //   console.log("Undid back to ", undidBackTo, "from", undidFrom);
     // console.log("doing ops", ops.length);
 
-    const {value: appState1, appliedHead: appliedHead1} = ops.foldLeft(
-      {value, appliedHead},
-      ({value, appliedHead}, op) =>
-        ControlledOpSet.doOnce(this.doOp, value, appliedHead, op),
+    const {value: appState1, appliedOps: appliedOps1} = ops.foldLeft(
+      {value, appliedOps},
+      ({value, appliedOps}, op) =>
+        ControlledOpSet.doOnce(this.doOp, value, appliedOps, op),
     );
     const this1 = new ControlledOpSet(
       this.doOp,
       this.undoOp,
       this.desiredHeads,
       appState1,
-      appliedHead1,
+      appliedOps1,
       desiredHeads,
     );
 
@@ -125,10 +120,10 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     desiredHeads: HashMap<DeviceId, OpList<AppliedOp>>,
     actualHeads: HashMap<DeviceId, OpList<AppliedOp>>,
     value: Value,
-    appliedHead: undefined | AppliedOpList<AppliedOp>,
+    appliedOps: LinkedList<AppliedOp>,
   ): {
     value: Value;
-    appliedHead: undefined | AppliedOpList<AppliedOp>;
+    appliedOps: LinkedList<AppliedOp>;
     ops: Seq<AppliedOp["op"]>;
   } {
     let ops = LinkedList.of<AppliedOp["op"]>();
@@ -150,10 +145,10 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
         (!desiredOp || actualOp.timestamp > desiredOp.timestamp)
       ) {
         actualHeads = nextActualHeads;
-        ({value, appliedHead} = ControlledOpSet.undoOnce(
+        ({value, appliedOps} = ControlledOpSet.undoOnce(
           undoOp,
           value,
-          appliedHead!,
+          appliedOps!,
         ));
       } else if (
         desiredOp &&
@@ -163,10 +158,10 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
         desiredHeads = nextRemainingDesiredHeads;
         ops = ops.prepend(desiredOp);
         actualHeads = nextActualHeads;
-        ({value, appliedHead} = ControlledOpSet.undoOnce(
+        ({value, appliedOps} = ControlledOpSet.undoOnce(
           undoOp,
           value,
-          appliedHead!,
+          appliedOps!,
         ));
       } else {
         throw new AssertFailed(
@@ -176,8 +171,8 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     }
 
     return {
-      value: value,
-      appliedHead: appliedHead,
+      value,
+      appliedOps,
       ops,
     };
   }
@@ -220,33 +215,32 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   private static doOnce<Value, AppliedOp extends AppliedOpBase>(
     doOp: DoOp<Value, AppliedOp>,
     value: Value,
-    appliedHead: undefined | AppliedOpList<AppliedOp>,
+    appliedOps: LinkedList<AppliedOp>,
     op: AppliedOp["op"],
-  ): {value: Value; appliedHead: AppliedOpList<AppliedOp>} {
+  ): {value: Value; appliedOps: LinkedList<AppliedOp>} {
     const {value: appState1, appliedOp} = doOp(value, op);
     return {
       value: appState1,
-      appliedHead: {
-        appliedOp,
-        prev: appliedHead,
-      },
+      appliedOps: appliedOps.prepend(appliedOp),
     };
   }
 
   private static undoOnce<Value, AppliedOp extends AppliedOpBase>(
     undoOp: UndoOp<Value, AppliedOp>,
     value: Value,
-    appliedHead: AppliedOpList<AppliedOp>,
+    appliedOps: LinkedList<AppliedOp>,
   ): {
     value: Value;
-    appliedHead: undefined | AppliedOpList<AppliedOp>;
+    appliedOps: LinkedList<AppliedOp>;
   } {
-    if (appliedHead === undefined)
-      throw new AssertFailed("Attempt to undo but no ops");
-    const appState1 = undoOp(value, appliedHead.appliedOp);
-    return {
-      value: appState1,
-      appliedHead: appliedHead.prev,
-    };
+    if (LinkedList.isNotEmpty(appliedOps)) {
+      const appState1 = undoOp(value, appliedOps.head().get());
+      return {
+        value: appState1,
+        appliedOps: appliedOps.tail().get(),
+      };
+    } else {
+      throw new AssertFailed("Attempt to undo but no applied ops");
+    }
   }
 }
