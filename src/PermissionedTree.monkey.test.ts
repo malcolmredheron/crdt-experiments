@@ -3,10 +3,11 @@ import {asType, definedOrThrow} from "./helper/Collection";
 import {
   AppliedOp,
   createPermissionedTree,
+  DeviceId,
   NodeId,
   PermissionedTree,
 } from "./PermissionedTree";
-import {DeviceId, OpList} from "./ControlledOpSet";
+import {OpList} from "./ControlledOpSet";
 import {Clock} from "./helper/Clock";
 import {Timestamp} from "./helper/Timestamp";
 import {expectPreludeEqual} from "./helper/Shared.testing";

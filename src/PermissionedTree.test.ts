@@ -1,11 +1,12 @@
 import {
   AppliedOp,
   createPermissionedTree,
+  DeviceId,
   NodeId,
   ParentPos,
   PriorityStatus,
 } from "./PermissionedTree";
-import {DeviceId, OpList} from "./ControlledOpSet";
+import {OpList} from "./ControlledOpSet";
 import {CountingClock} from "./helper/Clock.testing";
 import {
   expectDeepEqual,

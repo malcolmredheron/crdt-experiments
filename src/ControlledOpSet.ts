@@ -1,11 +1,14 @@
 import {Timestamp} from "./helper/Timestamp";
 import {asType} from "./helper/Collection";
-import {TypedValue} from "./helper/TypedValue";
 import {AssertFailed} from "./helper/Assert";
-import {ConsLinkedList, HashMap, LinkedList, Option} from "prelude-ts";
+import {
+  ConsLinkedList,
+  HashMap,
+  LinkedList,
+  Option,
+  WithEquality,
+} from "prelude-ts";
 import {Seq} from "prelude-ts/dist/src/Seq";
-
-export class DeviceId extends TypedValue<"DeviceId", string> {}
 
 export type OpBase = {timestamp: Timestamp};
 type AppliedOpBase = Readonly<{
@@ -30,17 +33,25 @@ export type UndoOp<Value, AppliedOp extends AppliedOpBase> = (
   appliedOp: AppliedOp,
 ) => Value;
 
-type DesiredHeads<Value, AppliedOp extends AppliedOpBase> = (
+type DesiredHeads<Value, AppliedOp extends AppliedOpBase, DeviceId> = (
   value: Value,
 ) => HashMap<DeviceId, "open" | OpList<AppliedOp>>;
 
-export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
-  static create<Value, AppliedOp extends AppliedOpBase>(
+export class ControlledOpSet<
+  Value,
+  AppliedOp extends AppliedOpBase,
+  DeviceId extends WithEquality,
+> {
+  static create<
+    Value,
+    AppliedOp extends AppliedOpBase,
+    DeviceId extends WithEquality,
+  >(
     doOp: DoOp<Value, AppliedOp>,
     undoOp: UndoOp<Value, AppliedOp>,
-    desiredHeads: DesiredHeads<Value, AppliedOp>,
+    desiredHeads: DesiredHeads<Value, AppliedOp, DeviceId>,
     value: Value,
-  ): ControlledOpSet<Value, AppliedOp> {
+  ): ControlledOpSet<Value, AppliedOp, DeviceId> {
     return new ControlledOpSet(
       doOp,
       undoOp,
@@ -54,7 +65,7 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   private constructor(
     readonly doOp: DoOp<Value, AppliedOp>,
     readonly undoOp: UndoOp<Value, AppliedOp>,
-    readonly desiredHeads: DesiredHeads<Value, AppliedOp>,
+    readonly desiredHeads: DesiredHeads<Value, AppliedOp, DeviceId>,
 
     readonly value: Value,
     // The most recent op is at the head of the list.
@@ -64,7 +75,7 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
 
   update(
     remoteHeads: HashMap<DeviceId, OpList<AppliedOp>>,
-  ): ControlledOpSet<Value, AppliedOp> {
+  ): ControlledOpSet<Value, AppliedOp, DeviceId> {
     const abstractDesiredHeads = this.desiredHeads(this.value);
     const desiredHeads = abstractDesiredHeads.flatMap((deviceId, openOrOp) =>
       openOrOp === "open"
@@ -112,6 +123,7 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
   private static commonStateAndDesiredOps<
     Value,
     AppliedOp extends AppliedOpBase,
+    DeviceId extends WithEquality,
   >(
     undoOp: UndoOp<Value, AppliedOp>,
     desiredHeads: HashMap<DeviceId, OpList<AppliedOp>>,
@@ -174,7 +186,10 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     };
   }
 
-  static headsEqual<AppliedOp extends AppliedOpBase>(
+  static headsEqual<
+    AppliedOp extends AppliedOpBase,
+    DeviceId extends WithEquality,
+  >(
     left: HashMap<DeviceId, OpList<AppliedOp>>,
     right: HashMap<DeviceId, OpList<AppliedOp>>,
   ): boolean {
@@ -186,7 +201,10 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     return true;
   }
 
-  private static undoHeadsOnce<AppliedOp extends AppliedOpBase>(
+  private static undoHeadsOnce<
+    AppliedOp extends AppliedOpBase,
+    DeviceId extends WithEquality,
+  >(
     heads: HashMap<DeviceId, OpList<AppliedOp>>,
   ): {
     op: undefined | AppliedOp["op"];

@@ -1,4 +1,4 @@
-import {ControlledOpSet, DeviceId, OpList} from "./ControlledOpSet";
+import {ControlledOpSet, OpList} from "./ControlledOpSet";
 import {CountingClock} from "./helper/Clock.testing";
 import {expectIdentical, expectPreludeEqual} from "./helper/Shared.testing";
 import {AssertFailed} from "./helper/Assert";
@@ -9,8 +9,11 @@ import {
   persistentUndoOp,
 } from "./PersistentUndoHelper";
 import {HashMap, LinkedList, Vector} from "prelude-ts";
+import {TypedValue} from "./helper/TypedValue";
 
 describe("ControlledOpSet", () => {
+  class DeviceId extends TypedValue<"DeviceId", string> {}
+
   const deviceA = DeviceId.create("a");
   const deviceB = DeviceId.create("b");
 
@@ -22,7 +25,7 @@ describe("ControlledOpSet", () => {
     >;
 
     const clock = new CountingClock();
-    const cos = ControlledOpSet.create<Value, AppliedOp>(
+    const cos = ControlledOpSet.create<Value, AppliedOp, DeviceId>(
       persistentDoOpFactory((value, op) => {
         return value.append(op.token);
       }),
@@ -113,7 +116,7 @@ describe("ControlledOpSet", () => {
     };
 
     const clock = new CountingClock();
-    const cos = ControlledOpSet.create<Value, AppliedOp>(
+    const cos = ControlledOpSet.create<Value, AppliedOp, DeviceId>(
       (value, op) => {
         if (op.type === "add")
           return {

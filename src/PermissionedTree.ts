@@ -1,4 +1,4 @@
-import {ControlledOpSet, DeviceId, OpList} from "./ControlledOpSet";
+import {ControlledOpSet, OpList} from "./ControlledOpSet";
 import {Timestamp} from "./helper/Timestamp";
 import {TypedValue} from "./helper/TypedValue";
 import {
@@ -9,9 +9,12 @@ import {
 import {HashMap} from "prelude-ts";
 import {CaseClass} from "./helper/CaseClass";
 
+export class DeviceId extends TypedValue<"DeviceId", string> {}
+
 export type PermissionedTree = ControlledOpSet<
   PermissionedTreeValue,
-  AppliedOp
+  AppliedOp,
+  DeviceId
 >;
 
 export class PriorityStatus extends CaseClass<{
@@ -47,7 +50,7 @@ export type SetParent = {
 };
 
 export function createPermissionedTree(owner: DeviceId): PermissionedTree {
-  return ControlledOpSet<PermissionedTreeValue, AppliedOp>.create(
+  return ControlledOpSet<PermissionedTreeValue, AppliedOp, DeviceId>.create(
     persistentDoOpFactory((value, op) => {
       if (op.type === "set writer") {
         const devicePriority = value.writers
