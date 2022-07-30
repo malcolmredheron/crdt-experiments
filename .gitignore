@@ -1,6 +1,9 @@
 # npm
 node_modules/
 
+# eslint
+.eslintcache
+
 # IJ
 .idea/
 *.iml
