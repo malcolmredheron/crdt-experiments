@@ -205,9 +205,9 @@ export class ControlledOpSet<Value, AppliedOp extends AppliedOpBase> {
     const heads1 = newestOpList.tail().getOrElse(LinkedList.of());
     return {
       op: newestOpList.head().get(),
-      heads: heads1.isEmpty()
-        ? heads.remove(newestDeviceId)
-        : heads.put(newestDeviceId, heads1),
+      heads: LinkedList.isNotEmpty(heads1)
+        ? heads.put(newestDeviceId, heads1)
+        : heads.remove(newestDeviceId),
     };
   }
 
