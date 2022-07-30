@@ -4,6 +4,9 @@ node_modules/
 # IJ
 .idea/
 *.iml
+# Made if we ask IJ to build Typescript
+/src/**/*.js
+/src/**/*.js.map
 
 # Emacs
 *~

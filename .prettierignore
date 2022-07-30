@@ -1,12 +1,13 @@
 /*
-!/*.js
-!/*.json
-!/*.ts
 !/src/
 
+*.css
 *.conf
 *.crt
 *.env
+*.html
+*.js
+*.js.map
 *.key
 *.sh
 Dockerfile
