@@ -82,14 +82,14 @@ describe("PermissionedTree", () => {
 
     const opA1 = opA0.prepend({
       timestamp: clock.now(),
-      type: "set parent",
+      type: "create node",
       node: nodeA,
       parent: rootNodeId,
       position: 1,
     });
     const opA2 = opA1.prepend({
       timestamp: clock.now(),
-      type: "set parent",
+      type: "create node",
       node: nodeB,
       parent: rootNodeId,
       position: 2,
@@ -109,46 +109,85 @@ describe("PermissionedTree", () => {
       position: 0,
     });
 
-    it("adds a node", () => {
-      const tree1 = tree.update(
-        HashMap.of<DeviceId, OpList<AppliedOp>>([deviceA, opA3]),
-      );
-      expectPreludeEqual(
-        tree1.value.nodes,
-        HashMap.of(
-          [nodeA, new ParentPos({parent: rootNodeId, position: 1})],
-          [nodeB, new ParentPos({parent: nodeA, position: 0})],
-        ),
-      );
+    describe("create node", () => {
+      it("creates a node if not present", () => {
+        const tree1 = tree.update(
+          HashMap.of<DeviceId, OpList<AppliedOp>>([deviceA, opA1]),
+        );
+        expectPreludeEqual(
+          tree1.value.nodes,
+          HashMap.of([nodeA, new ParentPos({parent: rootNodeId, position: 1})]),
+        );
+      });
+
+      it("does nothing if already preesnt", () => {
+        const tree1 = tree.update(
+          HashMap.of<DeviceId, OpList<AppliedOp>>(
+            [deviceA, opA1],
+            [
+              deviceB,
+              LinkedList.of({
+                timestamp: clock.now(),
+                type: "create node",
+                node: nodeA,
+                parent: rootNodeId,
+                position: 2,
+              }),
+            ],
+          ),
+        );
+        expectPreludeEqual(
+          tree1.value.nodes,
+          HashMap.of([nodeA, new ParentPos({parent: rootNodeId, position: 1})]),
+        );
+      });
     });
 
-    it("moves a node", () => {
-      const tree1 = tree.update(
-        HashMap.of<DeviceId, OpList<AppliedOp>>([deviceA, opA3]),
-      );
-      expectPreludeEqual(
-        tree1.value.nodes,
-        HashMap.of(
-          [nodeA, new ParentPos({parent: rootNodeId, position: 1})],
-          [nodeB, new ParentPos({parent: nodeA, position: 0})],
-        ),
-      );
-    });
+    describe("set parent", () => {
+      it("moves a node if present", () => {
+        const tree1 = tree.update(
+          HashMap.of<DeviceId, OpList<AppliedOp>>([deviceA, opA3]),
+        );
+        expectPreludeEqual(
+          tree1.value.nodes,
+          HashMap.of(
+            [nodeA, new ParentPos({parent: rootNodeId, position: 1})],
+            [nodeB, new ParentPos({parent: nodeA, position: 0})],
+          ),
+        );
+      });
 
-    it("avoids a cycle", () => {
-      const tree1 = tree.update(
-        HashMap.of<DeviceId, OpList<AppliedOp>>(
-          [deviceA, opA3],
-          [deviceB, opB0],
-        ),
-      );
-      expectPreludeEqual(
-        tree1.value.nodes,
-        HashMap.of(
-          [nodeA, new ParentPos({parent: nodeB, position: 0})],
-          [nodeB, new ParentPos({parent: rootNodeId, position: 2})],
-        ),
-      );
+      it("does nothing if not preseent", () => {
+        const tree1 = tree.update(
+          HashMap.of<DeviceId, OpList<AppliedOp>>([
+            deviceA,
+            LinkedList.of({
+              timestamp: clock.now(),
+              type: "set parent",
+              node: nodeA,
+              parent: rootNodeId,
+              position: 2,
+            }),
+          ]),
+        );
+        expectPreludeEqual(tree1.value.nodes, HashMap.of());
+      });
+
+      it("avoids a cycle", () => {
+        const tree1 = tree.update(
+          HashMap.of<DeviceId, OpList<AppliedOp>>(
+            [deviceA, opA3],
+            [deviceB, opB0],
+          ),
+        );
+        expectPreludeEqual(
+          tree1.value.nodes,
+          HashMap.of(
+            [nodeA, new ParentPos({parent: nodeB, position: 0})],
+            [nodeB, new ParentPos({parent: rootNodeId, position: 2})],
+          ),
+        );
+      });
     });
   });
 });

@@ -31,7 +31,7 @@ export class NodeId extends TypedValue<"NodeId", string> {}
 
 export type AppliedOp = PersistentAppliedOp<
   PermissionedTreeValue,
-  SetWriter | SetParent
+  SetWriter | CreateNode | SetParent
 >;
 export type SetWriter = {
   timestamp: Timestamp;
@@ -40,6 +40,13 @@ export type SetWriter = {
   targetWriter: DeviceId;
   priority: number;
   status: "open" | OpList<AppliedOp>;
+};
+export type CreateNode = {
+  timestamp: Timestamp;
+  type: "create node";
+  node: NodeId;
+  parent: NodeId;
+  position: number;
 };
 export type SetParent = {
   timestamp: Timestamp;
@@ -52,36 +59,50 @@ export type SetParent = {
 export function createPermissionedTree(owner: DeviceId): PermissionedTree {
   return ControlledOpSet<PermissionedTreeValue, AppliedOp, DeviceId>.create(
     persistentDoOpFactory((value, op) => {
-      if (op.type === "set writer") {
-        const devicePriority = value.writers
-          .get(op.device)
-          .getOrThrow("Cannot find writer entry for op author").p.priority;
-        const writerPriority = value.writers
-          .get(op.targetWriter)
-          .getOrUndefined()?.p.priority;
-        if (writerPriority !== undefined && writerPriority >= devicePriority)
-          return value;
-        if (op.priority >= devicePriority) return value;
+      switch (op.type) {
+        case "set writer":
+          const devicePriority = value.writers
+            .get(op.device)
+            .getOrThrow("Cannot find writer entry for op author").p.priority;
+          const writerPriority = value.writers
+            .get(op.targetWriter)
+            .getOrUndefined()?.p.priority;
+          if (writerPriority !== undefined && writerPriority >= devicePriority)
+            return value;
+          if (op.priority >= devicePriority) return value;
 
-        return {
-          ...value,
-          writers: value.writers.put(
-            op.targetWriter,
-            new PriorityStatus({
-              priority: op.priority,
-              status: op.status,
-            }),
-          ),
-        };
-      } else {
-        if (ancestor(value.nodes, op.node, op.parent)) return value;
-        return {
-          ...value,
-          nodes: value.nodes.put(
-            op.node,
-            new ParentPos({parent: op.parent, position: op.position}),
-          ),
-        };
+          return {
+            ...value,
+            writers: value.writers.put(
+              op.targetWriter,
+              new PriorityStatus({
+                priority: op.priority,
+                status: op.status,
+              }),
+            ),
+          };
+        case "create node":
+          if (value.nodes.containsKey(op.node)) return value;
+          return {
+            ...value,
+            nodes: value.nodes.put(
+              op.node,
+              new ParentPos({parent: op.parent, position: op.position}),
+            ),
+          };
+        case "set parent":
+          if (
+            ancestor(value.nodes, op.node, op.parent) ||
+            !value.nodes.containsKey(op.node)
+          )
+            return value;
+          return {
+            ...value,
+            nodes: value.nodes.put(
+              op.node,
+              new ParentPos({parent: op.parent, position: op.position}),
+            ),
+          };
       }
     }),
     persistentUndoOp,
