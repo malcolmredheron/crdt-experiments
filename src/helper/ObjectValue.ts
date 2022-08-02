@@ -30,7 +30,7 @@ TODOs
   described in https://github.com/microsoft/TypeScript/issues/3841, this doesn't
   work.
 */
-export class ObjectValueBase<Props extends {}> {
+class ObjectValueBase<Props extends {}> {
   constructor(props: Props) {
     Object.assign(this, props);
   }

@@ -7,7 +7,7 @@ import {
   persistentUndoOp,
 } from "./PersistentUndoHelper";
 import {HashMap} from "prelude-ts";
-import {CaseClass} from "./helper/CaseClass";
+import {ObjectValue} from "./helper/ObjectValue";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 
@@ -17,11 +17,14 @@ export type PermissionedTree = ControlledOpSet<
   DeviceId
 >;
 
-export class PriorityStatus extends CaseClass<{
+export class PriorityStatus extends ObjectValue<{
   priority: number;
   status: "open" | OpList<AppliedOp>;
-}> {}
-export class ParentPos extends CaseClass<{parent: NodeId; position: number}> {}
+}>() {}
+export class ParentPos extends ObjectValue<{
+  parent: NodeId;
+  position: number;
+}>() {}
 
 type PermissionedTreeValue = {
   writers: HashMap<DeviceId, PriorityStatus>;
@@ -63,10 +66,10 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
         case "set writer":
           const devicePriority = value.writers
             .get(op.device)
-            .getOrThrow("Cannot find writer entry for op author").p.priority;
+            .getOrThrow("Cannot find writer entry for op author").priority;
           const writerPriority = value.writers
             .get(op.targetWriter)
-            .getOrUndefined()?.p.priority;
+            .getOrUndefined()?.priority;
           if (writerPriority !== undefined && writerPriority >= devicePriority)
             return value;
           if (op.priority >= devicePriority) return value;
@@ -106,7 +109,7 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
       }
     }),
     persistentUndoOp,
-    (value) => value.writers.map((device, info) => [device, info.p.status]),
+    (value) => value.writers.map((device, info) => [device, info.status]),
     {
       writers: HashMap.of([
         owner,
@@ -126,6 +129,6 @@ function ancestor(
   if (child === parent) return true;
   const childInfo = tree.get(child);
   return childInfo
-    .map((info) => ancestor(tree, parent, info.p.parent))
+    .map((info) => ancestor(tree, parent, info.parent))
     .getOrElse(false);
 }
