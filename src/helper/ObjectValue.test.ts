@@ -6,11 +6,16 @@ describe("ObjectValue", () => {
   let initedNames = Vector<string>.of();
 
   type NameProps = {first: string; last: string};
-
   class Name extends ObjectValue<NameProps>() {
     constructor(props: NameProps) {
       super(props);
       initedNames = initedNames.append(`${this.first} ${this.last}`);
+    }
+
+    // This is required to prevent a mistyped return value from copy() from
+    // structurally matching with Name.
+    method(greeting: string): string {
+      return `${greeting}, ${this.first}`;
     }
   }
 
@@ -34,6 +39,12 @@ describe("ObjectValue", () => {
     // Check that the constructor got called and that the property values were
     // in place by that point.
     expectPreludeEqual(initedNames, Vector.of("agent smith", "agent orange"));
+  });
+
+  it("copy() returns the same type as the original", () => {
+    const name: Name = new Name({first: "agent", last: "smith"});
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const name1: Name = name.copy({first: "mr"});
   });
 
   it("allows writable fields in create, not in copyWith", () => {

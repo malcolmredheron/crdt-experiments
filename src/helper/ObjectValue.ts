@@ -26,23 +26,24 @@ TODOs
 - Cause a compilation error if the subclass doesn't have a constructor that
   takes just the properties.
 
-  I tried to do this by adding `this` as an arg to `copyWith`:
-    `this: ObjectValue<Props> & {constructor: new (props: Props) => any}`
-  This lets me remove the cast in that function (return new  ...) but causes a
-  compilation error when `copyWith` is called on any type since TS thinks that
-  the type of `this.constructor` is `Function`.
+  I tried to do this by adding the commented-out `this` param on copy but, as
+  described in https://github.com/microsoft/TypeScript/issues/3841, this doesn't
+  work.
 */
 export class ObjectValueBase<Props extends {}> {
   constructor(props: Props) {
     Object.assign(this, props);
   }
 
-  copy(diffs: Partial<WritableProps<Props>>): ObjectValueBase<Props> & Props {
+  copy(
+    // this: {constructor: {new (props: Props): ObjectValueBase<Props>}},
+    diffs: Partial<WritableProps<Props>>,
+  ): this {
     const props: Props = {} as Props;
     Object.assign(props, this, diffs);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const this1 = new (this.constructor as any)(props);
-    return this1;
+    return new (this.constructor as {
+      new (props: Props): ObjectValueBase<Props>;
+    })(props) as this;
   }
 
   private orderedFieldValues(): ReadonlyArray<unknown> {
