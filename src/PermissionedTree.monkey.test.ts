@@ -14,6 +14,7 @@ import {Clock} from "./helper/Clock";
 import {Timestamp} from "./helper/Timestamp";
 import {expectPreludeEqual} from "./helper/Shared.testing";
 import {HashMap, LinkedList} from "prelude-ts";
+import {expect} from "chai";
 
 type OpType = "add" | "move" | "update";
 const rootNodeId = NodeId.create("root");
@@ -136,6 +137,9 @@ describe("PermissionedTree.monkey", function () {
         });
       }
     }
+    expect(devices.get(device0).getOrThrow().value.nodes.length()).greaterThan(
+      0,
+    );
   });
 });
 
@@ -154,7 +158,7 @@ function opForOpType(
     ]);
     return {
       timestamp: clock.now(),
-      type: "set parent",
+      type: "create node",
       node,
       parent,
       position: rand.rand(),
