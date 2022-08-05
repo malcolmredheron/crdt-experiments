@@ -26,10 +26,10 @@ export class ParentPos extends ObjectValue<{
   position: number;
 }>() {}
 
-type PermissionedTreeValue = {
+class PermissionedTreeValue extends ObjectValue<{
   writers: HashMap<DeviceId, PriorityStatus>;
   nodes: HashMap<NodeId, ParentPos>;
-};
+}>() {}
 export class NodeId extends TypedValue<"NodeId", string> {}
 
 export type AppliedOp = PersistentAppliedOp<
@@ -74,8 +74,7 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
             return value;
           if (op.priority >= devicePriority) return value;
 
-          return {
-            ...value,
+          return value.copy({
             writers: value.writers.put(
               op.targetWriter,
               new PriorityStatus({
@@ -83,40 +82,38 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
                 status: op.status,
               }),
             ),
-          };
+          });
         case "create node":
           if (value.nodes.containsKey(op.node)) return value;
-          return {
-            ...value,
+          return value.copy({
             nodes: value.nodes.put(
               op.node,
               new ParentPos({parent: op.parent, position: op.position}),
             ),
-          };
+          });
         case "set parent":
           if (
             ancestor(value.nodes, op.node, op.parent) ||
             !value.nodes.containsKey(op.node)
           )
             return value;
-          return {
-            ...value,
+          return value.copy({
             nodes: value.nodes.put(
               op.node,
               new ParentPos({parent: op.parent, position: op.position}),
             ),
-          };
+          });
       }
     }),
     persistentUndoOp,
     (value) => value.writers.map((device, info) => [device, info.status]),
-    {
+    new PermissionedTreeValue({
       writers: HashMap.of([
         owner,
         new PriorityStatus({priority: 0, status: "open"}),
       ]),
       nodes: HashMap.empty(),
-    },
+    }),
   );
 }
 
