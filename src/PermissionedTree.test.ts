@@ -5,8 +5,9 @@ import {
   NodeId,
   ParentPos,
   PriorityStatus,
+  ShareId,
+  StreamId,
 } from "./PermissionedTree";
-import {OpList} from "./ControlledOpSet";
 import {CountingClock} from "./helper/Clock.testing";
 import {
   expectDeepEqual,
@@ -17,9 +18,12 @@ import {HashMap, LinkedList} from "prelude-ts";
 
 describe("PermissionedTree", () => {
   const clock = new CountingClock();
+  const shareId = ShareId.create("share");
   const deviceA = DeviceId.create("A");
   const deviceB = DeviceId.create("B");
-  const tree = createPermissionedTree(deviceA);
+  const deviceAStreamId = new StreamId({deviceId: deviceA, shareId});
+  const deviceBStreamId = new StreamId({deviceId: deviceB, shareId});
+  const tree = createPermissionedTree(deviceAStreamId);
   const rootNodeId = NodeId.create("root");
 
   function openWriterOp(
@@ -42,7 +46,9 @@ describe("PermissionedTree", () => {
 
   describe("permissions", () => {
     it("adds a lower-ranked writer", () => {
-      const tree1 = tree.update(HashMap.of([deviceA, opA0]));
+      const tree1 = tree.update(
+        HashMap.of([new StreamId({deviceId: deviceA, shareId}), opA0]),
+      );
       expectDeepEqual(
         tree1.value.writers.get(deviceB).getOrUndefined(),
         new PriorityStatus({
@@ -54,7 +60,10 @@ describe("PermissionedTree", () => {
 
     it("ignores a SetWriter to add an equal-priority writer", () => {
       const tree1 = tree.update(
-        HashMap.of([deviceA, LinkedList.of(openWriterOp(deviceA, deviceB, 0))]),
+        HashMap.of([
+          deviceAStreamId,
+          LinkedList.of(openWriterOp(deviceA, deviceB, 0)),
+        ]),
       );
       expectIdentical(
         tree1.value.writers.get(deviceB).getOrUndefined(),
@@ -64,7 +73,10 @@ describe("PermissionedTree", () => {
 
     it("ignores a SetWriter to modify an equal-priority writer", () => {
       const tree1 = tree.update(
-        HashMap.of([deviceA, opA0.prepend(openWriterOp(deviceB, deviceB, -2))]),
+        HashMap.of([
+          deviceAStreamId,
+          opA0.prepend(openWriterOp(deviceB, deviceB, -2)),
+        ]),
       );
       expectDeepEqual(
         tree1.value.writers.get(deviceB).getOrThrow(),
@@ -111,9 +123,7 @@ describe("PermissionedTree", () => {
 
     describe("create node", () => {
       it("creates a node if not present", () => {
-        const tree1 = tree.update(
-          HashMap.of<DeviceId, OpList<AppliedOp>>([deviceA, opA1]),
-        );
+        const tree1 = tree.update(HashMap.of([deviceAStreamId, opA1]));
         expectPreludeEqual(
           tree1.value.nodes,
           HashMap.of([nodeA, new ParentPos({parent: rootNodeId, position: 1})]),
@@ -122,10 +132,10 @@ describe("PermissionedTree", () => {
 
       it("does nothing if already preesnt", () => {
         const tree1 = tree.update(
-          HashMap.of<DeviceId, OpList<AppliedOp>>(
-            [deviceA, opA1],
+          HashMap.of(
+            [deviceAStreamId, opA1],
             [
-              deviceB,
+              deviceBStreamId,
               LinkedList.of({
                 timestamp: clock.now(),
                 type: "create node",
@@ -145,9 +155,7 @@ describe("PermissionedTree", () => {
 
     describe("set parent", () => {
       it("moves a node if present", () => {
-        const tree1 = tree.update(
-          HashMap.of<DeviceId, OpList<AppliedOp>>([deviceA, opA3]),
-        );
+        const tree1 = tree.update(HashMap.of([deviceAStreamId, opA3]));
         expectPreludeEqual(
           tree1.value.nodes,
           HashMap.of(
@@ -159,8 +167,8 @@ describe("PermissionedTree", () => {
 
       it("does nothing if not preseent", () => {
         const tree1 = tree.update(
-          HashMap.of<DeviceId, OpList<AppliedOp>>([
-            deviceA,
+          HashMap.of([
+            deviceAStreamId,
             LinkedList.of({
               timestamp: clock.now(),
               type: "set parent",
@@ -175,10 +183,7 @@ describe("PermissionedTree", () => {
 
       it("avoids a cycle", () => {
         const tree1 = tree.update(
-          HashMap.of<DeviceId, OpList<AppliedOp>>(
-            [deviceA, opA3],
-            [deviceB, opB0],
-          ),
+          HashMap.of([deviceAStreamId, opA3], [deviceBStreamId, opB0]),
         );
         expectPreludeEqual(
           tree1.value.nodes,

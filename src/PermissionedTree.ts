@@ -10,11 +10,16 @@ import {HashMap} from "prelude-ts";
 import {ObjectValue} from "./helper/ObjectValue";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
+export class ShareId extends TypedValue<"ShareId", string> {}
+export class StreamId extends ObjectValue<{
+  deviceId: DeviceId;
+  shareId: ShareId;
+}>() {}
 
 export type PermissionedTree = ControlledOpSet<
   PermissionedTreeValue,
   AppliedOp,
-  DeviceId
+  StreamId
 >;
 
 export class PriorityStatus extends ObjectValue<{
@@ -27,6 +32,7 @@ export class ParentPos extends ObjectValue<{
 }>() {}
 
 class PermissionedTreeValue extends ObjectValue<{
+  readonly shareId: ShareId;
   writers: HashMap<DeviceId, PriorityStatus>;
   nodes: HashMap<NodeId, ParentPos>;
 }>() {}
@@ -59,8 +65,10 @@ export type SetParent = {
   position: number;
 };
 
-export function createPermissionedTree(owner: DeviceId): PermissionedTree {
-  return ControlledOpSet<PermissionedTreeValue, AppliedOp, DeviceId>.create(
+export function createPermissionedTree(
+  ownerStreamId: StreamId,
+): PermissionedTree {
+  return ControlledOpSet<PermissionedTreeValue, AppliedOp, StreamId>.create(
     persistentDoOpFactory((value, op) => {
       switch (op.type) {
         case "set writer":
@@ -106,10 +114,15 @@ export function createPermissionedTree(owner: DeviceId): PermissionedTree {
       }
     }),
     persistentUndoOp,
-    (value) => value.writers.map((device, info) => [device, info.status]),
+    (value) =>
+      value.writers.map((device, info) => [
+        new StreamId({deviceId: device, shareId: value.shareId}),
+        info.status,
+      ]),
     new PermissionedTreeValue({
+      shareId: ownerStreamId.shareId,
       writers: HashMap.of([
-        owner,
+        ownerStreamId.deviceId,
         new PriorityStatus({priority: 0, status: "open"}),
       ]),
       nodes: HashMap.empty(),

@@ -6,6 +6,8 @@ import {
   DeviceId,
   NodeId,
   PermissionedTree,
+  ShareId,
+  StreamId,
 } from "./PermissionedTree";
 import {OpList} from "./ControlledOpSet";
 import {Clock} from "./helper/Clock";
@@ -70,15 +72,20 @@ describe("PermissionedTree.monkey", function () {
       seq: () => nextInSeq++,
     };
 
+    const shareId = ShareId.create("share");
     const device0 = DeviceId.create("device0");
-    const initialTree = applyNewOp(createPermissionedTree(device0), device0, {
-      timestamp: Timestamp.create(-1),
-      type: "set writer",
-      device: device0,
-      targetWriter: DeviceId.create("device1"),
-      priority: -1,
-      status: "open",
-    });
+    const initialTree = applyNewOp(
+      createPermissionedTree(new StreamId({deviceId: device0, shareId})),
+      device0,
+      {
+        timestamp: Timestamp.create(-1),
+        type: "set writer",
+        device: device0,
+        targetWriter: DeviceId.create("device1"),
+        priority: -1,
+        status: "open",
+      },
+    );
     let devices = HashMap<DeviceId, PermissionedTree>.ofIterable(
       Array.from(Array(4).keys()).map((index) => [
         DeviceId.create(`device${index}`),
@@ -106,7 +113,7 @@ describe("PermissionedTree.monkey", function () {
 
         log(`turn ${turn}, device ${device}, op type ${opType}`);
         if (opType === "update") {
-          const remoteHeads = remoteHeadsForDevices(devices);
+          const remoteHeads = remoteHeadsForDevices(shareId, devices);
           const tree1 = tree.update(remoteHeads);
           devices = devices.put(device, tree1);
         } else {
@@ -118,7 +125,7 @@ describe("PermissionedTree.monkey", function () {
 
       // Check the devices.
       if (turn % 10 === 0) {
-        const remoteHeads = remoteHeadsForDevices(devices);
+        const remoteHeads = remoteHeadsForDevices(shareId, devices);
         const devices1: HashMap<DeviceId, PermissionedTree> = devices.map(
           (device, tree) => [device, tree.update(remoteHeads)],
         );
@@ -174,12 +181,18 @@ function opForOpType(
 }
 
 function remoteHeadsForDevices(
+  shareId: ShareId,
   devices: HashMap<DeviceId, PermissionedTree>,
-): HashMap<DeviceId, OpList<AppliedOp>> {
-  return devices.flatMap((device, tree) =>
+): HashMap<StreamId, OpList<AppliedOp>> {
+  return devices.flatMap((deviceId, tree) =>
     tree.heads
-      .get(device)
-      .map((head) => [asType<[DeviceId, OpList<AppliedOp>]>([device, head])])
+      .get(new StreamId({deviceId, shareId}))
+      .map((head) => [
+        asType<[StreamId, OpList<AppliedOp>]>([
+          new StreamId({deviceId, shareId}),
+          head,
+        ]),
+      ])
       .getOrElse([]),
   );
 }
@@ -189,10 +202,14 @@ function applyNewOp(
   device: DeviceId,
   op: AppliedOp["op"],
 ): PermissionedTree {
+  const streamId = new StreamId({
+    deviceId: device,
+    shareId: tree.value.shareId,
+  });
   const opList1 = tree.heads
-    .get(device)
+    .get(streamId)
     .map((ops) => ops.prepend(op))
     .getOrCall(() => LinkedList.of(op));
-  const heads1 = tree.heads.put(device, opList1);
+  const heads1 = tree.heads.put(streamId, opList1);
   return tree.update(heads1);
 }
