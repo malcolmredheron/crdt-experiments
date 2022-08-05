@@ -22,21 +22,21 @@ export type PermissionedTree = ControlledOpSet<
   StreamId
 >;
 
+class PermissionedTreeValue extends ObjectValue<{
+  readonly shareId: ShareId;
+  writers: HashMap<DeviceId, PriorityStatus>;
+  nodes: HashMap<NodeId, NodeInfo>;
+}>() {}
+export class NodeId extends TypedValue<"NodeId", string> {}
 export class PriorityStatus extends ObjectValue<{
   priority: number;
   status: "open" | OpList<AppliedOp>;
 }>() {}
-export class ParentPos extends ObjectValue<{
+export class NodeInfo extends ObjectValue<{
   parent: NodeId;
   position: number;
+  subtree: undefined | PermissionedTreeValue;
 }>() {}
-
-class PermissionedTreeValue extends ObjectValue<{
-  readonly shareId: ShareId;
-  writers: HashMap<DeviceId, PriorityStatus>;
-  nodes: HashMap<NodeId, ParentPos>;
-}>() {}
-export class NodeId extends TypedValue<"NodeId", string> {}
 
 export type AppliedOp = PersistentAppliedOp<
   PermissionedTreeValue,
@@ -52,13 +52,16 @@ export type SetWriter = {
 };
 export type CreateNode = {
   timestamp: Timestamp;
+  device: DeviceId;
   type: "create node";
   node: NodeId;
   parent: NodeId;
   position: number;
+  shareId: undefined | ShareId;
 };
 export type SetParent = {
   timestamp: Timestamp;
+  device: DeviceId;
   type: "set parent";
   node: NodeId;
   parent: NodeId;
@@ -96,19 +99,25 @@ export function createPermissionedTree(
           return value.copy({
             nodes: value.nodes.put(
               op.node,
-              new ParentPos({parent: op.parent, position: op.position}),
+              new NodeInfo({
+                parent: op.parent,
+                position: op.position,
+                subtree: op.shareId
+                  ? newPermissionedTreeValue(
+                      new StreamId({deviceId: op.device, shareId: op.shareId}),
+                    )
+                  : undefined,
+              }),
             ),
           });
         case "set parent":
-          if (
-            ancestor(value.nodes, op.node, op.parent) ||
-            !value.nodes.containsKey(op.node)
-          )
+          const nodeInfo = value.nodes.get(op.node);
+          if (ancestor(value.nodes, op.node, op.parent) || nodeInfo.isNone())
             return value;
           return value.copy({
             nodes: value.nodes.put(
               op.node,
-              new ParentPos({parent: op.parent, position: op.position}),
+              nodeInfo.get().copy({parent: op.parent, position: op.position}),
             ),
           });
       }
@@ -119,20 +128,27 @@ export function createPermissionedTree(
         new StreamId({deviceId: device, shareId: value.shareId}),
         info.status,
       ]),
-    new PermissionedTreeValue({
-      shareId: ownerStreamId.shareId,
-      writers: HashMap.of([
-        ownerStreamId.deviceId,
-        new PriorityStatus({priority: 0, status: "open"}),
-      ]),
-      nodes: HashMap.empty(),
-    }),
+    newPermissionedTreeValue(ownerStreamId),
   );
+}
+
+// Creates a new PermissionedTreeValue with ownerStreamId as a initial writer.
+function newPermissionedTreeValue(
+  ownerStreamId: StreamId,
+): PermissionedTreeValue {
+  return new PermissionedTreeValue({
+    shareId: ownerStreamId.shareId,
+    writers: HashMap.of([
+      ownerStreamId.deviceId,
+      new PriorityStatus({priority: 0, status: "open"}),
+    ]),
+    nodes: HashMap.empty(),
+  });
 }
 
 // Is `parent` an ancestor of (or identical to) `child`?
 function ancestor(
-  tree: HashMap<NodeId, ParentPos>,
+  tree: HashMap<NodeId, NodeInfo>,
   parent: NodeId,
   child: NodeId,
 ): boolean {

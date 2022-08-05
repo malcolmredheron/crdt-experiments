@@ -118,7 +118,7 @@ describe("PermissionedTree.monkey", function () {
           const tree1 = tree.update(remoteHeads);
           devices = devices.put(device, tree1);
         } else {
-          const op = opForOpType(clock, log, rand, opType, tree);
+          const op = opForOpType(clock, log, rand, opType, device, tree);
           const tree1 = applyNewOp(tree, device, op);
           devices = devices.put(device, tree1);
         }
@@ -148,6 +148,7 @@ function opForOpType(
   log: (s: string) => void,
   rand: RandomSource,
   optype: OpType,
+  deviceId: DeviceId,
   tree: PermissionedTree,
 ): AppliedOp["op"] {
   if (optype === "add") {
@@ -158,10 +159,12 @@ function opForOpType(
     ]);
     return {
       timestamp: clock.now(),
+      device: deviceId,
       type: "create node",
       node,
       parent,
       position: rand.rand(),
+      shareId: undefined,
     };
   } else if (optype === "move") {
     const node = randomInArray(rand, [
@@ -174,6 +177,7 @@ function opForOpType(
     ]);
     return {
       timestamp: clock.now(),
+      device: deviceId,
       type: "set parent",
       node,
       parent,

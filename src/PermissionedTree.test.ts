@@ -3,7 +3,7 @@ import {
   createPermissionedTree,
   DeviceId,
   NodeId,
-  ParentPos,
+  NodeInfo,
   PriorityStatus,
   ShareId,
   StreamId,
@@ -94,20 +94,25 @@ describe("PermissionedTree", () => {
 
     const opA1 = opA0.prepend({
       timestamp: clock.now(),
+      device: deviceA,
       type: "create node",
       node: nodeA,
       parent: rootNodeId,
       position: 1,
+      shareId: undefined,
     });
     const opA2 = opA1.prepend({
       timestamp: clock.now(),
+      device: deviceA,
       type: "create node",
       node: nodeB,
       parent: rootNodeId,
       position: 2,
+      shareId: undefined,
     });
     const opB0 = LinkedList.of<AppliedOp["op"]>({
       timestamp: clock.now(),
+      device: deviceB,
       type: "set parent",
       node: nodeA,
       parent: nodeB,
@@ -115,6 +120,7 @@ describe("PermissionedTree", () => {
     });
     const opA3 = opA2.prepend({
       timestamp: clock.now(),
+      device: deviceA,
       type: "set parent",
       node: nodeB,
       parent: nodeA,
@@ -126,7 +132,10 @@ describe("PermissionedTree", () => {
         const tree1 = tree.update(HashMap.of([deviceAStreamId, opA1]));
         expectPreludeEqual(
           tree1.value.nodes,
-          HashMap.of([nodeA, new ParentPos({parent: rootNodeId, position: 1})]),
+          HashMap.of([
+            nodeA,
+            new NodeInfo({parent: rootNodeId, position: 1, subtree: undefined}),
+          ]),
         );
       });
 
@@ -138,17 +147,22 @@ describe("PermissionedTree", () => {
               deviceBStreamId,
               LinkedList.of({
                 timestamp: clock.now(),
+                device: deviceB,
                 type: "create node",
                 node: nodeA,
                 parent: rootNodeId,
                 position: 2,
+                shareId: undefined,
               }),
             ],
           ),
         );
         expectPreludeEqual(
           tree1.value.nodes,
-          HashMap.of([nodeA, new ParentPos({parent: rootNodeId, position: 1})]),
+          HashMap.of([
+            nodeA,
+            new NodeInfo({parent: rootNodeId, position: 1, subtree: undefined}),
+          ]),
         );
       });
     });
@@ -159,8 +173,18 @@ describe("PermissionedTree", () => {
         expectPreludeEqual(
           tree1.value.nodes,
           HashMap.of(
-            [nodeA, new ParentPos({parent: rootNodeId, position: 1})],
-            [nodeB, new ParentPos({parent: nodeA, position: 0})],
+            [
+              nodeA,
+              new NodeInfo({
+                parent: rootNodeId,
+                position: 1,
+                subtree: undefined,
+              }),
+            ],
+            [
+              nodeB,
+              new NodeInfo({parent: nodeA, position: 0, subtree: undefined}),
+            ],
           ),
         );
       });
@@ -171,6 +195,7 @@ describe("PermissionedTree", () => {
             deviceAStreamId,
             LinkedList.of({
               timestamp: clock.now(),
+              device: deviceA,
               type: "set parent",
               node: nodeA,
               parent: rootNodeId,
@@ -188,8 +213,18 @@ describe("PermissionedTree", () => {
         expectPreludeEqual(
           tree1.value.nodes,
           HashMap.of(
-            [nodeA, new ParentPos({parent: nodeB, position: 0})],
-            [nodeB, new ParentPos({parent: rootNodeId, position: 2})],
+            [
+              nodeA,
+              new NodeInfo({parent: nodeB, position: 0, subtree: undefined}),
+            ],
+            [
+              nodeB,
+              new NodeInfo({
+                parent: rootNodeId,
+                position: 2,
+                subtree: undefined,
+              }),
+            ],
           ),
         );
       });
