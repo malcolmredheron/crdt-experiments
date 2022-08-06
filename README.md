@@ -28,6 +28,11 @@ Upgrade npm packages:
 - `npx npm-check-updates` to check for updates
 - `npx npm-check-updates -u` to take all updates
 
+## Chrome
+
+Enable custom formatters so that you can read Prelude data structures.
+https://github.com/emmanueltouzery/prelude-ts#using-in-the-browser
+
 ## Intelij
 
 Settings
