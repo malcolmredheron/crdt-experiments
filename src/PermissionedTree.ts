@@ -9,18 +9,77 @@ import {
 import {HashMap, Option, Vector} from "prelude-ts";
 import {ObjectValue} from "./helper/ObjectValue";
 
+export type PermissionedTree = ControlledOpSet<
+  PermissionedTreeValue,
+  AppliedOp,
+  StreamId
+>;
+
+export function createPermissionedTree(
+  ownerStreamId: StreamId,
+): PermissionedTree {
+  return ControlledOpSet<PermissionedTreeValue, AppliedOp, StreamId>.create(
+    persistentDoOpFactory((value, op, deviceId) => {
+      return value.doOp(op, deviceId);
+    }),
+    persistentUndoOp,
+    (value) => value.desiredHeads(),
+    createPermissionedTreeValue(ownerStreamId),
+  );
+}
+
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 export class ShareId extends TypedValue<"ShareId", string> {}
 export class StreamId extends ObjectValue<{
   deviceId: DeviceId;
   shareId: ShareId;
 }>() {}
+export class NodeId extends TypedValue<"NodeId", string> {}
 
-export type PermissionedTree = ControlledOpSet<
+// Operations
+export type AppliedOp = PersistentAppliedOp<
   PermissionedTreeValue,
-  AppliedOp,
-  StreamId
+  SetWriter | CreateNode | SetParent
 >;
+type SetWriter = {
+  timestamp: Timestamp;
+  device: DeviceId;
+  type: "set writer";
+
+  targetWriter: DeviceId;
+  priority: number;
+  status: "open" | OpList<AppliedOp>;
+};
+type CreateNode = {
+  timestamp: Timestamp;
+  device: DeviceId;
+  type: "create node";
+
+  node: NodeId;
+  parent: NodeId;
+  position: number;
+  ownerStreamId: undefined | StreamId;
+};
+type SetParent = {
+  timestamp: Timestamp;
+  device: DeviceId;
+  type: "set parent";
+
+  node: NodeId;
+  parent: NodeId;
+  position: number;
+};
+
+// Internal types
+export class PriorityStatus extends ObjectValue<{
+  priority: number;
+  status: "open" | OpList<AppliedOp>;
+}>() {}
+export class NodeInfo extends ObjectValue<{
+  parent: NodeId;
+  position: number;
+  subtree: undefined | PermissionedTreeValue;
+}>() {}
 
 export class PermissionedTreeValue extends ObjectValue<{
   readonly shareId: ShareId;
@@ -67,15 +126,14 @@ export class PermissionedTreeValue extends ObjectValue<{
               parent: op.parent,
               position: op.position,
               subtree: op.ownerStreamId
-                ? newPermissionedTreeValue(op.ownerStreamId)
+                ? createPermissionedTreeValue(op.ownerStreamId)
                 : undefined,
             }),
           ),
         });
       case "set parent":
         const nodeInfo = this.nodes.get(op.node);
-        if (ancestor(this.nodes, op.node, op.parent) || nodeInfo.isNone())
-          return this;
+        if (this.ancestor(op.node, op.parent) || nodeInfo.isNone()) return this;
         return this.copy({
           nodes: this.nodes.put(
             op.node,
@@ -99,66 +157,18 @@ export class PermissionedTreeValue extends ObjectValue<{
       HashMap.of(...heads0, ...heads1),
     );
   }
-}
-export class NodeId extends TypedValue<"NodeId", string> {}
-export class PriorityStatus extends ObjectValue<{
-  priority: number;
-  status: "open" | OpList<AppliedOp>;
-}>() {}
-export class NodeInfo extends ObjectValue<{
-  parent: NodeId;
-  position: number;
-  subtree: undefined | PermissionedTreeValue;
-}>() {}
 
-export type AppliedOp = PersistentAppliedOp<
-  PermissionedTreeValue,
-  SetWriter | CreateNode | SetParent
->;
-export type SetWriter = {
-  timestamp: Timestamp;
-  device: DeviceId;
-  type: "set writer";
-
-  targetWriter: DeviceId;
-  priority: number;
-  status: "open" | OpList<AppliedOp>;
-};
-export type CreateNode = {
-  timestamp: Timestamp;
-  device: DeviceId;
-  type: "create node";
-
-  node: NodeId;
-  parent: NodeId;
-  position: number;
-  ownerStreamId: undefined | StreamId;
-};
-export type SetParent = {
-  timestamp: Timestamp;
-  device: DeviceId;
-  type: "set parent";
-
-  node: NodeId;
-  parent: NodeId;
-  position: number;
-};
-
-export function createPermissionedTree(
-  ownerStreamId: StreamId,
-): PermissionedTree {
-  return ControlledOpSet<PermissionedTreeValue, AppliedOp, StreamId>.create(
-    persistentDoOpFactory((value, op, deviceId) => {
-      return value.doOp(op, deviceId);
-    }),
-    persistentUndoOp,
-    (value) => value.desiredHeads(),
-    newPermissionedTreeValue(ownerStreamId),
-  );
+  private ancestor(parent: NodeId, child: NodeId): boolean {
+    if (child === parent) return true;
+    const childInfo = this.nodes.get(child);
+    return childInfo
+      .map((info) => this.ancestor(parent, info.parent))
+      .getOrElse(false);
+  }
 }
 
 // Creates a new PermissionedTreeValue with ownerStreamId as a initial writer.
-function newPermissionedTreeValue(
+function createPermissionedTreeValue(
   ownerStreamId: StreamId,
 ): PermissionedTreeValue {
   return new PermissionedTreeValue({
@@ -169,17 +179,4 @@ function newPermissionedTreeValue(
     ]),
     nodes: HashMap.empty(),
   });
-}
-
-// Is `parent` an ancestor of (or identical to) `child`?
-function ancestor(
-  tree: HashMap<NodeId, NodeInfo>,
-  parent: NodeId,
-  child: NodeId,
-): boolean {
-  if (child === parent) return true;
-  const childInfo = tree.get(child);
-  return childInfo
-    .map((info) => ancestor(tree, parent, info.parent))
-    .getOrElse(false);
 }
