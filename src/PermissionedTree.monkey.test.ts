@@ -164,7 +164,7 @@ function opForOpType(
       node,
       parent,
       position: rand.rand(),
-      shareId: undefined,
+      ownerStreamId: undefined,
     };
   } else if (optype === "move") {
     const node = randomInArray(rand, [

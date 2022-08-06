@@ -4,6 +4,7 @@ import {
   DeviceId,
   NodeId,
   NodeInfo,
+  PermissionedTreeValue,
   PriorityStatus,
   ShareId,
   StreamId,
@@ -99,7 +100,7 @@ describe("PermissionedTree", () => {
       node: nodeA,
       parent: rootNodeId,
       position: 1,
-      shareId: undefined,
+      ownerStreamId: undefined,
     });
     const opA2 = opA1.prepend({
       timestamp: clock.now(),
@@ -108,7 +109,7 @@ describe("PermissionedTree", () => {
       node: nodeB,
       parent: rootNodeId,
       position: 2,
-      shareId: undefined,
+      ownerStreamId: undefined,
     });
     const opB0 = LinkedList.of<AppliedOp["op"]>({
       timestamp: clock.now(),
@@ -152,7 +153,7 @@ describe("PermissionedTree", () => {
                 node: nodeA,
                 parent: rootNodeId,
                 position: 2,
-                shareId: undefined,
+                ownerStreamId: undefined,
               }),
             ],
           ),
@@ -229,5 +230,77 @@ describe("PermissionedTree", () => {
         );
       });
     });
+  });
+
+  it("nested shares", () => {
+    const shareA = ShareId.create("shareA");
+    const shareShared = ShareId.create("shareShared");
+    const nodeA = NodeId.create("nodeA");
+    const treeA = createPermissionedTree(
+      new StreamId({deviceId: deviceA, shareId: shareA}),
+    );
+    const nodeShared = NodeId.create("nodeShared");
+
+    const opAA0 = LinkedList.of<AppliedOp["op"]>({
+      timestamp: clock.now(),
+      device: deviceA,
+      type: "create node",
+      node: nodeShared,
+      parent: rootNodeId,
+      position: 0,
+      ownerStreamId: new StreamId({deviceId: deviceB, shareId: shareShared}),
+    });
+    const opBShared0 = LinkedList.of<AppliedOp["op"]>({
+      timestamp: clock.now(),
+      device: deviceB,
+      type: "create node",
+      node: nodeA,
+      parent: rootNodeId,
+      position: 0,
+      ownerStreamId: undefined,
+    });
+
+    const treeA1 = treeA.update(
+      HashMap.of(
+        [new StreamId({deviceId: deviceA, shareId: shareA}), opAA0],
+        [new StreamId({deviceId: deviceB, shareId: shareShared}), opBShared0],
+      ),
+    );
+
+    expectPreludeEqual(
+      treeA1.desiredHeads(treeA1.value),
+      HashMap.of(
+        [new StreamId({deviceId: deviceA, shareId: shareA}), "open" as const],
+        [
+          new StreamId({deviceId: deviceB, shareId: shareShared}),
+          "open" as const,
+        ],
+      ),
+    );
+    expectPreludeEqual(
+      treeA1.value.nodes,
+      HashMap.of([
+        nodeShared,
+        new NodeInfo({
+          parent: rootNodeId,
+          position: 0,
+          subtree: new PermissionedTreeValue({
+            shareId: shareShared,
+            writers: HashMap.of([
+              deviceB,
+              new PriorityStatus({priority: 0, status: "open"}),
+            ]),
+            nodes: HashMap.of([
+              nodeA,
+              new NodeInfo({
+                parent: rootNodeId,
+                position: 0,
+                subtree: undefined,
+              }),
+            ]),
+          }),
+        }),
+      ]),
+    );
   });
 });

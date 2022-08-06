@@ -6,7 +6,7 @@ import {
   persistentDoOpFactory,
   persistentUndoOp,
 } from "./PersistentUndoHelper";
-import {HashMap} from "prelude-ts";
+import {HashMap, Option, Vector} from "prelude-ts";
 import {ObjectValue} from "./helper/ObjectValue";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
@@ -22,11 +22,84 @@ export type PermissionedTree = ControlledOpSet<
   StreamId
 >;
 
-class PermissionedTreeValue extends ObjectValue<{
+export class PermissionedTreeValue extends ObjectValue<{
   readonly shareId: ShareId;
   writers: HashMap<DeviceId, PriorityStatus>;
   nodes: HashMap<NodeId, NodeInfo>;
-}>() {}
+}>() {
+  doOp(op: AppliedOp["op"], streamId: StreamId): this {
+    if (this.shareId !== streamId.shareId) {
+      const nodes1 = this.nodes.mapValues((nodeInfo) =>
+        nodeInfo.subtree
+          ? nodeInfo.copy({subtree: nodeInfo.subtree.doOp(op, streamId)})
+          : nodeInfo,
+      );
+      if (nodes1.equals(this.nodes)) return this;
+      return this.copy({nodes: nodes1});
+    }
+    switch (op.type) {
+      case "set writer":
+        const devicePriority = this.writers
+          .get(op.device)
+          .getOrThrow("Cannot find writer entry for op author").priority;
+        const writerPriority = this.writers
+          .get(op.targetWriter)
+          .getOrUndefined()?.priority;
+        if (writerPriority !== undefined && writerPriority >= devicePriority)
+          return this;
+        if (op.priority >= devicePriority) return this;
+
+        return this.copy({
+          writers: this.writers.put(
+            op.targetWriter,
+            new PriorityStatus({
+              priority: op.priority,
+              status: op.status,
+            }),
+          ),
+        });
+      case "create node":
+        if (this.nodes.containsKey(op.node)) return this;
+        return this.copy({
+          nodes: this.nodes.put(
+            op.node,
+            new NodeInfo({
+              parent: op.parent,
+              position: op.position,
+              subtree: op.ownerStreamId
+                ? newPermissionedTreeValue(op.ownerStreamId)
+                : undefined,
+            }),
+          ),
+        });
+      case "set parent":
+        const nodeInfo = this.nodes.get(op.node);
+        if (ancestor(this.nodes, op.node, op.parent) || nodeInfo.isNone())
+          return this;
+        return this.copy({
+          nodes: this.nodes.put(
+            op.node,
+            nodeInfo.get().copy({parent: op.parent, position: op.position}),
+          ),
+        });
+    }
+  }
+
+  desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
+    const directHeads = this.writers.map((device, info) => [
+      new StreamId({deviceId: device, shareId: this.shareId}),
+      info.status,
+    ]);
+    const childDesiredHeads: Vector<
+      HashMap<StreamId, "open" | OpList<AppliedOp>>
+    > = Vector.ofIterable(this.nodes.valueIterable()).mapOption(({subtree}) =>
+      subtree === undefined ? Option.none() : Option.of(subtree.desiredHeads()),
+    );
+    return childDesiredHeads.fold(directHeads, (heads0, heads1) =>
+      HashMap.of(...heads0, ...heads1),
+    );
+  }
+}
 export class NodeId extends TypedValue<"NodeId", string> {}
 export class PriorityStatus extends ObjectValue<{
   priority: number;
@@ -46,6 +119,7 @@ export type SetWriter = {
   timestamp: Timestamp;
   device: DeviceId;
   type: "set writer";
+
   targetWriter: DeviceId;
   priority: number;
   status: "open" | OpList<AppliedOp>;
@@ -54,15 +128,17 @@ export type CreateNode = {
   timestamp: Timestamp;
   device: DeviceId;
   type: "create node";
+
   node: NodeId;
   parent: NodeId;
   position: number;
-  shareId: undefined | ShareId;
+  ownerStreamId: undefined | StreamId;
 };
 export type SetParent = {
   timestamp: Timestamp;
   device: DeviceId;
   type: "set parent";
+
   node: NodeId;
   parent: NodeId;
   position: number;
@@ -72,62 +148,11 @@ export function createPermissionedTree(
   ownerStreamId: StreamId,
 ): PermissionedTree {
   return ControlledOpSet<PermissionedTreeValue, AppliedOp, StreamId>.create(
-    persistentDoOpFactory((value, op) => {
-      switch (op.type) {
-        case "set writer":
-          const devicePriority = value.writers
-            .get(op.device)
-            .getOrThrow("Cannot find writer entry for op author").priority;
-          const writerPriority = value.writers
-            .get(op.targetWriter)
-            .getOrUndefined()?.priority;
-          if (writerPriority !== undefined && writerPriority >= devicePriority)
-            return value;
-          if (op.priority >= devicePriority) return value;
-
-          return value.copy({
-            writers: value.writers.put(
-              op.targetWriter,
-              new PriorityStatus({
-                priority: op.priority,
-                status: op.status,
-              }),
-            ),
-          });
-        case "create node":
-          if (value.nodes.containsKey(op.node)) return value;
-          return value.copy({
-            nodes: value.nodes.put(
-              op.node,
-              new NodeInfo({
-                parent: op.parent,
-                position: op.position,
-                subtree: op.shareId
-                  ? newPermissionedTreeValue(
-                      new StreamId({deviceId: op.device, shareId: op.shareId}),
-                    )
-                  : undefined,
-              }),
-            ),
-          });
-        case "set parent":
-          const nodeInfo = value.nodes.get(op.node);
-          if (ancestor(value.nodes, op.node, op.parent) || nodeInfo.isNone())
-            return value;
-          return value.copy({
-            nodes: value.nodes.put(
-              op.node,
-              nodeInfo.get().copy({parent: op.parent, position: op.position}),
-            ),
-          });
-      }
+    persistentDoOpFactory((value, op, deviceId) => {
+      return value.doOp(op, deviceId);
     }),
     persistentUndoOp,
-    (value) =>
-      value.writers.map((device, info) => [
-        new StreamId({deviceId: device, shareId: value.shareId}),
-        info.status,
-      ]),
+    (value) => value.desiredHeads(),
     newPermissionedTreeValue(ownerStreamId),
   );
 }
