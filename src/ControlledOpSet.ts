@@ -20,9 +20,16 @@ export type OpList<AppliedOp extends AppliedOpBase> = ConsLinkedList<
   AppliedOp["op"]
 >;
 
-export type DoOp<Value, AppliedOp extends AppliedOpBase> = (
+export type DoOp<
+  Value,
+  AppliedOp extends AppliedOpBase,
+  DeviceId extends WithEquality,
+> = (
   value: Value,
   op: AppliedOp["op"],
+  // This is the id of the device that published the operation that we are now
+  // doing.
+  deviceId: DeviceId,
 ) => {
   value: Value;
   appliedOp: AppliedOp;
@@ -47,7 +54,7 @@ export class ControlledOpSet<
     AppliedOp extends AppliedOpBase,
     DeviceId extends WithEquality,
   >(
-    doOp: DoOp<Value, AppliedOp>,
+    doOp: DoOp<Value, AppliedOp, DeviceId>,
     undoOp: UndoOp<Value, AppliedOp>,
     desiredHeads: DesiredHeads<Value, AppliedOp, DeviceId>,
     value: Value,
@@ -63,7 +70,7 @@ export class ControlledOpSet<
   }
 
   private constructor(
-    readonly doOp: DoOp<Value, AppliedOp>,
+    readonly doOp: DoOp<Value, AppliedOp, DeviceId>,
     readonly undoOp: UndoOp<Value, AppliedOp>,
     readonly desiredHeads: DesiredHeads<Value, AppliedOp, DeviceId>,
 
@@ -104,8 +111,8 @@ export class ControlledOpSet<
 
     const {value: appState1, appliedOps: appliedOps1} = ops.foldLeft(
       {value, appliedOps},
-      ({value, appliedOps}, op) =>
-        ControlledOpSet.doOnce(this.doOp, value, appliedOps, op),
+      ({value, appliedOps}, {op, deviceId}) =>
+        ControlledOpSet.doOnce(this.doOp, value, appliedOps, op, deviceId),
     );
     const this1 = new ControlledOpSet(
       this.doOp,
@@ -133,40 +140,44 @@ export class ControlledOpSet<
   ): {
     value: Value;
     appliedOps: LinkedList<AppliedOp>;
-    ops: Seq<AppliedOp["op"]>;
+    ops: Seq<{op: AppliedOp["op"]; deviceId: DeviceId}>;
   } {
-    let ops = LinkedList.of<AppliedOp["op"]>();
+    let ops =
+      LinkedList.of<Readonly<{op: AppliedOp["op"]; deviceId: DeviceId}>>();
 
     while (!ControlledOpSet.headsEqual(desiredHeads, actualHeads)) {
-      const {heads: nextRemainingDesiredHeads, op: desiredOp} =
-        ControlledOpSet.undoHeadsOnce(desiredHeads);
-      const {heads: nextActualHeads, op: actualOp} =
-        ControlledOpSet.undoHeadsOnce(actualHeads);
+      const desired = ControlledOpSet.undoHeadsOnce(desiredHeads);
+      const actual = ControlledOpSet.undoHeadsOnce(actualHeads);
 
       if (
-        desiredOp &&
-        (!actualOp || desiredOp.timestamp > actualOp.timestamp)
+        desired.isSome() &&
+        (actual.isNone() ||
+          desired.get().op.timestamp > actual.get().op.timestamp)
       ) {
-        desiredHeads = nextRemainingDesiredHeads;
-        ops = ops.prepend(desiredOp);
+        const {heads, op, deviceId} = desired.get();
+        desiredHeads = heads;
+        ops = ops.prepend({op, deviceId});
       } else if (
-        actualOp &&
-        (!desiredOp || actualOp.timestamp > desiredOp.timestamp)
+        actual.isSome() &&
+        (desired.isNone() ||
+          actual.get().op.timestamp > desired.get().op.timestamp)
       ) {
-        actualHeads = nextActualHeads;
+        const {heads} = actual.get();
+        actualHeads = heads;
         ({value, appliedOps} = ControlledOpSet.undoOnce(
           undoOp,
           value,
           appliedOps!,
         ));
       } else if (
-        desiredOp &&
-        actualOp &&
-        desiredOp.timestamp === actualOp.timestamp
+        desired.isSome() &&
+        actual.isSome() &&
+        desired.get().op.timestamp === actual.get().op.timestamp
       ) {
-        desiredHeads = nextRemainingDesiredHeads;
-        ops = ops.prepend(desiredOp);
-        actualHeads = nextActualHeads;
+        const {heads: desiredHeads1, op, deviceId} = desired.get();
+        desiredHeads = desiredHeads1;
+        ops = ops.prepend({op, deviceId});
+        actualHeads = actual.get().heads;
         ({value, appliedOps} = ControlledOpSet.undoOnce(
           undoOp,
           value,
@@ -206,11 +217,12 @@ export class ControlledOpSet<
     DeviceId extends WithEquality,
   >(
     heads: HashMap<DeviceId, OpList<AppliedOp>>,
-  ): {
-    op: undefined | AppliedOp["op"];
+  ): Option<{
+    op: AppliedOp["op"];
+    deviceId: DeviceId;
     heads: HashMap<DeviceId, OpList<AppliedOp>>;
-  } {
-    if (heads.isEmpty()) return {op: undefined, heads};
+  }> {
+    if (heads.isEmpty()) return Option.none();
 
     const newestDeviceAndOpList = heads.reduce((winner, current) => {
       return winner[1].head().get().timestamp >
@@ -218,24 +230,30 @@ export class ControlledOpSet<
         ? winner
         : current;
     });
-    if (Option.isNone(newestDeviceAndOpList)) return {op: undefined, heads};
+    if (Option.isNone(newestDeviceAndOpList)) return Option.none();
     const [newestDeviceId, newestOpList] = newestDeviceAndOpList.get();
     const heads1 = newestOpList.tail().getOrElse(LinkedList.of());
-    return {
+    return Option.some({
       op: newestOpList.head().get(),
+      deviceId: newestDeviceId,
       heads: LinkedList.isNotEmpty(heads1)
         ? heads.put(newestDeviceId, heads1)
         : heads.remove(newestDeviceId),
-    };
+    });
   }
 
-  private static doOnce<Value, AppliedOp extends AppliedOpBase>(
-    doOp: DoOp<Value, AppliedOp>,
+  private static doOnce<
+    Value,
+    AppliedOp extends AppliedOpBase,
+    DeviceId extends WithEquality,
+  >(
+    doOp: DoOp<Value, AppliedOp, DeviceId>,
     value: Value,
     appliedOps: LinkedList<AppliedOp>,
     op: AppliedOp["op"],
+    deviceId: DeviceId,
   ): {value: Value; appliedOps: LinkedList<AppliedOp>} {
-    const {value: appState1, appliedOp} = doOp(value, op);
+    const {value: appState1, appliedOp} = doOp(value, op, deviceId);
     return {
       value: appState1,
       appliedOps: appliedOps.prepend(appliedOp),

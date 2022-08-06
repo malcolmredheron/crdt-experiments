@@ -26,8 +26,8 @@ describe("ControlledOpSet", () => {
 
     const clock = new CountingClock();
     const cos = ControlledOpSet.create<Value, AppliedOp, DeviceId>(
-      persistentDoOpFactory((value, op) => {
-        return value.append(op.token);
+      persistentDoOpFactory((value, op, deviceId) => {
+        return value.append(`${deviceId}.${op.token}`);
       }),
       persistentUndoOp,
       (value) => HashMap.of([deviceA, "open"], [deviceB, "open"]),
@@ -48,7 +48,7 @@ describe("ControlledOpSet", () => {
 
     it("update merges single new op", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA0]));
-      expectPreludeEqual(cos1.value, Vector.of("a0"));
+      expectPreludeEqual(cos1.value, Vector.of("a.a0"));
       expectIdentical(
         ControlledOpSet.headsEqual(cos1.heads, HashMap.of([deviceA, opA0])),
         true,
@@ -57,7 +57,7 @@ describe("ControlledOpSet", () => {
 
     it("update merges multiple new ops", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1]));
-      expectPreludeEqual(cos1.value, Vector.of("a0", "a1"));
+      expectPreludeEqual(cos1.value, Vector.of("a.a0", "a.a1"));
       expectIdentical(
         ControlledOpSet.headsEqual(cos1.heads, HashMap.of([deviceA, opA1])),
         true,
@@ -68,13 +68,13 @@ describe("ControlledOpSet", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA0]));
       const cos2 = cos1.update(HashMap.of([deviceA, opA0], [deviceB, opB0]));
       const cos3 = cos2.update(HashMap.of([deviceA, opA1], [deviceB, opB0]));
-      expectPreludeEqual(cos3.value, Vector.of("a0", "a1", "b0"));
+      expectPreludeEqual(cos3.value, Vector.of("a.a0", "a.a1", "b.b0"));
     });
 
     it("update purges newer ops from a device if needed", () => {
       const cos1 = cos.update(HashMap.of([deviceA, opA1]));
       const cos2 = cos1.update(HashMap.of([deviceA, opA0]));
-      expectPreludeEqual(cos2.value, Vector.of("a0"));
+      expectPreludeEqual(cos2.value, Vector.of("a.a0"));
       expectIdentical(
         ControlledOpSet.headsEqual(cos2.heads, HashMap.of([deviceA, opA0])),
         true,
