@@ -4,7 +4,6 @@ import {
   DeviceId,
   NodeId,
   NodeInfo,
-  PermissionedTreeValue,
   PriorityStatus,
   ShareId,
   StreamId,
@@ -19,12 +18,12 @@ import {HashMap, LinkedList} from "prelude-ts";
 
 describe("PermissionedTree", () => {
   const clock = new CountingClock();
-  const shareId = ShareId.create("share");
   const deviceA = DeviceId.create("A");
   const deviceB = DeviceId.create("B");
+  const shareId = new ShareId({creator: deviceA, id: "share"});
   const deviceAStreamId = new StreamId({deviceId: deviceA, shareId});
   const deviceBStreamId = new StreamId({deviceId: deviceB, shareId});
-  const tree = createPermissionedTree(deviceAStreamId);
+  const tree = createPermissionedTree(shareId);
   const rootNodeId = NodeId.create("root");
 
   function openWriterOp(
@@ -48,10 +47,14 @@ describe("PermissionedTree", () => {
   describe("permissions", () => {
     it("adds a lower-ranked writer", () => {
       const tree1 = tree.update(
-        HashMap.of([new StreamId({deviceId: deviceA, shareId}), opA0]),
+        HashMap.of([new StreamId(deviceAStreamId), opA0]),
       );
       expectDeepEqual(
-        tree1.value.writers.get(deviceB).getOrUndefined(),
+        tree1.value.sharedNodes
+          .get(shareId)
+          .getOrThrow()
+          .writers.get(deviceB)
+          .getOrUndefined(),
         new PriorityStatus({
           priority: -1,
           status: "open",
@@ -67,7 +70,11 @@ describe("PermissionedTree", () => {
         ]),
       );
       expectIdentical(
-        tree1.value.writers.get(deviceB).getOrUndefined(),
+        tree1.value.sharedNodes
+          .get(shareId)
+          .getOrThrow()
+          .writers.get(deviceB)
+          .getOrUndefined(),
         undefined,
       );
     });
@@ -80,7 +87,11 @@ describe("PermissionedTree", () => {
         ]),
       );
       expectDeepEqual(
-        tree1.value.writers.get(deviceB).getOrThrow(),
+        tree1.value.sharedNodes
+          .get(shareId)
+          .getOrThrow()
+          .writers.get(deviceB)
+          .getOrThrow(),
         new PriorityStatus({
           status: "open",
           priority: -1,
@@ -100,7 +111,7 @@ describe("PermissionedTree", () => {
       node: nodeA,
       parent: rootNodeId,
       position: 1,
-      ownerStreamId: undefined,
+      shareId: undefined,
     });
     const opA2 = opA1.prepend({
       timestamp: clock.now(),
@@ -109,7 +120,7 @@ describe("PermissionedTree", () => {
       node: nodeB,
       parent: rootNodeId,
       position: 2,
-      ownerStreamId: undefined,
+      shareId: undefined,
     });
     const opB0 = LinkedList.of<AppliedOp["op"]>({
       timestamp: clock.now(),
@@ -132,10 +143,14 @@ describe("PermissionedTree", () => {
       it("creates a node if not present", () => {
         const tree1 = tree.update(HashMap.of([deviceAStreamId, opA1]));
         expectPreludeEqual(
-          tree1.value.nodes,
+          tree1.value.sharedNodes.get(shareId).getOrThrow().nodes,
           HashMap.of([
             nodeA,
-            new NodeInfo({parent: rootNodeId, position: 1, subtree: undefined}),
+            new NodeInfo({
+              parent: rootNodeId,
+              position: 1,
+              shareId: undefined,
+            }),
           ]),
         );
       });
@@ -153,16 +168,20 @@ describe("PermissionedTree", () => {
                 node: nodeA,
                 parent: rootNodeId,
                 position: 2,
-                ownerStreamId: undefined,
+                shareId: undefined,
               }),
             ],
           ),
         );
         expectPreludeEqual(
-          tree1.value.nodes,
+          tree1.value.sharedNodes.get(shareId).getOrThrow().nodes,
           HashMap.of([
             nodeA,
-            new NodeInfo({parent: rootNodeId, position: 1, subtree: undefined}),
+            new NodeInfo({
+              parent: rootNodeId,
+              position: 1,
+              shareId: undefined,
+            }),
           ]),
         );
       });
@@ -172,19 +191,23 @@ describe("PermissionedTree", () => {
       it("moves a node if present", () => {
         const tree1 = tree.update(HashMap.of([deviceAStreamId, opA3]));
         expectPreludeEqual(
-          tree1.value.nodes,
+          tree1.value.sharedNodes.get(shareId).getOrThrow().nodes,
           HashMap.of(
             [
               nodeA,
               new NodeInfo({
                 parent: rootNodeId,
                 position: 1,
-                subtree: undefined,
+                shareId: undefined,
               }),
             ],
             [
               nodeB,
-              new NodeInfo({parent: nodeA, position: 0, subtree: undefined}),
+              new NodeInfo({
+                parent: nodeA,
+                position: 0,
+                shareId: undefined,
+              }),
             ],
           ),
         );
@@ -204,7 +227,10 @@ describe("PermissionedTree", () => {
             }),
           ]),
         );
-        expectPreludeEqual(tree1.value.nodes, HashMap.of());
+        expectPreludeEqual(
+          tree1.value.sharedNodes.get(shareId).getOrThrow().nodes,
+          HashMap.of(),
+        );
       });
 
       it("avoids a cycle", () => {
@@ -212,18 +238,22 @@ describe("PermissionedTree", () => {
           HashMap.of([deviceAStreamId, opA3], [deviceBStreamId, opB0]),
         );
         expectPreludeEqual(
-          tree1.value.nodes,
+          tree1.value.sharedNodes.get(shareId).getOrThrow().nodes,
           HashMap.of(
             [
               nodeA,
-              new NodeInfo({parent: nodeB, position: 0, subtree: undefined}),
+              new NodeInfo({
+                parent: nodeB,
+                position: 0,
+                shareId: undefined,
+              }),
             ],
             [
               nodeB,
               new NodeInfo({
                 parent: rootNodeId,
                 position: 2,
-                subtree: undefined,
+                shareId: undefined,
               }),
             ],
           ),
@@ -233,23 +263,14 @@ describe("PermissionedTree", () => {
   });
 
   it("nested shares", () => {
-    const shareA = ShareId.create("shareA");
-    const shareShared = ShareId.create("shareShared");
+    const shareA = new ShareId({creator: deviceA, id: "a root"});
+    const shareShared = new ShareId({creator: deviceB, id: "shared"});
     const nodeA = NodeId.create("nodeA");
-    const treeA = createPermissionedTree(
-      new StreamId({deviceId: deviceA, shareId: shareA}),
-    );
+    const treeA = createPermissionedTree(shareA);
     const nodeShared = NodeId.create("nodeShared");
 
-    const opAA0 = LinkedList.of<AppliedOp["op"]>({
-      timestamp: clock.now(),
-      device: deviceA,
-      type: "create node",
-      node: nodeShared,
-      parent: rootNodeId,
-      position: 0,
-      ownerStreamId: new StreamId({deviceId: deviceB, shareId: shareShared}),
-    });
+    // Make the op in the shared node first, so that the tree has to handle
+    // getting an op before it knows where to put it.
     const opBShared0 = LinkedList.of<AppliedOp["op"]>({
       timestamp: clock.now(),
       device: deviceB,
@@ -257,7 +278,16 @@ describe("PermissionedTree", () => {
       node: nodeA,
       parent: rootNodeId,
       position: 0,
-      ownerStreamId: undefined,
+      shareId: undefined,
+    });
+    const opAA0 = LinkedList.of<AppliedOp["op"]>({
+      timestamp: clock.now(),
+      device: deviceA,
+      type: "create node",
+      node: nodeShared,
+      parent: rootNodeId,
+      position: 0,
+      shareId: shareShared,
     });
 
     const treeA1 = treeA.update(
@@ -278,27 +308,24 @@ describe("PermissionedTree", () => {
       ),
     );
     expectPreludeEqual(
-      treeA1.value.nodes,
+      treeA1.value.sharedNodes.get(shareA).getOrThrow().nodes,
       HashMap.of([
         nodeShared,
         new NodeInfo({
           parent: rootNodeId,
           position: 0,
-          subtree: new PermissionedTreeValue({
-            shareId: shareShared,
-            writers: HashMap.of([
-              deviceB,
-              new PriorityStatus({priority: 0, status: "open"}),
-            ]),
-            nodes: HashMap.of([
-              nodeA,
-              new NodeInfo({
-                parent: rootNodeId,
-                position: 0,
-                subtree: undefined,
-              }),
-            ]),
-          }),
+          shareId: shareShared,
+        }),
+      ]),
+    );
+    expectPreludeEqual(
+      treeA1.value.sharedNodes.get(shareShared).getOrThrow().nodes,
+      HashMap.of([
+        nodeA,
+        new NodeInfo({
+          parent: rootNodeId,
+          position: 0,
+          shareId: undefined,
         }),
       ]),
     );

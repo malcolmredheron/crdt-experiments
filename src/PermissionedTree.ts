@@ -9,27 +9,28 @@ import {
 import {HashMap, Option, Vector} from "prelude-ts";
 import {ObjectValue} from "./helper/ObjectValue";
 
-export type PermissionedTree = ControlledOpSet<
-  PermissionedTreeValue,
-  AppliedOp,
-  StreamId
->;
+export type PermissionedTree = ControlledOpSet<Tree, AppliedOp, StreamId>;
 
-export function createPermissionedTree(
-  ownerStreamId: StreamId,
-): PermissionedTree {
-  return ControlledOpSet<PermissionedTreeValue, AppliedOp, StreamId>.create(
+// Creates a new PermissionedTreeValue with shareId.creator as the initial
+// writer.
+export function createPermissionedTree(shareId: ShareId): PermissionedTree {
+  return ControlledOpSet<Tree, AppliedOp, StreamId>.create(
     persistentDoOpFactory((value, op, deviceId) => {
       return value.doOp(op, deviceId);
     }),
     persistentUndoOp,
     (value) => value.desiredHeads(),
-    createPermissionedTreeValue(ownerStreamId),
+    new Tree({
+      root: shareId,
+      // Because this is empty, desiredWriters will fill in a default writer for
+      // the root shared node.
+      sharedNodes: HashMap.of(),
+    }),
   );
 }
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
-export class ShareId extends TypedValue<"ShareId", string> {}
+export class ShareId extends ObjectValue<{creator: DeviceId; id: string}>() {}
 export class StreamId extends ObjectValue<{
   deviceId: DeviceId;
   shareId: ShareId;
@@ -38,7 +39,7 @@ export class NodeId extends TypedValue<"NodeId", string> {}
 
 // Operations
 export type AppliedOp = PersistentAppliedOp<
-  PermissionedTreeValue,
+  Tree,
   SetWriter | CreateNode | SetParent
 >;
 type SetWriter = {
@@ -58,7 +59,7 @@ type CreateNode = {
   node: NodeId;
   parent: NodeId;
   position: number;
-  ownerStreamId: undefined | StreamId;
+  shareId: undefined | ShareId;
 };
 type SetParent = {
   timestamp: Timestamp;
@@ -78,24 +79,69 @@ export class PriorityStatus extends ObjectValue<{
 export class NodeInfo extends ObjectValue<{
   parent: NodeId;
   position: number;
-  subtree: undefined | PermissionedTreeValue;
+  readonly shareId: undefined | ShareId;
 }>() {}
 
-export class PermissionedTreeValue extends ObjectValue<{
-  readonly shareId: ShareId;
+class Tree extends ObjectValue<{
+  readonly root: ShareId;
+  sharedNodes: HashMap<ShareId, SharedNode>;
+}>() {
+  doOp(op: AppliedOp["op"], streamId: StreamId): this {
+    const sharedNode = this.sharedNodes.get(streamId.shareId).getOrCall(
+      () =>
+        new SharedNode({
+          nodes: HashMap.of(),
+          writers: HashMap.of([
+            streamId.shareId.creator,
+            new PriorityStatus({priority: 0, status: "open"}),
+          ]),
+        }),
+    );
+    const sharedNode1 = sharedNode.doOp(op);
+    return this.copy({
+      sharedNodes: this.sharedNodes.put(streamId.shareId, sharedNode1),
+    });
+  }
+
+  desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
+    const headsForSharedNode = (
+      shareId: ShareId,
+    ): HashMap<StreamId, "open" | OpList<AppliedOp>> => {
+      const sharedNode = this.sharedNodes.get(shareId);
+      if (sharedNode.isNone())
+        return HashMap.of([
+          new StreamId({deviceId: shareId.creator, shareId}),
+          "open",
+        ]);
+
+      const directHeads = sharedNode
+        .get()
+        .writers.map((device, info) => [
+          new StreamId({deviceId: device, shareId: shareId}),
+          info.status,
+        ]);
+      const childDesiredHeads: Vector<
+        HashMap<StreamId, "open" | OpList<AppliedOp>>
+      > = Vector.ofIterable(sharedNode.get().nodes.valueIterable()).mapOption(
+        ({shareId}) =>
+          shareId === undefined
+            ? Option.none()
+            : Option.of(headsForSharedNode(shareId)),
+      );
+      return childDesiredHeads.fold(directHeads, (heads0, heads1) =>
+        HashMap.of(...heads0, ...heads1),
+      );
+    };
+
+    return headsForSharedNode(this.root);
+  }
+}
+
+export class SharedNode extends ObjectValue<{
   writers: HashMap<DeviceId, PriorityStatus>;
   nodes: HashMap<NodeId, NodeInfo>;
 }>() {
-  doOp(op: AppliedOp["op"], streamId: StreamId): this {
-    if (this.shareId !== streamId.shareId) {
-      const nodes1 = this.nodes.mapValues((nodeInfo) =>
-        nodeInfo.subtree
-          ? nodeInfo.copy({subtree: nodeInfo.subtree.doOp(op, streamId)})
-          : nodeInfo,
-      );
-      if (nodes1.equals(this.nodes)) return this;
-      return this.copy({nodes: nodes1});
-    }
+  doOp(op: AppliedOp["op"]): this {
     switch (op.type) {
       case "set writer":
         const devicePriority = this.writers
@@ -125,9 +171,7 @@ export class PermissionedTreeValue extends ObjectValue<{
             new NodeInfo({
               parent: op.parent,
               position: op.position,
-              subtree: op.ownerStreamId
-                ? createPermissionedTreeValue(op.ownerStreamId)
-                : undefined,
+              shareId: op.shareId,
             }),
           ),
         });
@@ -143,19 +187,8 @@ export class PermissionedTreeValue extends ObjectValue<{
     }
   }
 
-  desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
-    const directHeads = this.writers.map((device, info) => [
-      new StreamId({deviceId: device, shareId: this.shareId}),
-      info.status,
-    ]);
-    const childDesiredHeads: Vector<
-      HashMap<StreamId, "open" | OpList<AppliedOp>>
-    > = Vector.ofIterable(this.nodes.valueIterable()).mapOption(({subtree}) =>
-      subtree === undefined ? Option.none() : Option.of(subtree.desiredHeads()),
-    );
-    return childDesiredHeads.fold(directHeads, (heads0, heads1) =>
-      HashMap.of(...heads0, ...heads1),
-    );
+  desiredHeads(): HashMap<DeviceId, "open" | OpList<AppliedOp>> {
+    return this.writers.map((deviceId, info) => [deviceId, info.status]);
   }
 
   private ancestor(parent: NodeId, child: NodeId): boolean {
@@ -165,18 +198,4 @@ export class PermissionedTreeValue extends ObjectValue<{
       .map((info) => this.ancestor(parent, info.parent))
       .getOrElse(false);
   }
-}
-
-// Creates a new PermissionedTreeValue with ownerStreamId as a initial writer.
-function createPermissionedTreeValue(
-  ownerStreamId: StreamId,
-): PermissionedTreeValue {
-  return new PermissionedTreeValue({
-    shareId: ownerStreamId.shareId,
-    writers: HashMap.of([
-      ownerStreamId.deviceId,
-      new PriorityStatus({priority: 0, status: "open"}),
-    ]),
-    nodes: HashMap.empty(),
-  });
 }

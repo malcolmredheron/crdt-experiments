@@ -73,20 +73,16 @@ describe("PermissionedTree.monkey", function () {
       seq: () => nextInSeq++,
     };
 
-    const shareId = ShareId.create("share");
     const device0 = DeviceId.create("device0");
-    const initialTree = applyNewOp(
-      createPermissionedTree(new StreamId({deviceId: device0, shareId})),
-      device0,
-      {
-        timestamp: Timestamp.create(-1),
-        type: "set writer",
-        device: device0,
-        targetWriter: DeviceId.create("device1"),
-        priority: -1,
-        status: "open",
-      },
-    );
+    const shareId = new ShareId({creator: device0, id: "root"});
+    const initialTree = applyNewOp(createPermissionedTree(shareId), device0, {
+      timestamp: Timestamp.create(-1),
+      type: "set writer",
+      device: device0,
+      targetWriter: DeviceId.create("device1"),
+      priority: -1,
+      status: "open",
+    });
     let devices = HashMap<DeviceId, PermissionedTree>.ofIterable(
       Array.from(Array(4).keys()).map((index) => [
         DeviceId.create(`device${index}`),
@@ -114,8 +110,7 @@ describe("PermissionedTree.monkey", function () {
 
         log(`turn ${turn}, device ${device}, op type ${opType}`);
         if (opType === "update") {
-          const remoteHeads = remoteHeadsForDevices(shareId, devices);
-          const tree1 = tree.update(remoteHeads);
+          const tree1 = tree.update(localHeadsForDevices(shareId, devices));
           devices = devices.put(device, tree1);
         } else {
           const op = opForOpType(clock, log, rand, opType, device, tree);
@@ -126,20 +121,25 @@ describe("PermissionedTree.monkey", function () {
 
       // Check the devices.
       if (turn % 10 === 0) {
-        const remoteHeads = remoteHeadsForDevices(shareId, devices);
+        const localHeadsForEachDevice = localHeadsForDevices(shareId, devices);
         const devices1: HashMap<DeviceId, PermissionedTree> = devices.map(
-          (device, tree) => [device, tree.update(remoteHeads)],
+          (device, tree) => [device, tree.update(localHeadsForEachDevice)],
         );
         devices1.reduce((left, right) => {
-          expectPreludeEqual(left[1].value.writers, right[1].value.writers);
-          expectPreludeEqual(left[1].value.nodes, right[1].value.nodes);
+          expectPreludeEqual(left[1].value, right[1].value);
+          expectPreludeEqual(left[1].value, right[1].value);
           return left;
         });
       }
     }
-    expect(devices.get(device0).getOrThrow().value.nodes.length()).greaterThan(
-      0,
-    );
+    expect(
+      devices
+        .get(device0)
+        .getOrThrow()
+        .value.sharedNodes.get(shareId)
+        .getOrThrow()
+        .nodes.length(),
+    ).greaterThan(0);
   });
 });
 
@@ -151,11 +151,12 @@ function opForOpType(
   deviceId: DeviceId,
   tree: PermissionedTree,
 ): AppliedOp["op"] {
+  const [, sharedNode] = tree.value.sharedNodes.single().getOrThrow();
   if (optype === "add") {
     const node = NodeId.create(`node${rand.seq()}`);
     const parent = randomInArray(rand, [
       rootNodeId,
-      ...tree.value.nodes.keySet().toArray(),
+      ...sharedNode.nodes.keySet().toArray(),
     ]);
     return {
       timestamp: clock.now(),
@@ -164,16 +165,16 @@ function opForOpType(
       node,
       parent,
       position: rand.rand(),
-      ownerStreamId: undefined,
+      shareId: undefined,
     };
   } else if (optype === "move") {
     const node = randomInArray(rand, [
       rootNodeId,
-      ...tree.value.nodes.keySet().toArray(),
+      ...sharedNode.nodes.keySet().toArray(),
     ]);
     const parent = randomInArray(rand, [
       rootNodeId,
-      ...tree.value.nodes.keySet().toArray(),
+      ...sharedNode.nodes.keySet().toArray(),
     ]);
     return {
       timestamp: clock.now(),
@@ -188,7 +189,12 @@ function opForOpType(
   }
 }
 
-function remoteHeadsForDevices(
+// Returns the local stream-to-head mappings from all of the devices, "local"
+// meaning the ones where the device id in the mapping matches the device's id.
+//
+// These are the ones published by each device, versus the remote ones that they
+// have merged in from other devices.
+function localHeadsForDevices(
   shareId: ShareId,
   devices: HashMap<DeviceId, PermissionedTree>,
 ): HashMap<StreamId, OpList<AppliedOp>> {
@@ -212,7 +218,7 @@ function applyNewOp(
 ): PermissionedTree {
   const streamId = new StreamId({
     deviceId: device,
-    shareId: tree.value.shareId,
+    shareId: tree.value.root,
   });
   const opList1 = tree.heads
     .get(streamId)
