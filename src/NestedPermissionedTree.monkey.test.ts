@@ -16,8 +16,11 @@ import {expectPreludeEqual} from "./helper/Shared.testing";
 import {HashMap, LinkedList} from "prelude-ts";
 import {expect} from "chai";
 
-type OpType = "add" | "move" | "update";
+type OpType = "add" | "move" | "remove" | "update";
 const rootNodeId = NodeId.create("root");
+// A node that isn't part of the tree, and which we move nodes into in order to
+// remove them from the tree
+const trashNodeId = NodeId.create("trash");
 
 //------------------------------------------------------------------------------
 // Randomness
@@ -52,6 +55,7 @@ describe("NestedPermissionedTree.monkey", function () {
   const weights = HashMap.of<OpType, number>(
     ["add", 10],
     ["move", 10],
+    ["remove", 1],
     ["update", 2],
   );
 
@@ -147,45 +151,60 @@ function opForOpType(
   clock: Clock,
   log: (s: string) => void,
   rand: RandomSource,
-  optype: OpType,
+  opType: Exclude<OpType, "update">,
   deviceId: DeviceId,
   tree: NestedPermissionedTree,
 ): AppliedOp["op"] {
   const [, sharedNode] = tree.value.sharedNodes.single().getOrThrow();
-  if (optype === "add") {
-    const node = NodeId.create(`node${rand.seq()}`);
-    const parent = randomInArray(rand, [
-      rootNodeId,
-      ...sharedNode.nodes.keySet().toArray(),
-    ]);
-    return {
-      timestamp: clock.now(),
-      device: deviceId,
-      type: "create node",
-      node,
-      parent,
-      position: rand.rand(),
-      shareId: undefined,
-    };
-  } else if (optype === "move") {
-    const node = randomInArray(rand, [
-      rootNodeId,
-      ...sharedNode.nodes.keySet().toArray(),
-    ]);
-    const parent = randomInArray(rand, [
-      rootNodeId,
-      ...sharedNode.nodes.keySet().toArray(),
-    ]);
-    return {
-      timestamp: clock.now(),
-      device: deviceId,
-      type: "set parent",
-      node,
-      parent,
-      position: rand.rand(),
-    };
-  } else {
-    throw new Error("Unknown operation");
+  switch (opType) {
+    case "add": {
+      const node = NodeId.create(`node${rand.seq()}`);
+      const parent = randomInArray(rand, [
+        rootNodeId,
+        ...sharedNode.nodes.keySet().toArray(),
+      ]);
+      return {
+        timestamp: clock.now(),
+        device: deviceId,
+        type: "create node",
+        node,
+        parent,
+        position: rand.rand(),
+        shareId: undefined,
+      };
+    }
+    case "move": {
+      const node = randomInArray(rand, [
+        rootNodeId,
+        ...sharedNode.nodes.keySet().toArray(),
+      ]);
+      const parent = randomInArray(rand, [
+        rootNodeId,
+        ...sharedNode.nodes.keySet().toArray(),
+      ]);
+      return {
+        timestamp: clock.now(),
+        device: deviceId,
+        type: "set parent",
+        node,
+        parent,
+        position: rand.rand(),
+      };
+    }
+    case "remove": {
+      const node = randomInArray(rand, [
+        rootNodeId,
+        ...sharedNode.nodes.keySet().toArray(),
+      ]);
+      return {
+        timestamp: clock.now(),
+        device: deviceId,
+        type: "set parent",
+        node,
+        parent: trashNodeId,
+        position: 0,
+      };
+    }
   }
 }
 
