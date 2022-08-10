@@ -6,32 +6,37 @@ import {
   persistentDoOpFactory,
   persistentUndoOp,
 } from "./PersistentUndoHelper";
-import {HashMap} from "prelude-ts";
+import {HashMap, Option, Vector} from "prelude-ts";
 import {ObjectValue} from "./helper/ObjectValue";
 
-export type PermissionedTree = ControlledOpSet<Tree, AppliedOp, DeviceId>;
+export type NestedPermissionedTree = ControlledOpSet<Tree, AppliedOp, StreamId>;
 
 // Creates a new PermissionedTreeValue with shareId.creator as the initial
 // writer.
 export function createPermissionedTree(
-  ownerDeviceId: DeviceId,
-): PermissionedTree {
-  return ControlledOpSet<Tree, AppliedOp, DeviceId>.create(
-    persistentDoOpFactory((value, op, deviceId) => value.doOp(op)),
+  shareId: ShareId,
+): NestedPermissionedTree {
+  return ControlledOpSet<Tree, AppliedOp, StreamId>.create(
+    persistentDoOpFactory((value, op, deviceId) => {
+      return value.doOp(op, deviceId);
+    }),
     persistentUndoOp,
     (value) => value.desiredHeads(),
     new Tree({
-      ownerDeviceId,
-      writers: HashMap.of([
-        ownerDeviceId,
-        new PriorityStatus({priority: 0, status: "open"}),
-      ]),
-      nodes: HashMap.empty(),
+      root: shareId,
+      // Because this is empty, desiredWriters will fill in a default writer for
+      // the root shared node.
+      sharedNodes: HashMap.of(),
     }),
   );
 }
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
+export class ShareId extends ObjectValue<{creator: DeviceId; id: string}>() {}
+export class StreamId extends ObjectValue<{
+  deviceId: DeviceId;
+  shareId: ShareId;
+}>() {}
 export class NodeId extends TypedValue<"NodeId", string> {}
 
 // Operations
@@ -56,6 +61,7 @@ type CreateNode = {
   node: NodeId;
   parent: NodeId;
   position: number;
+  shareId: undefined | ShareId;
 };
 type SetParent = {
   timestamp: Timestamp;
@@ -75,10 +81,65 @@ export class PriorityStatus extends ObjectValue<{
 export class NodeInfo extends ObjectValue<{
   parent: NodeId;
   position: number;
+  readonly shareId: undefined | ShareId;
 }>() {}
 
 class Tree extends ObjectValue<{
-  ownerDeviceId: DeviceId;
+  readonly root: ShareId;
+  sharedNodes: HashMap<ShareId, SharedNode>;
+}>() {
+  doOp(op: AppliedOp["op"], streamId: StreamId): this {
+    const sharedNode = this.sharedNodes.get(streamId.shareId).getOrCall(
+      () =>
+        new SharedNode({
+          nodes: HashMap.of(),
+          writers: HashMap.of([
+            streamId.shareId.creator,
+            new PriorityStatus({priority: 0, status: "open"}),
+          ]),
+        }),
+    );
+    const sharedNode1 = sharedNode.doOp(op);
+    return this.copy({
+      sharedNodes: this.sharedNodes.put(streamId.shareId, sharedNode1),
+    });
+  }
+
+  desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
+    const headsForSharedNode = (
+      shareId: ShareId,
+    ): HashMap<StreamId, "open" | OpList<AppliedOp>> => {
+      const sharedNode = this.sharedNodes.get(shareId);
+      if (sharedNode.isNone())
+        return HashMap.of([
+          new StreamId({deviceId: shareId.creator, shareId}),
+          "open",
+        ]);
+
+      const directHeads = sharedNode
+        .get()
+        .writers.map((device, info) => [
+          new StreamId({deviceId: device, shareId: shareId}),
+          info.status,
+        ]);
+      const childDesiredHeads: Vector<
+        HashMap<StreamId, "open" | OpList<AppliedOp>>
+      > = Vector.ofIterable(sharedNode.get().nodes.valueIterable()).mapOption(
+        ({shareId}) =>
+          shareId === undefined
+            ? Option.none()
+            : Option.of(headsForSharedNode(shareId)),
+      );
+      return childDesiredHeads.fold(directHeads, (heads0, heads1) =>
+        HashMap.of(...heads0, ...heads1),
+      );
+    };
+
+    return headsForSharedNode(this.root);
+  }
+}
+
+export class SharedNode extends ObjectValue<{
   writers: HashMap<DeviceId, PriorityStatus>;
   nodes: HashMap<NodeId, NodeInfo>;
 }>() {
@@ -112,6 +173,7 @@ class Tree extends ObjectValue<{
             new NodeInfo({
               parent: op.parent,
               position: op.position,
+              shareId: op.shareId,
             }),
           ),
         });

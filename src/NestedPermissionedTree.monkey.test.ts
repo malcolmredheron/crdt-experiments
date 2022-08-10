@@ -5,10 +5,10 @@ import {
   createPermissionedTree,
   DeviceId,
   NodeId,
-  PermissionedTree,
+  NestedPermissionedTree,
   ShareId,
   StreamId,
-} from "./PermissionedTree";
+} from "./NestedPermissionedTree";
 import {OpList} from "./ControlledOpSet";
 import {Clock} from "./helper/Clock";
 import {Timestamp} from "./helper/Timestamp";
@@ -46,7 +46,7 @@ function randomInArray<T>(rand: RandomSource, array: ReadonlyArray<T>): T {
 //
 // That is, any fixes that we make because of what this test shows us must be
 // tested somewhere else.
-describe("PermissionedTree.monkey", function () {
+describe("NestedPermissionedTree.monkey", function () {
   this.timeout(100000);
 
   const weights = HashMap.of<OpType, number>(
@@ -83,7 +83,7 @@ describe("PermissionedTree.monkey", function () {
       priority: -1,
       status: "open",
     });
-    let devices = HashMap<DeviceId, PermissionedTree>.ofIterable(
+    let devices = HashMap<DeviceId, NestedPermissionedTree>.ofIterable(
       Array.from(Array(4).keys()).map((index) => [
         DeviceId.create(`device${index}`),
         initialTree,
@@ -122,7 +122,7 @@ describe("PermissionedTree.monkey", function () {
       // Check the devices.
       if (turn % 10 === 0) {
         const localHeadsForEachDevice = localHeadsForDevices(shareId, devices);
-        const devices1: HashMap<DeviceId, PermissionedTree> = devices.map(
+        const devices1: HashMap<DeviceId, NestedPermissionedTree> = devices.map(
           (device, tree) => [device, tree.update(localHeadsForEachDevice)],
         );
         devices1.reduce((left, right) => {
@@ -149,7 +149,7 @@ function opForOpType(
   rand: RandomSource,
   optype: OpType,
   deviceId: DeviceId,
-  tree: PermissionedTree,
+  tree: NestedPermissionedTree,
 ): AppliedOp["op"] {
   const [, sharedNode] = tree.value.sharedNodes.single().getOrThrow();
   if (optype === "add") {
@@ -196,7 +196,7 @@ function opForOpType(
 // have merged in from other devices.
 function localHeadsForDevices(
   shareId: ShareId,
-  devices: HashMap<DeviceId, PermissionedTree>,
+  devices: HashMap<DeviceId, NestedPermissionedTree>,
 ): HashMap<StreamId, OpList<AppliedOp>> {
   return devices.flatMap((deviceId, tree) =>
     tree.heads
@@ -212,10 +212,10 @@ function localHeadsForDevices(
 }
 
 function applyNewOp(
-  tree: PermissionedTree,
+  tree: NestedPermissionedTree,
   device: DeviceId,
   op: AppliedOp["op"],
-): PermissionedTree {
+): NestedPermissionedTree {
   const streamId = new StreamId({
     deviceId: device,
     shareId: tree.value.root,
