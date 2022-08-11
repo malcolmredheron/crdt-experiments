@@ -4,8 +4,8 @@ import {
   AppliedOp,
   createPermissionedTree,
   DeviceId,
-  NodeId,
   NestedPermissionedTree,
+  NodeId,
   ShareId,
   StreamId,
 } from "./NestedPermissionedTree";
@@ -16,7 +16,7 @@ import {expectPreludeEqual} from "./helper/Shared.testing";
 import {HashMap, LinkedList} from "prelude-ts";
 import {expect} from "chai";
 
-type OpType = "add" | "move" | "remove" | "update";
+type OpType = "add" | "add shared" | "move" | "remove" | "update";
 const rootNodeId = NodeId.create("root");
 // A node that isn't part of the tree, and which we move nodes into in order to
 // remove them from the tree
@@ -54,6 +54,7 @@ describe("NestedPermissionedTree.monkey", function () {
 
   const weights = HashMap.of<OpType, number>(
     ["add", 10],
+    ["add shared", 2],
     ["move", 10],
     ["remove", 1],
     ["update", 2],
@@ -79,14 +80,18 @@ describe("NestedPermissionedTree.monkey", function () {
 
     const device0 = DeviceId.create("device0");
     const shareId = new ShareId({creator: device0, id: "root"});
-    const initialTree = applyNewOp(createPermissionedTree(shareId), device0, {
-      timestamp: Timestamp.create(-1),
-      type: "set writer",
-      device: device0,
-      targetWriter: DeviceId.create("device1"),
-      priority: -1,
-      status: "open",
-    });
+    const initialTree = applyNewOp(
+      createPermissionedTree(shareId),
+      new StreamId({deviceId: device0, shareId}),
+      {
+        timestamp: Timestamp.create(-1),
+        type: "set writer",
+        device: device0,
+        targetWriter: DeviceId.create("device1"),
+        priority: -1,
+        status: "open",
+      },
+    );
     let devices = HashMap<DeviceId, NestedPermissionedTree>.ofIterable(
       Array.from(Array(4).keys()).map((index) => [
         DeviceId.create(`device${index}`),
@@ -108,18 +113,25 @@ describe("NestedPermissionedTree.monkey", function () {
 
       // Update a device.
       {
-        const device = randomInArray(rand, Array.from(devices.keySet()))!;
-        const tree = devices.get(device).getOrThrow();
+        const deviceId = randomInArray(rand, Array.from(devices.keySet()))!;
+        const tree = devices.get(deviceId).getOrThrow();
         const opType = randomOpType(rand);
 
-        log(`turn ${turn}, device ${device}, op type ${opType}`);
+        log(`turn ${turn}, device ${deviceId}, op type ${opType}`);
         if (opType === "update") {
           const tree1 = tree.update(localHeadsForDevices(shareId, devices));
-          devices = devices.put(device, tree1);
+          devices = devices.put(deviceId, tree1);
         } else {
-          const op = opForOpType(clock, log, rand, opType, device, tree);
-          const tree1 = applyNewOp(tree, device, op);
-          devices = devices.put(device, tree1);
+          const {op, shareId} = opForOpType(
+            clock,
+            log,
+            rand,
+            opType,
+            deviceId,
+            tree,
+          );
+          const tree1 = applyNewOp(tree, new StreamId({deviceId, shareId}), op);
+          devices = devices.put(deviceId, tree1);
         }
       }
 
@@ -136,6 +148,7 @@ describe("NestedPermissionedTree.monkey", function () {
         });
       }
     }
+    // Just make sure that we made some nodes.
     expect(
       devices
         .get(device0)
@@ -154,23 +167,38 @@ function opForOpType(
   opType: Exclude<OpType, "update">,
   deviceId: DeviceId,
   tree: NestedPermissionedTree,
-): AppliedOp["op"] {
-  const [, sharedNode] = tree.value.sharedNodes.single().getOrThrow();
+): {shareId: ShareId; op: AppliedOp["op"]} {
+  const shareId = randomInArray(
+    rand,
+    tree.value
+      .desiredHeads()
+      .keySet()
+      .map((streamId) => streamId.shareId)
+      .toArray(),
+  );
+  const sharedNode = tree.value.sharedNodeForId(shareId);
   switch (opType) {
-    case "add": {
+    case "add":
+    case "add shared": {
       const node = NodeId.create(`node${rand.seq()}`);
       const parent = randomInArray(rand, [
         rootNodeId,
         ...sharedNode.nodes.keySet().toArray(),
       ]);
       return {
-        timestamp: clock.now(),
-        device: deviceId,
-        type: "create node",
-        node,
-        parent,
-        position: rand.rand(),
-        shareId: undefined,
+        shareId,
+        op: {
+          timestamp: clock.now(),
+          device: deviceId,
+          type: "create node",
+          node,
+          parent,
+          position: rand.rand(),
+          shareId:
+            opType === "add shared"
+              ? new ShareId({creator: deviceId, id: "" + rand.seq()})
+              : undefined,
+        },
       };
     }
     case "move": {
@@ -183,12 +211,15 @@ function opForOpType(
         ...sharedNode.nodes.keySet().toArray(),
       ]);
       return {
-        timestamp: clock.now(),
-        device: deviceId,
-        type: "set parent",
-        node,
-        parent,
-        position: rand.rand(),
+        shareId,
+        op: {
+          timestamp: clock.now(),
+          device: deviceId,
+          type: "set parent",
+          node,
+          parent,
+          position: rand.rand(),
+        },
       };
     }
     case "remove": {
@@ -197,12 +228,15 @@ function opForOpType(
         ...sharedNode.nodes.keySet().toArray(),
       ]);
       return {
-        timestamp: clock.now(),
-        device: deviceId,
-        type: "set parent",
-        node,
-        parent: trashNodeId,
-        position: 0,
+        shareId,
+        op: {
+          timestamp: clock.now(),
+          device: deviceId,
+          type: "set parent",
+          node,
+          parent: trashNodeId,
+          position: 0,
+        },
       };
     }
   }
@@ -232,13 +266,9 @@ function localHeadsForDevices(
 
 function applyNewOp(
   tree: NestedPermissionedTree,
-  device: DeviceId,
+  streamId: StreamId,
   op: AppliedOp["op"],
 ): NestedPermissionedTree {
-  const streamId = new StreamId({
-    deviceId: device,
-    shareId: tree.value.root,
-  });
   const opList1 = tree.heads
     .get(streamId)
     .map((ops) => ops.prepend(op))

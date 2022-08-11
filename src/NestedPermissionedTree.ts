@@ -89,16 +89,7 @@ class Tree extends ObjectValue<{
   sharedNodes: HashMap<ShareId, SharedNode>;
 }>() {
   doOp(op: AppliedOp["op"], streamId: StreamId): this {
-    const sharedNode = this.sharedNodes.get(streamId.shareId).getOrCall(
-      () =>
-        new SharedNode({
-          nodes: HashMap.of(),
-          writers: HashMap.of([
-            streamId.shareId.creator,
-            new PriorityStatus({priority: 0, status: "open"}),
-          ]),
-        }),
-    );
+    const sharedNode = this.sharedNodeForId(streamId.shareId);
     const sharedNode1 = sharedNode.doOp(op);
     return this.copy({
       sharedNodes: this.sharedNodes.put(streamId.shareId, sharedNode1),
@@ -109,22 +100,15 @@ class Tree extends ObjectValue<{
     const headsForSharedNode = (
       shareId: ShareId,
     ): HashMap<StreamId, "open" | OpList<AppliedOp>> => {
-      const sharedNode = this.sharedNodes.get(shareId);
-      if (sharedNode.isNone())
-        return HashMap.of([
-          new StreamId({deviceId: shareId.creator, shareId}),
-          "open",
-        ]);
+      const sharedNode = this.sharedNodeForId(shareId);
 
-      const directHeads = sharedNode
-        .get()
-        .writers.map((device, info) => [
-          new StreamId({deviceId: device, shareId: shareId}),
-          info.status,
-        ]);
+      const directHeads = sharedNode.writers.map((device, info) => [
+        new StreamId({deviceId: device, shareId: shareId}),
+        info.status,
+      ]);
       const childDesiredHeads: Vector<
         HashMap<StreamId, "open" | OpList<AppliedOp>>
-      > = Vector.ofIterable(sharedNode.get().nodes.valueIterable()).mapOption(
+      > = Vector.ofIterable(sharedNode.nodes.valueIterable()).mapOption(
         ({shareId}) =>
           shareId === undefined
             ? Option.none()
@@ -136,6 +120,21 @@ class Tree extends ObjectValue<{
     };
 
     return headsForSharedNode(this.root);
+  }
+
+  // Gets the shared node for a share id, or makes the initial one if we don't
+  // have it.
+  sharedNodeForId(shareId: ShareId): SharedNode {
+    return this.sharedNodes.get(shareId).getOrCall(
+      () =>
+        new SharedNode({
+          nodes: HashMap.of(),
+          writers: HashMap.of([
+            shareId.creator,
+            new PriorityStatus({priority: 0, status: "open"}),
+          ]),
+        }),
+    );
   }
 }
 
