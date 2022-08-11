@@ -1,11 +1,12 @@
 import seedRandom from "seed-random";
-import {asType, definedOrThrow} from "./helper/Collection";
+import {definedOrThrow} from "./helper/Collection";
 import {
   AppliedOp,
   createPermissionedTree,
   DeviceId,
   NestedPermissionedTree,
   NodeId,
+  SharedNode,
   ShareId,
   StreamId,
 } from "./NestedPermissionedTree";
@@ -13,10 +14,18 @@ import {OpList} from "./ControlledOpSet";
 import {Clock} from "./helper/Clock";
 import {Timestamp} from "./helper/Timestamp";
 import {expectPreludeEqual} from "./helper/Shared.testing";
-import {HashMap, LinkedList} from "prelude-ts";
+import {HashMap, LinkedList, Option, Vector} from "prelude-ts";
 import {expect} from "chai";
+import {value} from "./helper/TypedValue";
+import {Seq} from "prelude-ts/dist/src/Seq";
 
-type OpType = "add" | "add shared" | "move" | "remove" | "update";
+type OpType =
+  | "add"
+  | "add shared"
+  | "move"
+  | "remove"
+  | "add writer"
+  | "update";
 const rootNodeId = NodeId.create("root");
 // A node that isn't part of the tree, and which we move nodes into in order to
 // remove them from the tree
@@ -43,6 +52,10 @@ function randomInArray<T>(rand: RandomSource, array: ReadonlyArray<T>): T {
   );
 }
 
+function randomInSeq<T>(rand: RandomSource, seq: Seq<T>): Option<T> {
+  return seq.get(Math.floor(rand.rand() * seq.length()));
+}
+
 // Makes random changes to two trees and merges them.
 //
 // THIS IS NOT A CORRECTNESS TEST
@@ -53,11 +66,12 @@ describe("NestedPermissionedTree.monkey", function () {
   this.timeout(100000);
 
   const weights = HashMap.of<OpType, number>(
-    ["add", 10],
-    ["add shared", 2],
-    ["move", 10],
-    ["remove", 1],
-    ["update", 2],
+    ["add", 20],
+    ["add shared", 20],
+    ["move", 100],
+    ["remove", 10],
+    ["add writer", 5],
+    ["update", 20],
   );
 
   function randomOpType(rand: RandomSource): OpType {
@@ -78,25 +92,12 @@ describe("NestedPermissionedTree.monkey", function () {
       seq: () => nextInSeq++,
     };
 
-    const device0 = DeviceId.create("device0");
-    const shareId = new ShareId({creator: device0, id: "root"});
-    const initialTree = applyNewOp(
-      createPermissionedTree(shareId),
-      new StreamId({deviceId: device0, shareId}),
-      {
-        timestamp: Timestamp.create(-1),
-        type: "set writer",
-        device: device0,
-        targetWriter: DeviceId.create("device1"),
-        priority: -1,
-        status: "open",
-      },
-    );
     let devices = HashMap<DeviceId, NestedPermissionedTree>.ofIterable(
-      Array.from(Array(4).keys()).map((index) => [
-        DeviceId.create(`device${index}`),
-        initialTree,
-      ]),
+      Array.from(Array(4).keys()).map((index) => {
+        const deviceId = DeviceId.create(`device${index}`);
+        const shareId = new ShareId({creator: deviceId, id: "root"});
+        return [deviceId, createPermissionedTree(shareId)];
+      }),
     );
 
     for (let turn = 0; turn < 1000; turn++) {
@@ -119,44 +120,87 @@ describe("NestedPermissionedTree.monkey", function () {
 
         log(`turn ${turn}, device ${deviceId}, op type ${opType}`);
         if (opType === "update") {
-          const tree1 = tree.update(localHeadsForDevices(shareId, devices));
+          const tree1 = tree.update(localHeadsForDevices(devices));
           devices = devices.put(deviceId, tree1);
         } else {
-          const {op, shareId} = opForOpType(
+          const opOption = opForOpType(
             clock,
             log,
             rand,
             opType,
             deviceId,
             tree,
+            Vector.ofIterable(devices.keySet()).sortOn((e) => value(e)),
           );
-          const tree1 = applyNewOp(tree, new StreamId({deviceId, shareId}), op);
-          devices = devices.put(deviceId, tree1);
+          if (opOption.isSome()) {
+            const {op, shareId} = opOption.get();
+            const tree1 = applyNewOp(
+              tree,
+              new StreamId({deviceId, shareId}),
+              op,
+            );
+            devices = devices.put(deviceId, tree1);
+
+            if (op.type === "set writer") {
+              // When we apply a "set writer" op we only add the writer to the
+              // shared node. We also need to add the shared node to the new
+              // writer's tree somewhere.
+
+              const writerTree = devices.get(op.targetWriter).getOrThrow();
+              const writerTree1 = applyNewOp(
+                writerTree,
+                new StreamId({
+                  deviceId: op.targetWriter,
+                  shareId: writerTree.value.root,
+                }),
+                {
+                  timestamp: clock.now(),
+                  device: deviceId,
+                  type: "create node",
+
+                  node: NodeId.create(`node${rand.seq()}`),
+                  parent: rootNodeId,
+                  position: rand.rand(),
+                  shareId,
+                },
+              );
+              devices = devices.put(op.targetWriter, writerTree1);
+            }
+          }
         }
       }
-
-      // Check the devices.
-      if (turn % 10 === 0) {
-        const localHeadsForEachDevice = localHeadsForDevices(shareId, devices);
-        const devices1: HashMap<DeviceId, NestedPermissionedTree> = devices.map(
-          (device, tree) => [device, tree.update(localHeadsForEachDevice)],
-        );
-        devices1.reduce((left, right) => {
-          expectPreludeEqual(left[1].value, right[1].value);
-          expectPreludeEqual(left[1].value, right[1].value);
-          return left;
-        });
-      }
     }
-    // Just make sure that we made some nodes.
+
+    // Just make sure that we made some nodes, shared nodes, etc.
+    const tree = devices.findAny(() => true).getOrThrow()[1];
+    expect(tree.value.sharedNodes.length()).greaterThan(0);
     expect(
-      devices
-        .get(device0)
-        .getOrThrow()
-        .value.sharedNodes.get(shareId)
-        .getOrThrow()
-        .nodes.length(),
+      tree.value.sharedNodes.get(tree.value.root).getOrThrow().nodes.length(),
     ).greaterThan(0);
+
+    // Check convergence.
+    const localHeadsForEachDevice = localHeadsForDevices(devices);
+    const devices1: HashMap<DeviceId, NestedPermissionedTree> = devices.map(
+      (device, tree) => [device, tree.update(localHeadsForEachDevice)],
+    );
+    // Check that every device that has a given shared node has the same
+    // version of that shared node.
+    const referenceSharedNodes = devices1.foldLeft(
+      HashMap.of<ShareId, SharedNode>(),
+      (refs, [, tree]) =>
+        refs.mergeWith(
+          tree.value.sharedNodes,
+          (leftSharedNode, rightSharedNode) => leftSharedNode,
+        ),
+    );
+    devices1.forEach(([deviceId, tree]) => {
+      for (const [shareId, sharedNode] of tree.value.sharedNodes) {
+        const referenceSharedNode = referenceSharedNodes
+          .get(shareId)
+          .getOrThrow();
+        expectPreludeEqual(referenceSharedNode, sharedNode);
+      }
+    });
   });
 });
 
@@ -167,15 +211,22 @@ function opForOpType(
   opType: Exclude<OpType, "update">,
   deviceId: DeviceId,
   tree: NestedPermissionedTree,
-): {shareId: ShareId; op: AppliedOp["op"]} {
-  const shareId = randomInArray(
-    rand,
-    tree.value
-      .desiredHeads()
-      .keySet()
-      .map((streamId) => streamId.shareId)
-      .toArray(),
-  );
+  deviceIds: Seq<DeviceId>,
+): Option<{shareId: ShareId; op: AppliedOp["op"]}> {
+  // Share ids that we can write to.
+  const shareIds = tree.value
+    .desiredHeads()
+    .keySet()
+    .filter(
+      (streamId) =>
+        streamId.deviceId === deviceId &&
+        // We avoid share cycles by never sharing the root and only adding
+        // shared nodes to the root.
+        (opType !== "add writer" || streamId.shareId.id !== "root"),
+    )
+    .map((streamId) => streamId.shareId);
+  if (shareIds.isEmpty()) return Option.none();
+  const shareId = randomInArray(rand, shareIds.toArray());
   const sharedNode = tree.value.sharedNodeForId(shareId);
   switch (opType) {
     case "add":
@@ -185,7 +236,7 @@ function opForOpType(
         rootNodeId,
         ...sharedNode.nodes.keySet().toArray(),
       ]);
-      return {
+      return Option.of({
         shareId,
         op: {
           timestamp: clock.now(),
@@ -199,45 +250,52 @@ function opForOpType(
               ? new ShareId({creator: deviceId, id: "" + rand.seq()})
               : undefined,
         },
-      };
+      });
     }
-    case "move": {
-      const node = randomInArray(rand, [
-        rootNodeId,
-        ...sharedNode.nodes.keySet().toArray(),
-      ]);
-      const parent = randomInArray(rand, [
-        rootNodeId,
-        ...sharedNode.nodes.keySet().toArray(),
-      ]);
-      return {
-        shareId,
-        op: {
-          timestamp: clock.now(),
-          device: deviceId,
-          type: "set parent",
-          node,
-          parent,
-          position: rand.rand(),
-        },
-      };
-    }
+    case "move":
     case "remove": {
       const node = randomInArray(rand, [
         rootNodeId,
         ...sharedNode.nodes.keySet().toArray(),
       ]);
-      return {
+      return Option.of({
         shareId,
         op: {
           timestamp: clock.now(),
           device: deviceId,
           type: "set parent",
           node,
-          parent: trashNodeId,
-          position: 0,
+          parent:
+            opType === "move"
+              ? randomInArray(rand, [
+                  rootNodeId,
+                  ...sharedNode.nodes.keySet().toArray(),
+                ])
+              : trashNodeId,
+          position: opType === "move" ? rand.rand() : 0,
         },
-      };
+      });
+    }
+    case "add writer": {
+      const newWriterId = randomInSeq(
+        rand,
+        Vector.ofIterable(deviceIds.removeAll(sharedNode.writers.keySet())),
+      );
+      if (newWriterId.isNone()) return Option.none();
+      return Option.of({
+        shareId,
+        op: {
+          timestamp: clock.now(),
+          device: deviceId,
+          type: "set writer",
+
+          targetWriter: newWriterId.get(),
+          priority:
+            sharedNode.writers.get(deviceId).getOrThrow().priority -
+            (rand.rand() % 1),
+          status: "open",
+        },
+      });
     }
   }
 }
@@ -248,19 +306,10 @@ function opForOpType(
 // These are the ones published by each device, versus the remote ones that they
 // have merged in from other devices.
 function localHeadsForDevices(
-  shareId: ShareId,
   devices: HashMap<DeviceId, NestedPermissionedTree>,
 ): HashMap<StreamId, OpList<AppliedOp>> {
   return devices.flatMap((deviceId, tree) =>
-    tree.heads
-      .get(new StreamId({deviceId, shareId}))
-      .map((head) => [
-        asType<[StreamId, OpList<AppliedOp>]>([
-          new StreamId({deviceId, shareId}),
-          head,
-        ]),
-      ])
-      .getOrElse([]),
+    tree.heads.filter((streamId) => streamId.deviceId === deviceId),
   );
 }
 
