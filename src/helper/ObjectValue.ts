@@ -1,4 +1,4 @@
-import {areEqual, fieldsHashCode, Vector} from "prelude-ts";
+import {areEqual, fieldsHashCode} from "prelude-ts";
 import {scalarComparison} from "./Collection";
 import {WritableProps} from "./TypeMapping";
 
@@ -47,12 +47,18 @@ class ObjectValueBase<Props extends {}> {
   }
 
   private orderedFieldValues(): ReadonlyArray<unknown> {
-    return (
-      Object.getOwnPropertyNames(this)
-        .sort(scalarComparison)
-        // @ts-ignore Allow indexing by property name.
-        .map((name) => this[name])
-    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const constructor = (this as any).__proto__.constructor;
+    let sortedPropertyNames: ReadonlyArray<string> =
+      constructor._sortedPropertyNames;
+    if (sortedPropertyNames === undefined) {
+      sortedPropertyNames =
+        Object.getOwnPropertyNames(this).sort(scalarComparison);
+      constructor._sortedPropertyNames = sortedPropertyNames;
+    }
+
+    // @ts-ignore Allow indexing by property name.
+    return sortedPropertyNames.map((name) => this[name]);
   }
 
   // ---------------------------------------------------------------------------
@@ -63,16 +69,16 @@ class ObjectValueBase<Props extends {}> {
 
   equals(other: unknown): boolean {
     if (Object.getPrototypeOf(this) === Object.getPrototypeOf(other)) {
-      const ourFields = Vector.ofIterable(this.orderedFieldValues());
-      const otherFields = Vector.ofIterable(
-        (other as this).orderedFieldValues(),
-      );
-      return ourFields.zip(otherFields).allMatch(([ours, other]) => {
-        // areEqual is null-safe but not undefined-safe, so...
+      const ourFields = this.orderedFieldValues();
+      const otherFields = (other as this).orderedFieldValues();
+      for (let i = 0; i < ourFields.length; i++) {
+        const ours = ourFields[i];
+        const other = otherFields[i];
         if ((ours === undefined) !== (other === undefined)) return false;
-        if (ours === other) return true;
-        return areEqual(ours, other);
-      });
+        if (ours === other) continue;
+        if (!areEqual(ours, other)) return false;
+      }
+      return true;
     } else {
       return false;
     }

@@ -6,7 +6,7 @@ import {
   persistentDoOpFactory,
   persistentUndoOp,
 } from "./PersistentUndoHelper";
-import {HashMap, Option, Vector} from "prelude-ts";
+import {HashMap, HashSet} from "prelude-ts";
 import {ObjectValue} from "./helper/ObjectValue";
 
 export type NestedPermissionedTree = ControlledOpSet<Tree, AppliedOp, StreamId>;
@@ -97,29 +97,27 @@ class Tree extends ObjectValue<{
   }
 
   desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
-    const headsForSharedNode = (
-      shareId: ShareId,
-    ): HashMap<StreamId, "open" | OpList<AppliedOp>> => {
+    // This is not idiomatic functional code, but it's much faster than what we
+    // had before.
+    let shareIdsProcessed = HashSet.of<ShareId>();
+    const entries = new Array<[StreamId, "open" | OpList<AppliedOp>]>();
+    const processShareId = (shareId: ShareId): void => {
+      if (shareIdsProcessed.contains(shareId)) return;
+      shareIdsProcessed = shareIdsProcessed.add(shareId);
+
       const sharedNode = this.sharedNodeForId(shareId);
-
-      const directHeads = sharedNode.writers.map((device, info) => [
-        new StreamId({deviceId: device, shareId: shareId}),
-        info.status,
-      ]);
-      const childDesiredHeads: Vector<
-        HashMap<StreamId, "open" | OpList<AppliedOp>>
-      > = Vector.ofIterable(sharedNode.nodes.valueIterable()).mapOption(
-        ({shareId}) =>
-          shareId === undefined
-            ? Option.none()
-            : Option.of(headsForSharedNode(shareId)),
+      sharedNode.writers.forEach(([deviceId, info]) =>
+        entries.push([
+          new StreamId({deviceId: deviceId, shareId: shareId}),
+          info.status,
+        ]),
       );
-      return childDesiredHeads.fold(directHeads, (heads0, heads1) =>
-        HashMap.of(...heads0, ...heads1),
-      );
+      sharedNode.nodes.forEach(([, {shareId}]) => {
+        if (shareId !== undefined) processShareId(shareId);
+      });
     };
-
-    return headsForSharedNode(this.root);
+    processShareId(this.root);
+    return HashMap.ofIterable(entries);
   }
 
   // Gets the shared node for a share id, or makes the initial one if we don't
