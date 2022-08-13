@@ -25,6 +25,7 @@ type OpType =
   | "move"
   | "remove"
   | "add writer"
+  | "remove writer"
   | "update";
 const rootNodeId = NodeId.create("root");
 // A node that isn't part of the tree, and which we move nodes into in order to
@@ -71,6 +72,8 @@ describe("NestedPermissionedTree.monkey", function () {
     ["move", 100],
     ["remove", 10],
     ["add writer", 5],
+    // Needs to be high because often we can't find a writer to remove.
+    ["remove writer", 5],
     ["update", 20],
   );
 
@@ -294,6 +297,39 @@ function opForOpType(
             sharedNode.writers.get(deviceId).getOrThrow().priority -
             (rand.rand() % 1),
           status: "open",
+        },
+      });
+    }
+    case "remove writer": {
+      const ourPriority = sharedNode.writers
+        .get(deviceId)
+        .getOrThrow().priority;
+      const writerToRemove = randomInSeq(
+        rand,
+        Vector.ofIterable(
+          sharedNode.writers.filterValues((ps) => ps.priority < ourPriority),
+        ),
+      );
+      if (writerToRemove.isNone()) return Option.none();
+
+      const [writerId, {priority: writerPriority}] = writerToRemove.get();
+      const writerHead = tree.heads.get(
+        new StreamId({deviceId: writerId, shareId: shareId}),
+      );
+      if (writerHead.isNone()) return Option.none();
+
+      return Option.of({
+        shareId,
+        op: {
+          timestamp: clock.now(),
+          device: deviceId,
+          type: "set writer",
+
+          targetWriter: writerId,
+          priority: writerPriority,
+          status: tree.heads
+            .get(new StreamId({deviceId: writerId, shareId: shareId}))
+            .getOrThrow(),
         },
       });
     }
