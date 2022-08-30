@@ -98,7 +98,7 @@ describe("NestedPermissionedTree.monkey", function () {
     let devices = HashMap<DeviceId, NestedPermissionedTree>.ofIterable(
       Array.from(Array(4).keys()).map((index) => {
         const deviceId = DeviceId.create(`device${index}`);
-        const shareId = new ShareId({creator: deviceId, id: "root"});
+        const shareId = new ShareId({creator: deviceId, id: rootNodeId});
         return [deviceId, createPermissionedTree(shareId)];
       }),
     );
@@ -154,7 +154,7 @@ describe("NestedPermissionedTree.monkey", function () {
                 writerTree,
                 new StreamId({
                   deviceId: op.targetWriter,
-                  shareId: writerTree.value.root,
+                  shareId: writerTree.value.rootKey.shareId,
                 }),
                 {
                   timestamp: clock.now(),
@@ -176,9 +176,9 @@ describe("NestedPermissionedTree.monkey", function () {
 
     // Just make sure that we made some nodes, shared nodes, etc.
     const tree = devices.findAny(() => true).getOrThrow()[1];
-    expect(tree.value.sharedNodes.length()).greaterThan(0);
+    expect(tree.value.roots.length()).greaterThan(0);
     expect(
-      tree.value.sharedNodes.get(tree.value.root).getOrThrow().nodes.length(),
+      tree.value.roots.get(tree.value.rootKey).getOrThrow().nodes.length(),
     ).greaterThan(0);
 
     // Check convergence.
@@ -192,12 +192,12 @@ describe("NestedPermissionedTree.monkey", function () {
       HashMap.of<ShareId, SharedNode>(),
       (refs, [, tree]) =>
         refs.mergeWith(
-          tree.value.sharedNodes,
+          tree.value.roots,
           (leftSharedNode, rightSharedNode) => leftSharedNode,
         ),
     );
     devices1.forEach(([deviceId, tree]) => {
-      for (const [shareId, sharedNode] of tree.value.sharedNodes) {
+      for (const [shareId, sharedNode] of tree.value.roots) {
         const referenceSharedNode = referenceSharedNodes
           .get(shareId)
           .getOrThrow();
@@ -225,7 +225,7 @@ function opForOpType(
         streamId.deviceId === deviceId &&
         // We avoid share cycles by never sharing the root and only adding
         // shared nodes to the root.
-        (opType !== "add writer" || streamId.shareId.id !== "root"),
+        (opType !== "add writer" || streamId.shareId.id !== rootNodeId),
     )
     .map((streamId) => streamId.shareId);
   if (shareIds.isEmpty()) return Option.none();
