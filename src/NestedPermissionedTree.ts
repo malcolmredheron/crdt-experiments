@@ -54,10 +54,7 @@ export class StreamId extends ObjectValue<{
 export class NodeId extends TypedValue<"NodeId", string> {}
 
 // Operations
-export type AppliedOp = PersistentAppliedOp<
-  Tree,
-  SetWriter | CreateNode | SetParent
->;
+export type AppliedOp = PersistentAppliedOp<Tree, SetWriter | SetParent>;
 type SetWriter = {
   timestamp: Timestamp;
   device: DeviceId;
@@ -67,22 +64,15 @@ type SetWriter = {
   priority: number;
   status: "open" | OpList<AppliedOp>;
 };
-type CreateNode = {
-  timestamp: Timestamp;
-  device: DeviceId;
-  type: "create node";
-
-  node: NodeId;
-  shareId: undefined | ShareId;
-};
 type SetParent = {
   timestamp: Timestamp;
   device: DeviceId;
   type: "set parent";
 
-  node: NodeId;
-  shareId: Option<ShareId>; // Only if the moved node is a share root.
-  parent: NodeId;
+  nodeId: NodeId;
+  nodeShareId: Option<ShareId>; // Only if the moved node is a share root.
+  parentNodeId: NodeId;
+  parentShareId: Option<ShareId>; // Only if the new parent is a share root.
   position: number;
 };
 
@@ -106,47 +96,45 @@ class Tree extends ObjectValue<{
   roots: HashMap<NodeKey, SharedNode>;
 }>() {
   doOp(op: AppliedOp["op"], streamId: StreamId): this {
-    if (op.type === "create node") {
-      if (
-        Tree.nodeForNodeKey(
-          this.roots,
-          new NodeKey({shareId: streamId.shareId, nodeId: op.node}),
-        ).isSome()
-      )
-        // The node already exists. Do nothing.
-        return this;
-      const node = SharedNode.createNode(streamId, op);
-      return this.copy({
-        roots: this.roots.put(
-          new NodeKey({shareId: node.shareId, nodeId: op.node}),
-          node,
-        ),
+    if (op.type === "set parent") {
+      const childKey = new NodeKey({
+        shareId: op.nodeShareId.getOrElse(streamId.shareId),
+        nodeId: op.nodeId,
       });
-    } else if (op.type === "set parent") {
-      const node = Tree.nodeForNodeKey(
-        this.roots,
-        new NodeKey({
-          shareId: op.shareId.getOrElse(streamId.shareId),
-          nodeId: op.node,
-        }),
+      const child = Tree.nodeForNodeKey(this.roots, childKey).getOrCall(() =>
+        SharedNode.createNode(streamId, op.nodeId, op.nodeShareId),
       );
-      if (node.isNone()) return this;
+
+      const parentKey = new NodeKey({
+        shareId: op.parentShareId.getOrElse(streamId.shareId),
+        nodeId: op.parentNodeId,
+      });
+
+      if (child.nodeForNodeKey(parentKey).isSome()) {
+        // Avoid creating a cycle.
+        return this;
+      }
+
+      const parentOpt = Tree.nodeForNodeKey(this.roots, parentKey);
+      const parentInTree = parentOpt.isSome();
+      const parent = parentOpt.getOrCall(() =>
+        SharedNode.createNode(streamId, op.parentNodeId, op.parentShareId),
+      );
 
       const roots1 = mapValuesStable(this.roots, (root) =>
-        root.doOp(op, streamId, node.get()),
+        root.doOp(op, streamId, child),
       );
-      if (roots1 === this.roots) return this;
+      const roots2 = !parentInTree
+        ? roots1.put(parentKey, parent.doOp(op, streamId, child))
+        : roots1;
+      if (roots2 === this.roots) return this;
 
-      const nodeKey = new NodeKey({shareId: streamId.shareId, nodeId: op.node});
-      if (Tree.nodeForNodeKey(roots1, nodeKey).isNone()) {
-        // The node is nowhere in the tree. Make it a root.
-        return this.copy({roots: roots1.put(nodeKey, node.get())});
-      }
-      const rootsWithoutNode = roots1.remove(nodeKey);
-      if (Tree.nodeForNodeKey(rootsWithoutNode, nodeKey).isSome())
+      const rootsWithoutNode = roots2.remove(childKey);
+      if (Tree.nodeForNodeKey(rootsWithoutNode, childKey).isSome())
         // The node is somewhere else in the tree. Remove it as a root.
         return this.copy({roots: rootsWithoutNode});
-      return this.copy({roots: roots1});
+
+      return this.copy({roots: roots2});
     } else {
       const roots1 = mapValuesStable(this.roots, (root) =>
         root.doOp(op, streamId, undefined),
@@ -168,6 +156,10 @@ class Tree extends ObjectValue<{
       soFar.orCall(() => root.nodeForNodeKey(nodeKey)),
     );
   }
+
+  root(): SharedNode {
+    return Tree.nodeForNodeKey(this.roots, this.rootKey).getOrThrow();
+  }
 }
 
 export class ShareData extends ObjectValue<{
@@ -181,10 +173,10 @@ export class SharedNode extends ObjectValue<{
   children: HashMap<NodeId, NodeInfo>;
 }>() {
   doOp(
-    op: Exclude<AppliedOp["op"], CreateNode>,
+    op: AppliedOp["op"],
     streamId: StreamId,
     // Defined if op is a "set parent".
-    original: SharedNode | undefined,
+    child: SharedNode | undefined,
   ): this {
     if (
       op.type === "set writer" &&
@@ -217,9 +209,9 @@ export class SharedNode extends ObjectValue<{
     const children1 = match({op, children: this.children, id: this.id})
       .with(
         {op: {type: "set parent"}},
-        ({op, id, children}) => op.parent === id,
+        ({op, id, children}) => op.parentNodeId === id,
         ({op, children}) => {
-          const node: SharedNode = original!;
+          const node: SharedNode = child!;
           // xcxc if (node.contains(this.id)) return this;
           return children.put(
             node.id,
@@ -230,29 +222,33 @@ export class SharedNode extends ObjectValue<{
       .with(
         {op: {type: "set parent"}},
         ({op, id, children}) =>
-          op.parent !== id && children.containsKey(op.node),
-        ({op, children}) => children.remove(op.node),
+          op.parentNodeId !== id && children.containsKey(op.nodeId),
+        ({op, children}) => children.remove(op.nodeId),
       )
       .otherwise(({children}) => children);
 
-    const children2 = mapValuesStable(children1, (child) => {
-      const childNode1 = child.node.doOp(op, streamId, original);
-      if (childNode1 === child.node) return child;
-      return child.copy({node: childNode1});
+    const children2 = mapValuesStable(children1, (info) => {
+      const childNode1 = info.node.doOp(op, streamId, child);
+      if (childNode1 === info.node) return info;
+      return info.copy({node: childNode1});
     });
     if (children2 === this.children) return this;
     return this.copy({children: children2});
   }
 
-  static createNode(streamId: StreamId, op: CreateNode): SharedNode {
+  static createNode(
+    streamId: StreamId,
+    nodeId: NodeId,
+    shareId: Option<ShareId>,
+  ): SharedNode {
     return new SharedNode({
-      shareId: op.shareId ? op.shareId : streamId.shareId,
-      id: op.node,
+      shareId: shareId.getOrElse(streamId.shareId),
+      id: nodeId,
       children: HashMap.of(),
-      shareData: op.shareId
+      shareData: shareId.isSome()
         ? new ShareData({
             writers: HashMap.of([
-              op.shareId.creator,
+              shareId.get().creator,
               new PriorityStatus({priority: 0, status: "open"}),
             ]),
           })
