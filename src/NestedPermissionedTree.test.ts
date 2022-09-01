@@ -258,6 +258,33 @@ describe("NestedPermissionedTree", () => {
         expectIdentical(rootChildChild.id, nodeA);
       });
 
+      it("known child, unchanged known parent => adjust position", () => {
+        const tree1 = tree.update(
+          HashMap.of([
+            deviceAStreamId,
+            opsList(
+              setParentOp({
+                device: deviceA,
+                nodeId: nodeA,
+                parentNodeId: tree.value.rootKey.nodeId,
+                position: 0,
+              }),
+              setParentOp({
+                device: deviceA,
+                nodeId: nodeA,
+                parentNodeId: tree.value.rootKey.nodeId,
+                position: 1,
+              }),
+            ),
+          ]),
+        );
+        const root = tree1.value.roots.single().getOrThrow()[1];
+        expectIdentical(root.id, shareId.id);
+        const rootChildInfo = root.children.single().getOrThrow();
+        expectIdentical(rootChildInfo[1].node.id, nodeA);
+        expectIdentical(rootChildInfo[1].position, 1);
+      });
+
       it("known root child, known parent => move child, remove root", () => {
         const tree1 = tree.update(
           HashMap.of([
@@ -332,31 +359,31 @@ describe("NestedPermissionedTree", () => {
     const nodeA = NodeId.create("nodeA");
     const treeA = createPermissionedTree(shareA);
 
-    // Make the op in the shared node first, so that the tree has to handle
-    // getting an op before it knows where to put it.
-    const opBShared0 = setParentOp({
-      device: deviceB,
-      nodeId: nodeA,
-      parentNodeId: shareShared.id,
-      parentShareId: shareShared,
-    });
-    const opAA0 = setParentOp({
-      device: deviceA,
-      nodeId: shareShared.id,
-      nodeShareId: shareShared,
-      parentNodeId: shareA.id,
-      parentShareId: shareA,
-    });
+      // Make the op in the shared node first, so that the tree has to handle
+      // getting an op before it knows where to put it.
+      const opBShared0 = setParentOp({
+        device: deviceB,
+        nodeId: nodeA,
+        parentNodeId: shareShared.id,
+        parentShareId: shareShared,
+      });
+      const opAA0 = setParentOp({
+        device: deviceA,
+        nodeId: shareShared.id,
+        nodeShareId: shareShared,
+        parentNodeId: shareA.id,
+        parentShareId: shareA,
+      });
 
-    const tree1 = treeA.update(
-      HashMap.of(
-        [new StreamId({deviceId: deviceA, shareId: shareA}), opsList(opAA0)],
-        [
-          new StreamId({deviceId: deviceB, shareId: shareShared}),
-          opsList(opBShared0),
-        ],
-      ),
-    );
+      const tree1 = treeA.update(
+        HashMap.of(
+          [new StreamId({deviceId: deviceA, shareId: shareA}), opsList(opAA0)],
+          [
+            new StreamId({deviceId: deviceB, shareId: shareShared}),
+            opsList(opBShared0),
+          ],
+        ),
+      );
 
     expectPreludeEqual(
       tree1.desiredHeads(tree1.value),
