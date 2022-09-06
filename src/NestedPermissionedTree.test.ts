@@ -350,14 +350,18 @@ describe("NestedPermissionedTree", () => {
     });
   });
 
-  it("nested shares", () => {
-    const shareA = new ShareId({creator: deviceA, id: NodeId.create("a root")});
-    const shareShared = new ShareId({
-      creator: deviceB,
-      id: NodeId.create("shared"),
-    });
-    const nodeA = NodeId.create("nodeA");
-    const treeA = createPermissionedTree(shareA);
+  describe("nested shares", () => {
+    it("multiple writers", () => {
+      const shareA = new ShareId({
+        creator: deviceA,
+        id: NodeId.create("a root"),
+      });
+      const shareShared = new ShareId({
+        creator: deviceB,
+        id: NodeId.create("shared"),
+      });
+      const nodeA = NodeId.create("nodeA");
+      const treeA = createPermissionedTree(shareA);
 
       // Make the op in the shared node first, so that the tree has to handle
       // getting an op before it knows where to put it.
@@ -385,24 +389,98 @@ describe("NestedPermissionedTree", () => {
         ),
       );
 
-    expectPreludeEqual(
-      tree1.desiredHeads(tree1.value),
-      HashMap.of(
-        [new StreamId({deviceId: deviceA, shareId: shareA}), "open" as const],
-        [
-          new StreamId({deviceId: deviceB, shareId: shareShared}),
-          "open" as const,
-        ],
-      ),
-    );
-    expectIdentical(tree1.value.roots.length(), 1);
-    expectIdentical(tree1.value.root().id, shareA.id);
-    const root = tree1.value.roots.single().getOrThrow()[1];
-    expectIdentical(root.id, shareA.id);
-    const rootChild = root.children.single().getOrThrow()[1].node;
-    expectIdentical(rootChild.id, shareShared.id);
-    const rootChildChild = rootChild.children.single().getOrThrow()[1].node;
-    expectIdentical(rootChildChild.id, nodeA);
-    expectIdentical(rootChildChild.children.length(), 0);
+      expectPreludeEqual(
+        tree1.desiredHeads(tree1.value),
+        HashMap.of(
+          [new StreamId({deviceId: deviceA, shareId: shareA}), "open" as const],
+          [
+            new StreamId({deviceId: deviceB, shareId: shareShared}),
+            "open" as const,
+          ],
+        ),
+      );
+      expectIdentical(tree1.value.roots.length(), 1);
+      expectIdentical(tree1.value.root().id, shareA.id);
+      const root = tree1.value.roots.single().getOrThrow()[1];
+      expectIdentical(root.id, shareA.id);
+      const rootChild = root.children.single().getOrThrow()[1].node;
+      expectIdentical(rootChild.id, shareShared.id);
+      const rootChildChild = rootChild.children.single().getOrThrow()[1].node;
+      expectIdentical(rootChildChild.id, nodeA);
+      expectIdentical(rootChildChild.children.length(), 0);
+    });
+
+    it("treats edges to multiple parents separately", () => {
+      const deviceId = DeviceId.create("device");
+      const shareRoot = new ShareId({
+        creator: deviceId,
+        id: NodeId.create("root"),
+      });
+      const shareA = new ShareId({creator: deviceId, id: NodeId.create("a")});
+      const shareB = new ShareId({creator: deviceId, id: NodeId.create("b")});
+      const shareC = new ShareId({creator: deviceId, id: NodeId.create("c")});
+      const tree = createPermissionedTree(shareRoot);
+      const opAInRoot = setParentOp({
+        device: deviceId,
+        nodeId: shareA.id,
+        nodeShareId: shareA,
+        parentNodeId: shareRoot.id,
+        parentShareId: shareRoot,
+        position: 0,
+      });
+      const opBInRoot = setParentOp({
+        device: deviceId,
+        nodeId: shareB.id,
+        nodeShareId: shareB,
+        parentNodeId: shareRoot.id,
+        parentShareId: shareRoot,
+        position: 0,
+      });
+      const opCInA = setParentOp({
+        device: deviceId,
+        nodeId: shareC.id,
+        nodeShareId: shareC,
+        parentNodeId: shareA.id,
+        parentShareId: shareA,
+      });
+      const opCInB = setParentOp({
+        device: deviceId,
+        nodeId: shareC.id,
+        nodeShareId: shareC,
+        parentNodeId: shareB.id,
+        parentShareId: shareB,
+      });
+
+      // Adding shared node C into shared node B should not remove it from
+      // shared node A.
+      const tree1 = tree.update(
+        HashMap.of(
+          [
+            new StreamId({deviceId, shareId: shareRoot}),
+            opsList(opAInRoot, opBInRoot),
+          ],
+          [new StreamId({deviceId, shareId: shareA}), opsList(opCInA)],
+          [new StreamId({deviceId, shareId: shareB}), opsList(opCInB)],
+        ),
+      );
+      expectIdentical(
+        tree1.value
+          .root()
+          .nodeForNodeKey(new NodeKey({shareId: shareA, nodeId: shareA.id}))
+          .getOrThrow()
+          .nodeForNodeKey(new NodeKey({shareId: shareC, nodeId: shareC.id}))
+          .isSome(),
+        true,
+      );
+      expectIdentical(
+        tree1.value
+          .root()
+          .nodeForNodeKey(new NodeKey({shareId: shareB, nodeId: shareB.id}))
+          .getOrThrow()
+          .nodeForNodeKey(new NodeKey({shareId: shareC, nodeId: shareC.id}))
+          .isSome(),
+        true,
+      );
+    });
   });
 });

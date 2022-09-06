@@ -209,7 +209,8 @@ export class SharedNode extends ObjectValue<{
     const children1 = match({op, children: this.children, id: this.id})
       .with(
         {op: {type: "set parent"}},
-        ({op, id, children}) => op.parentNodeId === id,
+        ({op, id, children}) =>
+          streamId.shareId.equals(this.shareId) && op.parentNodeId === id,
         ({op, children}) => {
           const node: SharedNode = child!;
           // xcxc if (node.contains(this.id)) return this;
@@ -222,7 +223,9 @@ export class SharedNode extends ObjectValue<{
       .with(
         {op: {type: "set parent"}},
         ({op, id, children}) =>
-          op.parentNodeId !== id && children.containsKey(op.nodeId),
+          streamId.shareId.equals(this.shareId) &&
+          op.parentNodeId !== id &&
+          children.containsKey(op.nodeId),
         ({op, children}) => children.remove(op.nodeId),
       )
       .otherwise(({children}) => children);
