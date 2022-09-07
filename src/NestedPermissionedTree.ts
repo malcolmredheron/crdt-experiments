@@ -72,7 +72,6 @@ type SetParent = {
   nodeId: NodeId;
   nodeShareId: Option<ShareId>; // Only if the moved node is a share root.
   parentNodeId: NodeId;
-  parentShareId: Option<ShareId>; // Only if the new parent is a share root.
   position: number;
 };
 
@@ -106,7 +105,7 @@ class Tree extends ObjectValue<{
       );
 
       const parentKey = new NodeKey({
-        shareId: op.parentShareId.getOrElse(streamId.shareId),
+        shareId: streamId.shareId,
         nodeId: op.parentNodeId,
       });
 
@@ -118,7 +117,13 @@ class Tree extends ObjectValue<{
       const parentOpt = Tree.nodeForNodeKey(this.roots, parentKey);
       const parentInTree = parentOpt.isSome();
       const parent = parentOpt.getOrCall(() =>
-        SharedNode.createNode(streamId, op.parentNodeId, op.parentShareId),
+        SharedNode.createNode(
+          streamId,
+          op.parentNodeId,
+          streamId.shareId.id === op.parentNodeId
+            ? Option.some(streamId.shareId)
+            : Option.none(),
+        ),
       );
 
       const roots1 = mapValuesStable(this.roots, (root) =>

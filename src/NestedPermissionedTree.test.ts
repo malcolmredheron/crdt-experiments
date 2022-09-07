@@ -47,7 +47,6 @@ describe("NestedPermissionedTree", () => {
     nodeId: NodeId;
     nodeShareId?: ShareId;
     parentNodeId: NodeId;
-    parentShareId?: ShareId;
     position?: number;
   }): AppliedOp["op"] {
     return {
@@ -59,9 +58,6 @@ describe("NestedPermissionedTree", () => {
         ? Option.some(args.nodeShareId)
         : Option.none(),
       parentNodeId: args.parentNodeId,
-      parentShareId: args.parentShareId
-        ? Option.some(args.parentShareId)
-        : Option.none(),
       position: args.position === undefined ? 0 : args.position,
     };
   }
@@ -369,14 +365,12 @@ describe("NestedPermissionedTree", () => {
         device: deviceB,
         nodeId: nodeA,
         parentNodeId: shareShared.id,
-        parentShareId: shareShared,
       });
       const opAA0 = setParentOp({
         device: deviceA,
         nodeId: shareShared.id,
         nodeShareId: shareShared,
         parentNodeId: shareA.id,
-        parentShareId: shareA,
       });
 
       const tree1 = treeA.update(
@@ -425,7 +419,6 @@ describe("NestedPermissionedTree", () => {
         nodeId: shareA.id,
         nodeShareId: shareA,
         parentNodeId: shareRoot.id,
-        parentShareId: shareRoot,
         position: 0,
       });
       const opBInRoot = setParentOp({
@@ -433,7 +426,6 @@ describe("NestedPermissionedTree", () => {
         nodeId: shareB.id,
         nodeShareId: shareB,
         parentNodeId: shareRoot.id,
-        parentShareId: shareRoot,
         position: 0,
       });
       const opCInA = setParentOp({
@@ -441,14 +433,12 @@ describe("NestedPermissionedTree", () => {
         nodeId: shareC.id,
         nodeShareId: shareC,
         parentNodeId: shareA.id,
-        parentShareId: shareA,
       });
       const opCInB = setParentOp({
         device: deviceId,
         nodeId: shareC.id,
         nodeShareId: shareC,
         parentNodeId: shareB.id,
-        parentShareId: shareB,
       });
 
       // Adding shared node C into shared node B should not remove it from
