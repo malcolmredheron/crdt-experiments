@@ -150,7 +150,21 @@ class Tree extends ObjectValue<{
   }
 
   desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
-    return this.roots.get(this.rootKey).getOrThrow().desiredHeads();
+    // We need to report desired heads based on all of the roots, otherwise we
+    // won't have the ops to reconstruct subtrees that used to be in the main
+    // tree but aren't now.
+    return this.roots.foldLeft(
+      HashMap.of<StreamId, "open" | OpList<AppliedOp>>(),
+      (result, [, node]) =>
+        HashMap.ofIterable([...result, ...node.desiredHeads()]),
+    );
+  }
+
+  nodeForNodeKey(nodeKey: NodeKey): Option<SharedNode> {
+    return this.roots.foldLeft(
+      Option.none<SharedNode>(),
+      (soFar, [key, root]) => soFar.orCall(() => root.nodeForNodeKey(nodeKey)),
+    );
   }
 
   static nodeForNodeKey(

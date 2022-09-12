@@ -472,5 +472,44 @@ describe("NestedPermissionedTree", () => {
         true,
       );
     });
+
+    it("reports writers for all roots", () => {
+      const shareA = new ShareId({
+        creator: deviceA,
+        id: NodeId.create("a root"),
+      });
+      const shareShared = new ShareId({
+        creator: deviceB,
+        id: NodeId.create("shared"),
+      });
+      const tree = createPermissionedTree(shareA);
+
+      // Create a shared node (with a different writer) inside the root share,
+      // but not inside the root node, so that it forms a different root.
+      const op = setParentOp({
+        device: deviceA,
+        nodeId: shareShared.id,
+        nodeShareId: shareShared,
+        parentNodeId: NodeId.create("not in share A"),
+      });
+
+      const tree1 = tree.update(
+        HashMap.of([
+          new StreamId({deviceId: deviceA, shareId: shareA}),
+          opsList(op),
+        ]),
+      );
+
+      expectPreludeEqual(
+        tree1.desiredHeads(tree1.value),
+        HashMap.of(
+          [new StreamId({deviceId: deviceA, shareId: shareA}), "open" as const],
+          [
+            new StreamId({deviceId: deviceB, shareId: shareShared}),
+            "open" as const,
+          ],
+        ),
+      );
+    });
   });
 });
