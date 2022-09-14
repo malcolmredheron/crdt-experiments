@@ -281,12 +281,7 @@ export class SharedNode extends ObjectValue<{
   desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
     const shareData = this.shareData;
     const ourDesiredHeads = shareData
-      ? HashMap.ofIterable(
-          shareData.writers.map((deviceId, {status}) => [
-            new StreamId({deviceId, shareId: this.shareId}),
-            "open" as const,
-          ]),
-        )
+      ? shareData.desiredHeads()
       : HashMap.of<StreamId, "open" | OpList<AppliedOp>>();
     return this.children.foldLeft(ourDesiredHeads, (result, [, {node}]) =>
       HashMap.ofIterable([...result, ...node.desiredHeads()]),
@@ -332,6 +327,15 @@ export class ShareData extends ObjectValue<{
     }
 
     return this;
+  }
+
+  desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
+    return HashMap.ofIterable(
+      this.writers.map((deviceId, {status}) => [
+        new StreamId({deviceId, shareId: this.shareId}),
+        "open" as const,
+      ]),
+    );
   }
 }
 
