@@ -35,6 +35,7 @@ export function createPermissionedTree(
           id: rootKey.nodeId,
           shareId,
           shareData: new ShareData({
+            shareId,
             writers: HashMap.of([
               shareId.creator,
               new PriorityStatus({priority: 0, status: "open"}),
@@ -216,15 +217,10 @@ export class SharedNode extends ObjectValue<{
     // Defined if op is a "set parent".
     child: SharedNode | undefined,
   ): this {
-    if (
-      op.type === "set writer" &&
-      this.shareData &&
-      this.shareId === streamId.shareId
-    ) {
-      const shareData1 = this.shareData.doOp(op, streamId);
-      if (shareData1 === this.shareData) return this;
-      return this.copy({shareData: shareData1});
-    }
+    const shareData1 =
+      op.type === "set writer" && this.shareData
+        ? this.shareData.doOp(op, streamId)
+        : this.shareData;
 
     const children1 = match({op, children: this.children, id: this.id})
       .with(
@@ -249,14 +245,15 @@ export class SharedNode extends ObjectValue<{
         ({op, children}) => children.remove(op.nodeId),
       )
       .otherwise(({children}) => children);
-
     const children2 = mapValuesStable(children1, (info) => {
       const childNode1 = info.node.doOp(op, streamId, child);
       if (childNode1 === info.node) return info;
       return info.copy({node: childNode1});
     });
-    if (children2 === this.children) return this;
-    return this.copy({children: children2});
+
+    if (shareData1 == this.shareData && children2 === this.children)
+      return this;
+    return this.copy({shareData: shareData1, children: children2});
   }
 
   static createNode(
@@ -264,12 +261,14 @@ export class SharedNode extends ObjectValue<{
     nodeId: NodeId,
     shareId: Option<ShareId>,
   ): SharedNode {
+    const realShareId = shareId.getOrElse(streamId.shareId);
     return new SharedNode({
-      shareId: shareId.getOrElse(streamId.shareId),
+      shareId: realShareId,
       id: nodeId,
       children: HashMap.of(),
       shareData: shareId.isSome()
         ? new ShareData({
+            shareId: realShareId,
             writers: HashMap.of([
               shareId.get().creator,
               new PriorityStatus({priority: 0, status: "open"}),
@@ -306,28 +305,33 @@ export class SharedNode extends ObjectValue<{
 }
 
 export class ShareData extends ObjectValue<{
+  readonly shareId: ShareId;
   writers: HashMap<DeviceId, PriorityStatus>;
 }>() {
   doOp(op: SetWriter, streamId: StreamId): this {
-    const devicePriority = this.writers
-      .get(op.device)
-      .getOrThrow("Cannot find writer entry for op author").priority;
-    const writerPriority = this.writers
-      .get(op.targetWriter)
-      .getOrUndefined()?.priority;
-    if (writerPriority !== undefined && writerPriority >= devicePriority)
-      return this;
-    if (op.priority >= devicePriority) return this;
+    if (this.shareId === streamId.shareId) {
+      const devicePriority = this.writers
+        .get(op.device)
+        .getOrThrow("Cannot find writer entry for op author").priority;
+      const writerPriority = this.writers
+        .get(op.targetWriter)
+        .getOrUndefined()?.priority;
+      if (writerPriority !== undefined && writerPriority >= devicePriority)
+        return this;
+      if (op.priority >= devicePriority) return this;
 
-    return this.copy({
-      writers: this.writers.put(
-        op.targetWriter,
-        new PriorityStatus({
-          priority: op.priority,
-          status: op.status,
-        }),
-      ),
-    });
+      return this.copy({
+        writers: this.writers.put(
+          op.targetWriter,
+          new PriorityStatus({
+            priority: op.priority,
+            status: op.status,
+          }),
+        ),
+      });
+    }
+
+    return this;
   }
 }
 

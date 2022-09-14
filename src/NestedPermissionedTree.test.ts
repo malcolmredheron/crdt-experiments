@@ -181,8 +181,9 @@ describe("NestedPermissionedTree", () => {
           rootKey,
           new SharedNode({
             id: shareId.id,
-            shareId: shareId,
+            shareId,
             shareData: new ShareData({
+              shareId,
               writers: HashMap.of([
                 deviceA,
                 new PriorityStatus({priority: 0, status: "open"}),
