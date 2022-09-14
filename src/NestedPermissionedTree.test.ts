@@ -65,9 +65,9 @@ describe("NestedPermissionedTree", () => {
   describe("permissions", () => {
     const shareId = new ShareId({creator: deviceA, id: NodeId.create("share")});
     const deviceAStreamId = new StreamId({deviceId: deviceA, shareId});
-    const tree = createPermissionedTree(shareId);
 
     it("adds a lower-ranked writer", () => {
+      const tree = createPermissionedTree(shareId);
       const tree1 = tree.update(
         HashMap.of([
           new StreamId(deviceAStreamId),
@@ -87,7 +87,46 @@ describe("NestedPermissionedTree", () => {
       );
     });
 
+    // This is what happens when we share a node with a device before adding the
+    // node to the device's tree.
+    it("creates shared node when setting writer on an unknown node", () => {
+      const shareA = new ShareId({
+        creator: deviceA,
+        id: NodeId.create("a root"),
+      });
+      const tree = createPermissionedTree(shareA);
+      const tree1 = tree.update(
+        HashMap.of(
+          [
+            new StreamId(new StreamId({deviceId: deviceA, shareId})),
+            LinkedList.of(openWriterOp(deviceA, deviceB, -1)),
+          ],
+          [
+            new StreamId(new StreamId({deviceId: deviceA, shareId: shareA})),
+            LinkedList.of(
+              // Make this after openWriterOp, to force the tree to handle the
+              // writer when it doesn't know about the shared node yet.
+              setParentOp({
+                nodeId: shareId.id,
+                nodeShareId: shareId,
+                parentNodeId: shareA.id,
+                device: deviceA,
+              }),
+            ),
+          ],
+        ),
+      );
+      expectPreludeEqual(
+        tree1.value
+          .nodeForNodeKey(new NodeKey({shareId, nodeId: shareId.id}))
+          .getOrThrow()
+          .shareData!.writers.get(deviceB),
+        Option.some(new PriorityStatus({status: "open", priority: -1})),
+      );
+    });
+
     it("ignores a SetWriter to add an equal-priority writer", () => {
+      const tree = createPermissionedTree(shareId);
       const tree1 = tree.update(
         HashMap.of([
           deviceAStreamId,
@@ -105,6 +144,7 @@ describe("NestedPermissionedTree", () => {
     });
 
     it("ignores a SetWriter to modify an equal-priority writer", () => {
+      const tree = createPermissionedTree(shareId);
       const tree1 = tree.update(
         HashMap.of([
           deviceAStreamId,

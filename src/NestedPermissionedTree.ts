@@ -9,6 +9,8 @@ import {
 import {HashMap, Option} from "prelude-ts";
 import {ObjectValue} from "./helper/ObjectValue";
 import {match} from "ts-pattern";
+import {AssertFailed} from "./helper/Assert";
+
 export type NestedPermissionedTree = ControlledOpSet<Tree, AppliedOp, StreamId>;
 
 // Creates a new PermissionedTreeValue with shareId.creator as the initial
@@ -140,12 +142,33 @@ class Tree extends ObjectValue<{
         return this.copy({roots: rootsWithoutNode});
 
       return this.copy({roots: roots2});
-    } else {
-      const roots1 = mapValuesStable(this.roots, (root) =>
-        root.doOp(op, streamId, undefined),
-      );
+    } else if (op.type === "set writer") {
+      const shareKey = new NodeKey({
+        shareId: streamId.shareId,
+        nodeId: streamId.shareId.id,
+      });
+      const roots1 = match({
+        roots: this.roots,
+        sharePresent: Tree.nodeForNodeKey(this.roots, shareKey).isSome(),
+      })
+        .with({sharePresent: true}, ({roots}) =>
+          mapValuesStable(roots, (root) => root.doOp(op, streamId, undefined)),
+        )
+        .with({sharePresent: false}, ({roots}) =>
+          roots.put(
+            shareKey,
+            SharedNode.createNode(
+              streamId,
+              streamId.shareId.id,
+              Option.some(streamId.shareId),
+            ).doOp(op, streamId, undefined),
+          ),
+        )
+        .exhaustive();
       if (roots1 === this.roots) return this;
       return this.copy({roots: roots1});
+    } else {
+      throw new AssertFailed("unknown op type");
     }
   }
 
