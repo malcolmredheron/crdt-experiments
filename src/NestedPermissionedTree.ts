@@ -204,10 +204,6 @@ class Tree extends ObjectValue<{
   }
 }
 
-export class ShareData extends ObjectValue<{
-  writers: HashMap<DeviceId, PriorityStatus>;
-}>() {}
-
 export class SharedNode extends ObjectValue<{
   readonly shareId: ShareId;
   readonly id: NodeId;
@@ -225,27 +221,9 @@ export class SharedNode extends ObjectValue<{
       this.shareData &&
       this.shareId === streamId.shareId
     ) {
-      const devicePriority = this.shareData.writers
-        .get(op.device)
-        .getOrThrow("Cannot find writer entry for op author").priority;
-      const writerPriority = this.shareData.writers
-        .get(op.targetWriter)
-        .getOrUndefined()?.priority;
-      if (writerPriority !== undefined && writerPriority >= devicePriority)
-        return this;
-      if (op.priority >= devicePriority) return this;
-
-      return this.copy({
-        shareData: this.shareData.copy({
-          writers: this.shareData.writers.put(
-            op.targetWriter,
-            new PriorityStatus({
-              priority: op.priority,
-              status: op.status,
-            }),
-          ),
-        }),
-      });
+      const shareData1 = this.shareData.doOp(op, streamId);
+      if (shareData1 === this.shareData) return this;
+      return this.copy({shareData: shareData1});
     }
 
     const children1 = match({op, children: this.children, id: this.id})
@@ -324,6 +302,32 @@ export class SharedNode extends ObjectValue<{
       (soFar, [key, child]) =>
         soFar.orCall(() => child.node.nodeForNodeKey(nodeKey)),
     );
+  }
+}
+
+export class ShareData extends ObjectValue<{
+  writers: HashMap<DeviceId, PriorityStatus>;
+}>() {
+  doOp(op: SetWriter, streamId: StreamId): this {
+    const devicePriority = this.writers
+      .get(op.device)
+      .getOrThrow("Cannot find writer entry for op author").priority;
+    const writerPriority = this.writers
+      .get(op.targetWriter)
+      .getOrUndefined()?.priority;
+    if (writerPriority !== undefined && writerPriority >= devicePriority)
+      return this;
+    if (op.priority >= devicePriority) return this;
+
+    return this.copy({
+      writers: this.writers.put(
+        op.targetWriter,
+        new PriorityStatus({
+          priority: op.priority,
+          status: op.status,
+        }),
+      ),
+    });
   }
 }
 
