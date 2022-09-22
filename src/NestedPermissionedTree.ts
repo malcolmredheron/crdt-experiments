@@ -6,7 +6,7 @@ import {
   persistentDoOpFactory,
   persistentUndoOp,
 } from "./PersistentUndoHelper";
-import {HashMap, Option} from "prelude-ts";
+import {HashMap, HashSet, Option} from "prelude-ts";
 import {ObjectValue} from "./helper/ObjectValue";
 import {match} from "ts-pattern";
 import {AssertFailed} from "./helper/Assert";
@@ -53,6 +53,7 @@ export class ShareId extends ObjectValue<{creator: DeviceId; id: NodeId}>() {}
 export class StreamId extends ObjectValue<{
   deviceId: DeviceId;
   shareId: ShareId;
+  type: "shared node" | "share data";
 }>() {}
 export class NodeId extends TypedValue<"NodeId", string> {}
 
@@ -65,7 +66,7 @@ type SetWriter = {
 
   targetWriter: DeviceId;
   priority: number;
-  status: "open" | OpList<AppliedOp>;
+  status: "open" | OpList<AppliedOp> | undefined;
 };
 type SetParent = {
   timestamp: Timestamp;
@@ -81,7 +82,10 @@ type SetParent = {
 // Internal types
 export class PriorityStatus extends ObjectValue<{
   priority: number;
-  status: "open" | OpList<AppliedOp>;
+  // Open: active
+  // OpList: closed after the listed operation
+  // undefined: removed completely
+  status: "open" | OpList<AppliedOp> | undefined;
 }>() {}
 export class NodeInfo extends ObjectValue<{
   position: number;
@@ -226,10 +230,11 @@ export class SharedNode extends ObjectValue<{
       .with(
         {op: {type: "set parent"}},
         ({op, id, children}) =>
-          streamId.shareId.equals(this.shareId) && op.parentNodeId === id,
+          streamId.type === "shared node" &&
+          streamId.shareId.equals(this.shareId) &&
+          op.parentNodeId === id,
         ({op, children}) => {
           const node: SharedNode = child!;
-          // xcxc if (node.contains(this.id)) return this;
           return children.put(
             node.id,
             new NodeInfo({node, position: op.position}),
@@ -239,6 +244,7 @@ export class SharedNode extends ObjectValue<{
       .with(
         {op: {type: "set parent"}},
         ({op, id, children}) =>
+          streamId.type === "shared node" &&
           streamId.shareId.equals(this.shareId) &&
           op.parentNodeId !== id &&
           children.containsKey(op.nodeId),
@@ -281,7 +287,10 @@ export class SharedNode extends ObjectValue<{
   desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
     const shareData = this.shareData;
     const ourDesiredHeads = shareData
-      ? shareData.desiredHeads()
+      ? shareData.desiredHeads().flatMap((streamId, status) => [
+          [streamId, status],
+          [streamId.copy({type: "shared node"}), status],
+        ])
       : HashMap.of<StreamId, "open" | OpList<AppliedOp>>();
     return this.children.foldLeft(ourDesiredHeads, (result, [, {node}]) =>
       HashMap.ofIterable([...result, ...node.desiredHeads()]),
@@ -304,7 +313,7 @@ export class ShareData extends ObjectValue<{
   writers: HashMap<DeviceId, PriorityStatus>;
 }>() {
   doOp(op: SetWriter, streamId: StreamId): this {
-    if (this.shareId === streamId.shareId) {
+    if (streamId.type === "share data" && this.shareId === streamId.shareId) {
       const devicePriority = this.writers
         .get(op.device)
         .getOrThrow("Cannot find writer entry for op author").priority;
@@ -332,10 +341,19 @@ export class ShareData extends ObjectValue<{
   desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
     return HashMap.ofIterable(
       this.writers.map((deviceId, {status}) => [
-        new StreamId({deviceId, shareId: this.shareId}),
+        new StreamId({
+          deviceId,
+          shareId: this.shareId,
+          type: "share data",
+        }),
+        // TODO: need to report the correct status
         "open" as const,
       ]),
     );
+  }
+
+  writerDevices(): HashSet<DeviceId> {
+    return this.writers.keySet();
   }
 }
 

@@ -64,13 +64,12 @@ describe("NestedPermissionedTree", () => {
 
   describe("permissions", () => {
     const shareId = new ShareId({creator: deviceA, id: NodeId.create("share")});
-    const deviceAStreamId = new StreamId({deviceId: deviceA, shareId});
 
     it("adds a lower-ranked writer", () => {
       const tree = createPermissionedTree(shareId);
       const tree1 = tree.update(
         HashMap.of([
-          new StreamId(deviceAStreamId),
+          new StreamId({deviceId: deviceA, shareId, type: "share data"}),
           LinkedList.of(openWriterOp(deviceA, deviceB, -1)),
         ]),
       );
@@ -98,11 +97,15 @@ describe("NestedPermissionedTree", () => {
       const tree1 = tree.update(
         HashMap.of(
           [
-            new StreamId(new StreamId({deviceId: deviceA, shareId})),
+            new StreamId({deviceId: deviceA, shareId, type: "share data"}),
             LinkedList.of(openWriterOp(deviceA, deviceB, -1)),
           ],
           [
-            new StreamId(new StreamId({deviceId: deviceA, shareId: shareA})),
+            new StreamId({
+              deviceId: deviceA,
+              shareId: shareA,
+              type: "shared node",
+            }),
             LinkedList.of(
               // Make this after openWriterOp, to force the tree to handle the
               // writer when it doesn't know about the shared node yet.
@@ -129,7 +132,7 @@ describe("NestedPermissionedTree", () => {
       const tree = createPermissionedTree(shareId);
       const tree1 = tree.update(
         HashMap.of([
-          deviceAStreamId,
+          new StreamId({deviceId: deviceA, shareId, type: "shared node"}),
           LinkedList.of(openWriterOp(deviceA, deviceB, 0)),
         ]),
       );
@@ -147,7 +150,7 @@ describe("NestedPermissionedTree", () => {
       const tree = createPermissionedTree(shareId);
       const tree1 = tree.update(
         HashMap.of([
-          deviceAStreamId,
+          new StreamId({deviceId: deviceA, shareId, type: "share data"}),
           LinkedList.of(openWriterOp(deviceA, deviceB, -1)).prepend(
             openWriterOp(deviceB, deviceB, -2),
           ),
@@ -169,7 +172,11 @@ describe("NestedPermissionedTree", () => {
 
   describe("tree manipulation", () => {
     const shareId = new ShareId({creator: deviceA, id: NodeId.create("share")});
-    const deviceAStreamId = new StreamId({deviceId: deviceA, shareId});
+    const deviceAStreamId = new StreamId({
+      deviceId: deviceA,
+      shareId,
+      type: "shared node",
+    });
     const tree = createPermissionedTree(shareId);
 
     it("starts with the shared node", () => {
@@ -416,9 +423,20 @@ describe("NestedPermissionedTree", () => {
 
       const tree1 = treeA.update(
         HashMap.of(
-          [new StreamId({deviceId: deviceA, shareId: shareA}), opsList(opAA0)],
           [
-            new StreamId({deviceId: deviceB, shareId: shareShared}),
+            new StreamId({
+              deviceId: deviceA,
+              shareId: shareA,
+              type: "shared node",
+            }),
+            opsList(opAA0),
+          ],
+          [
+            new StreamId({
+              deviceId: deviceB,
+              shareId: shareShared,
+              type: "shared node",
+            }),
             opsList(opBShared0),
           ],
         ),
@@ -427,9 +445,36 @@ describe("NestedPermissionedTree", () => {
       expectPreludeEqual(
         tree1.desiredHeads(tree1.value),
         HashMap.of(
-          [new StreamId({deviceId: deviceA, shareId: shareA}), "open" as const],
           [
-            new StreamId({deviceId: deviceB, shareId: shareShared}),
+            new StreamId({
+              deviceId: deviceA,
+              shareId: shareA,
+              type: "shared node",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: deviceA,
+              shareId: shareA,
+              type: "share data",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: deviceB,
+              shareId: shareShared,
+              type: "shared node",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: deviceB,
+              shareId: shareShared,
+              type: "share data",
+            }),
             "open" as const,
           ],
         ),
@@ -487,11 +532,17 @@ describe("NestedPermissionedTree", () => {
       const tree1 = tree.update(
         HashMap.of(
           [
-            new StreamId({deviceId, shareId: shareRoot}),
+            new StreamId({deviceId, shareId: shareRoot, type: "shared node"}),
             opsList(opAInRoot, opBInRoot),
           ],
-          [new StreamId({deviceId, shareId: shareA}), opsList(opCInA)],
-          [new StreamId({deviceId, shareId: shareB}), opsList(opCInB)],
+          [
+            new StreamId({deviceId, shareId: shareA, type: "shared node"}),
+            opsList(opCInA),
+          ],
+          [
+            new StreamId({deviceId, shareId: shareB, type: "shared node"}),
+            opsList(opCInB),
+          ],
         ),
       );
       expectIdentical(
@@ -536,7 +587,11 @@ describe("NestedPermissionedTree", () => {
 
       const tree1 = tree.update(
         HashMap.of([
-          new StreamId({deviceId: deviceA, shareId: shareA}),
+          new StreamId({
+            deviceId: deviceA,
+            shareId: shareA,
+            type: "shared node",
+          }),
           opsList(op),
         ]),
       );
@@ -544,9 +599,36 @@ describe("NestedPermissionedTree", () => {
       expectPreludeEqual(
         tree1.desiredHeads(tree1.value),
         HashMap.of(
-          [new StreamId({deviceId: deviceA, shareId: shareA}), "open" as const],
           [
-            new StreamId({deviceId: deviceB, shareId: shareShared}),
+            new StreamId({
+              deviceId: deviceA,
+              shareId: shareA,
+              type: "shared node",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: deviceA,
+              shareId: shareA,
+              type: "share data",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: deviceB,
+              shareId: shareShared,
+              type: "shared node",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: deviceB,
+              shareId: shareShared,
+              type: "share data",
+            }),
             "open" as const,
           ],
         ),
