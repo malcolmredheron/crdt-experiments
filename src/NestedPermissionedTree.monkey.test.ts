@@ -421,9 +421,9 @@ function applyNewOp(
 function nodesWithSameShareId(node: SharedNode): HashMap<NodeId, SharedNode> {
   return node.children.foldLeft(
     HashMap.of([node.id, node]),
-    (nodes, [, child]) => {
-      if (node.shareId !== child.node.shareId) return nodes;
-      return nodesWithSameShareId(child.node).foldLeft(
+    (nodes, [, info]) => {
+      if (node.shareId !== info.child.shareId) return nodes;
+      return nodesWithSameShareId(info.child).foldLeft(
         nodes,
         (nodes, [id, childNode]) => nodes.put(id, childNode),
       );
@@ -438,8 +438,8 @@ function shareRoots(
     node.shareData
       ? HashMap.of([node.shareId, node as SharedNode & {shareData: ShareData}])
       : HashMap.of(),
-    (roots, [, child]) => {
-      return shareRoots(child.node).foldLeft(
+    (roots, [, info]) => {
+      return shareRoots(info.child).foldLeft(
         roots,
         (roots, [shareId, childNode]) => roots.put(shareId, childNode),
       );
@@ -449,6 +449,6 @@ function shareRoots(
 
 function numNodes(node: SharedNode): number {
   return (
-    1 + node.children.foldLeft(0, (num, [, {node}]) => num + numNodes(node))
+    1 + node.children.foldLeft(0, (num, [, {child}]) => num + numNodes(child))
   );
 }

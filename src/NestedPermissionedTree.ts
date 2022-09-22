@@ -87,10 +87,6 @@ export class PriorityStatus extends ObjectValue<{
   // undefined: removed completely
   status: "open" | OpList<AppliedOp> | undefined;
 }>() {}
-export class NodeInfo extends ObjectValue<{
-  position: number;
-  node: SharedNode;
-}>() {}
 
 export class NodeKey extends ObjectValue<{
   readonly nodeId: NodeId;
@@ -209,11 +205,15 @@ class Tree extends ObjectValue<{
   }
 }
 
+export class ChildInfo extends ObjectValue<{
+  position: number;
+  child: SharedNode;
+}>() {}
 export class SharedNode extends ObjectValue<{
   readonly shareId: ShareId;
   readonly id: NodeId;
   shareData: undefined | ShareData;
-  children: HashMap<NodeId, NodeInfo>;
+  children: HashMap<NodeId, ChildInfo>;
 }>() {
   doOp(
     op: AppliedOp["op"],
@@ -234,10 +234,11 @@ export class SharedNode extends ObjectValue<{
           streamId.shareId.equals(this.shareId) &&
           op.parentNodeId === id,
         ({op, children}) => {
-          const node: SharedNode = child!;
+          if (child === undefined)
+            throw new AssertFailed("child must be defined");
           return children.put(
-            node.id,
-            new NodeInfo({node, position: op.position}),
+            child.id,
+            new ChildInfo({child, position: op.position}),
           );
         },
       )
@@ -252,9 +253,9 @@ export class SharedNode extends ObjectValue<{
       )
       .otherwise(({children}) => children);
     const children2 = mapValuesStable(children1, (info) => {
-      const childNode1 = info.node.doOp(op, streamId, child);
-      if (childNode1 === info.node) return info;
-      return info.copy({node: childNode1});
+      const childNode1 = info.child.doOp(op, streamId, child);
+      if (childNode1 === info.child) return info;
+      return info.copy({child: childNode1});
     });
 
     if (shareData1 == this.shareData && children2 === this.children)
@@ -292,8 +293,8 @@ export class SharedNode extends ObjectValue<{
           [streamId.copy({type: "shared node"}), status],
         ])
       : HashMap.of<StreamId, "open" | OpList<AppliedOp>>();
-    return this.children.foldLeft(ourDesiredHeads, (result, [, {node}]) =>
-      HashMap.ofIterable([...result, ...node.desiredHeads()]),
+    return this.children.foldLeft(ourDesiredHeads, (result, [, {child}]) =>
+      HashMap.ofIterable([...result, ...child.desiredHeads()]),
     );
   }
 
@@ -302,8 +303,8 @@ export class SharedNode extends ObjectValue<{
       return Option.of(this);
     return this.children.foldLeft(
       Option.none<SharedNode>(),
-      (soFar, [key, child]) =>
-        soFar.orCall(() => child.node.nodeForNodeKey(nodeKey)),
+      (soFar, [key, info]) =>
+        soFar.orCall(() => info.child.nodeForNodeKey(nodeKey)),
     );
   }
 }

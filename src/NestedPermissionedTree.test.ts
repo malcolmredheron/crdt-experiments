@@ -296,9 +296,11 @@ describe("NestedPermissionedTree", () => {
         );
         const root = tree1.value.roots.single().getOrThrow()[1];
         expectIdentical(root.id, shareId.id);
-        const rootChild = root.children.single().getOrThrow()[1].node;
+        const rootChild = root.children.single().getOrThrow()[1].child;
         expectIdentical(rootChild.id, nodeB);
-        const rootChildChild = rootChild.children.single().getOrThrow()[1].node;
+        const rootChildChild = rootChild.children
+          .single()
+          .getOrThrow()[1].child;
         expectIdentical(rootChildChild.id, nodeA);
       });
 
@@ -325,7 +327,7 @@ describe("NestedPermissionedTree", () => {
         const root = tree1.value.roots.single().getOrThrow()[1];
         expectIdentical(root.id, shareId.id);
         const rootChildInfo = root.children.single().getOrThrow();
-        expectIdentical(rootChildInfo[1].node.id, nodeA);
+        expectIdentical(rootChildInfo[1].child.id, nodeA);
         expectIdentical(rootChildInfo[1].position, 1);
       });
 
@@ -349,9 +351,11 @@ describe("NestedPermissionedTree", () => {
         );
         const root = tree1.value.roots.single().getOrThrow()[1];
         expectIdentical(root.id, shareId.id);
-        const rootChild = root.children.single().getOrThrow()[1].node;
+        const rootChild = root.children.single().getOrThrow()[1].child;
         expectIdentical(rootChild.id, nodeB);
-        const rootChildChild = rootChild.children.single().getOrThrow()[1].node;
+        const rootChildChild = rootChild.children
+          .single()
+          .getOrThrow()[1].child;
         expectIdentical(rootChildChild.id, nodeA);
       });
 
@@ -385,9 +389,11 @@ describe("NestedPermissionedTree", () => {
         );
         const root = tree1.value.roots.single().getOrThrow()[1];
         expectIdentical(root.id, shareId.id);
-        const rootChild = root.children.single().getOrThrow()[1].node;
+        const rootChild = root.children.single().getOrThrow()[1].child;
         expectIdentical(rootChild.id, nodeB);
-        const rootChildChild = rootChild.children.single().getOrThrow()[1].node;
+        const rootChildChild = rootChild.children
+          .single()
+          .getOrThrow()[1].child;
         expectIdentical(rootChildChild.id, nodeA);
         expectIdentical(rootChildChild.children.length(), 0);
       });
@@ -483,9 +489,9 @@ describe("NestedPermissionedTree", () => {
       expectIdentical(tree1.value.root().id, shareA.id);
       const root = tree1.value.roots.single().getOrThrow()[1];
       expectIdentical(root.id, shareA.id);
-      const rootChild = root.children.single().getOrThrow()[1].node;
+      const rootChild = root.children.single().getOrThrow()[1].child;
       expectIdentical(rootChild.id, shareShared.id);
-      const rootChildChild = rootChild.children.single().getOrThrow()[1].node;
+      const rootChildChild = rootChild.children.single().getOrThrow()[1].child;
       expectIdentical(rootChildChild.id, nodeA);
       expectIdentical(rootChildChild.children.length(), 0);
     });
