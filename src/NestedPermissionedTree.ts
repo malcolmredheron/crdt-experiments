@@ -51,22 +51,27 @@ export class StreamId extends ObjectValue<{
 export class NodeId extends TypedValue<"NodeId", string> {}
 
 // Operations
-export type AppliedOp = PersistentAppliedOp<Tree, SetWriter | SetParent>;
+export type AppliedOp = PersistentAppliedOp<Tree, SetWriter | SetChild>;
+
+// These ops belong in the `share data` stream for the node whose writer is
+// being set.
 type SetWriter = {
   timestamp: Timestamp;
   type: "set writer";
 
-  targetWriter: ShareId;
+  writer: ShareId;
   priority: number;
   status: "open" | OpList<AppliedOp> | undefined;
 };
-type SetParent = {
-  timestamp: Timestamp;
-  type: "set parent";
 
-  nodeId: NodeId;
-  nodeShareId: Option<ShareId>; // Only if the moved node is a share root.
-  parentNodeId: NodeId;
+// These ops belong in the `shared node` stream for the parent node.
+type SetChild = {
+  timestamp: Timestamp;
+  type: "set child";
+
+  nodeId: NodeId; // The new parent
+  childNodeId: NodeId; // The moved node
+  childShareId: Option<ShareId>; // Only if the moved node is a share root.
   position: number;
 };
 
@@ -80,18 +85,18 @@ class Tree extends ObjectValue<{
   roots: HashMap<NodeKey, SharedNode>;
 }>() {
   doOp(op: AppliedOp["op"], streamId: StreamId): this {
-    if (op.type === "set parent") {
+    if (op.type === "set child") {
       const childKey = new NodeKey({
-        shareId: op.nodeShareId.getOrElse(streamId.shareId),
-        nodeId: op.nodeId,
+        shareId: op.childShareId.getOrElse(streamId.shareId),
+        nodeId: op.childNodeId,
       });
       const child = Tree.nodeForNodeKey(this.roots, childKey).getOrCall(() =>
-        SharedNode.createNode(streamId, op.nodeId, op.nodeShareId),
+        SharedNode.createNode(streamId, op.childNodeId, op.childShareId),
       );
 
       const parentKey = new NodeKey({
         shareId: streamId.shareId,
-        nodeId: op.parentNodeId,
+        nodeId: op.nodeId,
       });
 
       if (child.nodeForNodeKey(parentKey).isSome()) {
@@ -104,8 +109,8 @@ class Tree extends ObjectValue<{
       const parent = parentOpt.getOrCall(() =>
         SharedNode.createNode(
           streamId,
-          op.parentNodeId,
-          streamId.shareId.id === op.parentNodeId
+          op.nodeId,
+          streamId.shareId.id === op.nodeId
             ? Option.some(streamId.shareId)
             : Option.none(),
         ),
@@ -198,7 +203,7 @@ export class SharedNode extends ObjectValue<{
   doOp(
     op: AppliedOp["op"],
     streamId: StreamId,
-    // Defined if op is a "set parent".
+    // Defined if op is a "set child".
     child: SharedNode | undefined,
   ): this {
     const shareData1 =
@@ -208,11 +213,11 @@ export class SharedNode extends ObjectValue<{
 
     const children1 = match({op, children: this.children, id: this.id})
       .with(
-        {op: {type: "set parent"}},
+        {op: {type: "set child"}},
         ({op, id, children}) =>
           streamId.type === "shared node" &&
           streamId.shareId.equals(this.shareId) &&
-          op.parentNodeId === id,
+          op.nodeId === id,
         ({op, children}) => {
           if (child === undefined)
             throw new AssertFailed("child must be defined");
@@ -223,13 +228,13 @@ export class SharedNode extends ObjectValue<{
         },
       )
       .with(
-        {op: {type: "set parent"}},
+        {op: {type: "set child"}},
         ({op, id, children}) =>
           streamId.type === "shared node" &&
           streamId.shareId.equals(this.shareId) &&
-          op.parentNodeId !== id &&
-          children.containsKey(op.nodeId),
-        ({op, children}) => children.remove(op.nodeId),
+          op.nodeId !== id &&
+          children.containsKey(op.childNodeId),
+        ({op, children}) => children.remove(op.childNodeId),
       )
       .otherwise(({children}) => children);
     const children2 = mapValuesStable(children1, (info) => {
@@ -312,7 +317,7 @@ export class ShareData extends ObjectValue<{
 
   doOp(op: SetWriter, streamId: StreamId): this {
     if (streamId.type === "share data" && this.shareId === streamId.shareId) {
-      const writerInfoOpt = this.writers.get(op.targetWriter);
+      const writerInfoOpt = this.writers.get(op.writer);
       // #WriterPriority
       // const devicePriority = this.writers
       //   .get(op.device)
@@ -324,11 +329,11 @@ export class ShareData extends ObjectValue<{
 
       return this.copy({
         writers: this.writers.put(
-          op.targetWriter,
+          op.writer,
           new WriterInfo({
             writer: writerInfoOpt
               .map((wi) => wi.writer)
-              .getOrCall(() => ShareData.create(op.targetWriter)),
+              .getOrCall(() => ShareData.create(op.writer)),
             // #WriterPriority
             // priority: op.priority,
             status: op.status,

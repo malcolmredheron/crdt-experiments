@@ -158,22 +158,22 @@ describe("NestedPermissionedTree.monkey", function () {
               // shared node. We also need to add the shared node to the new
               // writer's tree somewhere.
 
-              const deviceId = op.targetWriter.creator;
+              const deviceId = op.writer.creator;
               const writerTree = devices.get(deviceId).getOrThrow();
               const writerTree1 = applyNewOp(
                 writerTree,
                 new StreamId({
                   deviceId,
-                  shareId: op.targetWriter,
+                  shareId: op.writer,
                   type: "shared node",
                 }),
                 {
                   timestamp: clock.now(),
-                  type: "set parent",
+                  type: "set child",
 
-                  nodeId: streamId.shareId.id,
-                  nodeShareId: Option.some(streamId.shareId),
-                  parentNodeId: op.targetWriter.id,
+                  childNodeId: streamId.shareId.id,
+                  childShareId: Option.some(streamId.shareId),
+                  nodeId: op.writer.id,
                   position: rand.rand(),
                 },
               );
@@ -274,11 +274,11 @@ function opForOpType(
         op: {
           timestamp: clock.now(),
           device: deviceId,
-          type: "set parent",
-          nodeId,
-          parentNodeId,
+          type: "set child",
+          childNodeId: nodeId,
+          nodeId: parentNodeId,
           position: rand.rand(),
-          nodeShareId:
+          childShareId:
             opType === "add shared"
               ? Option.some(
                   new ShareId({
@@ -306,12 +306,12 @@ function opForOpType(
         op: {
           timestamp: clock.now(),
           device: deviceId,
-          type: "set parent",
-          nodeId: node.id,
-          nodeShareId: node.shareData
+          type: "set child",
+          childNodeId: node.id,
+          childShareId: node.shareData
             ? Option.some(node.shareId)
             : Option.none(),
-          parentNodeId:
+          nodeId:
             opType === "move"
               ? randomInArray(rand, sharedNodeChildren).id
               : trashNodeId,
@@ -346,7 +346,7 @@ function opForOpType(
           device: deviceId,
           type: "set writer",
 
-          targetWriter: newWriterId.get(),
+          writer: newWriterId.get(),
           priority: 0, // #WriterPriority
           status: "open",
         },
@@ -386,7 +386,7 @@ function opForOpType(
           device: deviceId,
           type: "set writer",
 
-          targetWriter: writerId,
+          writer: writerId,
           priority: 0, // #WriterPriority
           status: writerHead.getOrUndefined(),
         },
