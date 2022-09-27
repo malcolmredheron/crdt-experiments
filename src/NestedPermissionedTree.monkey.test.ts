@@ -74,7 +74,7 @@ describe("NestedPermissionedTree.monkey", function () {
     ["add shared", 20],
     ["move", 100],
     ["remove", 10],
-    ["add writer", 5],
+    ["add writer", 1],
     // Needs to be high because often we can't find a writer to remove.
     ["remove writer", 5],
     ["update", 20],
@@ -146,7 +146,7 @@ describe("NestedPermissionedTree.monkey", function () {
             opType,
             deviceId,
             tree,
-            Vector.ofIterable(devices.keySet()).sortOn((e) => value(e)),
+            devices,
           );
           if (opOption.isSome()) {
             const {op, streamId} = opOption.get();
@@ -158,12 +158,13 @@ describe("NestedPermissionedTree.monkey", function () {
               // shared node. We also need to add the shared node to the new
               // writer's tree somewhere.
 
-              const writerTree = devices.get(op.targetWriter).getOrThrow();
+              const deviceId = op.targetWriter.creator;
+              const writerTree = devices.get(deviceId).getOrThrow();
               const writerTree1 = applyNewOp(
                 writerTree,
                 new StreamId({
-                  deviceId: op.targetWriter,
-                  shareId: writerTree.value.rootKey.shareId,
+                  deviceId,
+                  shareId: op.targetWriter,
                   type: "shared node",
                 }),
                 {
@@ -173,11 +174,11 @@ describe("NestedPermissionedTree.monkey", function () {
 
                   nodeId: streamId.shareId.id,
                   nodeShareId: Option.some(streamId.shareId),
-                  parentNodeId: writerTree.value.rootKey.nodeId,
+                  parentNodeId: op.targetWriter.id,
                   position: rand.rand(),
                 },
               );
-              devices = devices.put(op.targetWriter, writerTree1);
+              devices = devices.put(deviceId, writerTree1);
             }
           }
         }
@@ -202,10 +203,10 @@ describe("NestedPermissionedTree.monkey", function () {
         ),
     );
     // Some shared nodes should have more than one writer, otherwise it's no
-    // fun.
+    // fun. (The creator is already a writer, hence `> 0`.)
     expectIdentical(
       referenceSharedNodes
-        .filterValues((node) => node.shareData.writers.length() > 1)
+        .filterValues((node) => node.shareData.writers.length() > 0)
         .length() > 1,
       true,
     );
@@ -225,12 +226,7 @@ describe("NestedPermissionedTree.monkey", function () {
       devices1
         .map((deviceId, opSet) => [deviceId, numNodes(opSet.value.root())])
         .toObjectDictionary(value),
-    ).deep.equal({
-      device0: 151,
-      device1: 132,
-      device2: 142,
-      device3: 243,
-    });
+    ).deep.equal({device0: 51, device1: 108, device2: 77, device3: 94});
   });
 });
 
@@ -241,7 +237,7 @@ function opForOpType(
   opType: Exclude<OpType, "update">,
   deviceId: DeviceId,
   tree: NestedPermissionedTree,
-  deviceIds: Seq<DeviceId>,
+  devices: HashMap<DeviceId, NestedPermissionedTree>,
 ): Option<{streamId: StreamId; op: AppliedOp["op"]}> {
   // Share ids that we can write to.
   const shareIds = tree.value
@@ -326,10 +322,17 @@ function opForOpType(
     }
     case "add writer": {
       if (sharedNode.isNone()) return Option.none();
-      const writers = sharedNode.get().shareData!.writers;
+      const shares = devices.flatMap((deviceId, tree) =>
+        shareRoots(tree.value.root()),
+      );
+      const shares1 = shares.filter(
+        (shareId, node) =>
+          !sharedNode.get().shareData!.writers.containsKey(shareId) &&
+          !sharedNode.get().shareData!.shareId.equals(shareId),
+      );
       const newWriterId = randomInSeq(
         rand,
-        Vector.ofIterable(deviceIds.removeAll(writers.keySet())),
+        Vector.ofIterable(shares1.keySet()),
       );
       if (newWriterId.isNone()) return Option.none();
       const now = clock.now();
@@ -345,8 +348,7 @@ function opForOpType(
           type: "set writer",
 
           targetWriter: newWriterId.get(),
-          priority:
-            writers.get(deviceId).getOrThrow().priority - (rand.rand() % 1),
+          priority: 0, // #WriterPriority
           status: "open",
         },
       });
@@ -354,19 +356,21 @@ function opForOpType(
     case "remove writer": {
       if (sharedNode.isNone()) return Option.none();
       const writers = sharedNode.get().shareData!.writers;
-      const ourPriority = writers.get(deviceId).getOrThrow().priority;
+      // const ourPriority = writers.get(deviceId).getOrThrow().priority;
       const writerToRemove = randomInSeq(
         rand,
         Vector.ofIterable(
-          writers.filterValues((ps) => ps.priority < ourPriority),
+          // #WriterPriority
+          // writers.filterValues((ps) => ps.priority < ourPriority),
+          writers,
         ),
       );
       if (writerToRemove.isNone()) return Option.none();
 
-      const [writerId, {priority: writerPriority}] = writerToRemove.get();
+      const [writerId] = writerToRemove.get();
       const writerHead = tree.heads.get(
         new StreamId({
-          deviceId: writerId,
+          deviceId,
           shareId: shareId,
           type: "share data",
         }),
@@ -384,7 +388,7 @@ function opForOpType(
           type: "set writer",
 
           targetWriter: writerId,
-          priority: writerPriority,
+          priority: 0, // #WriterPriority
           status: writerHead.getOrUndefined(),
         },
       });

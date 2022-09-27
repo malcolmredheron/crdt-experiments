@@ -4,7 +4,7 @@ import {
   DeviceId,
   NodeId,
   NodeKey,
-  PriorityStatus,
+  WriterInfo,
   ShareData,
   SharedNode,
   ShareId,
@@ -30,7 +30,7 @@ describe("NestedPermissionedTree", () => {
   }
   function openWriterOp(
     device: DeviceId,
-    writer: DeviceId,
+    writer: ShareId,
     priority: number,
   ): AppliedOp["op"] {
     return {
@@ -64,23 +64,52 @@ describe("NestedPermissionedTree", () => {
 
   describe("permissions", () => {
     const shareId = new ShareId({creator: deviceA, id: NodeId.create("share")});
+    const shareIdOther = new ShareId({
+      creator: deviceB,
+      id: NodeId.create("shareOther"),
+    });
+
+    it("starts with one desired head", () => {
+      const tree = createPermissionedTree(shareId);
+      expectPreludeEqual(
+        tree.desiredHeads(tree.value),
+        HashMap.of(
+          [
+            new StreamId({
+              deviceId: shareId.creator,
+              shareId: shareId,
+              type: "shared node",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: shareId.creator,
+              shareId: shareId,
+              type: "share data",
+            }),
+            "open" as const,
+          ],
+        ),
+      );
+    });
 
     it("adds a lower-ranked writer", () => {
       const tree = createPermissionedTree(shareId);
       const tree1 = tree.update(
         HashMap.of([
           new StreamId({deviceId: deviceA, shareId, type: "share data"}),
-          LinkedList.of(openWriterOp(deviceA, deviceB, -1)),
+          LinkedList.of(openWriterOp(deviceA, shareIdOther, -1)),
         ]),
       );
       expectDeepEqual(
         tree1.value.roots
           .get(tree1.value.rootKey)
           .getOrThrow()
-          .shareData!.writers.get(deviceB)
+          .shareData!.writers.get(shareIdOther)
           .getOrUndefined(),
-        new PriorityStatus({
-          priority: -1,
+        new WriterInfo({
+          writer: ShareData.create(shareIdOther),
           status: "open",
         }),
       );
@@ -98,7 +127,7 @@ describe("NestedPermissionedTree", () => {
         HashMap.of(
           [
             new StreamId({deviceId: deviceA, shareId, type: "share data"}),
-            LinkedList.of(openWriterOp(deviceA, deviceB, -1)),
+            LinkedList.of(openWriterOp(deviceA, shareIdOther, -1)),
           ],
           [
             new StreamId({
@@ -123,8 +152,13 @@ describe("NestedPermissionedTree", () => {
         tree1.value
           .nodeForNodeKey(new NodeKey({shareId, nodeId: shareId.id}))
           .getOrThrow()
-          .shareData!.writers.get(deviceB),
-        Option.some(new PriorityStatus({status: "open", priority: -1})),
+          .shareData!.writers.get(shareIdOther),
+        Option.some(
+          new WriterInfo({
+            writer: ShareData.create(shareIdOther),
+            status: "open",
+          }),
+        ),
       );
     });
 
@@ -133,39 +167,103 @@ describe("NestedPermissionedTree", () => {
       const tree1 = tree.update(
         HashMap.of([
           new StreamId({deviceId: deviceA, shareId, type: "shared node"}),
-          LinkedList.of(openWriterOp(deviceA, deviceB, 0)),
+          LinkedList.of(openWriterOp(deviceA, shareIdOther, 0)),
         ]),
       );
       expectIdentical(
         tree1.value.roots
           .get(tree1.value.rootKey)
           .getOrThrow()
-          .shareData!.writers.get(deviceB)
+          .shareData!.writers.get(shareIdOther)
           .getOrUndefined(),
         undefined,
       );
     });
 
-    it("ignores a SetWriter to modify an equal-priority writer", () => {
+    // #WriterPriority
+    // it("ignores a SetWriter to modify an equal-priority writer", () => {
+    //   const tree = createPermissionedTree(shareId);
+    //   const tree1 = tree.update(
+    //     HashMap.of([
+    //       new StreamId({deviceId: deviceA, shareId, type: "share data"}),
+    //       LinkedList.of(openWriterOp(deviceA, deviceB, -1)).prepend(
+    //         openWriterOp(deviceB, deviceB, -2),
+    //       ),
+    //     ]),
+    //   );
+    //   expectDeepEqual(
+    //     tree1.value.roots
+    //       .get(tree1.value.rootKey)
+    //       .getOrThrow()
+    //       .shareData!.writers.get(deviceB)
+    //       .getOrThrow(),
+    //     new WriterInfo({
+    //       status: "open",
+    //       priority: -1,
+    //     }),
+    //   );
+    // });
+
+    it("shared node inherits writers from parent shared node", () => {
       const tree = createPermissionedTree(shareId);
       const tree1 = tree.update(
         HashMap.of([
           new StreamId({deviceId: deviceA, shareId, type: "share data"}),
-          LinkedList.of(openWriterOp(deviceA, deviceB, -1)).prepend(
-            openWriterOp(deviceB, deviceB, -2),
-          ),
+          LinkedList.of(openWriterOp(deviceA, shareIdOther, -1)),
         ]),
       );
-      expectDeepEqual(
-        tree1.value.roots
-          .get(tree1.value.rootKey)
-          .getOrThrow()
-          .shareData!.writers.get(deviceB)
-          .getOrThrow(),
-        new PriorityStatus({
-          status: "open",
-          priority: -1,
-        }),
+      expectPreludeEqual(
+        tree1.desiredHeads(tree1.value),
+        HashMap.of(
+          [
+            new StreamId({
+              deviceId: shareId.creator,
+              shareId: shareId,
+              type: "shared node",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: shareId.creator,
+              shareId: shareId,
+              type: "share data",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: shareIdOther.creator,
+              shareId: shareIdOther,
+              type: "shared node",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: shareIdOther.creator,
+              shareId: shareIdOther,
+              type: "share data",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: shareIdOther.creator,
+              shareId: shareId,
+              type: "shared node",
+            }),
+            "open" as const,
+          ],
+          [
+            new StreamId({
+              deviceId: shareIdOther.creator,
+              shareId: shareId,
+              type: "share data",
+            }),
+            "open" as const,
+          ],
+        ),
       );
     });
   });
@@ -191,10 +289,7 @@ describe("NestedPermissionedTree", () => {
             shareId,
             shareData: new ShareData({
               shareId,
-              writers: HashMap.of([
-                deviceA,
-                new PriorityStatus({priority: 0, status: "open"}),
-              ]),
+              writers: HashMap.of(),
             }),
             children: HashMap.of(),
           }),

@@ -10,6 +10,7 @@ import {HashMap, HashSet, Option} from "prelude-ts";
 import {ObjectValue} from "./helper/ObjectValue";
 import {match} from "ts-pattern";
 import {AssertFailed} from "./helper/Assert";
+import {MemoizeInstance} from "./helper/Memoize";
 
 export type NestedPermissionedTree = ControlledOpSet<Tree, AppliedOp, StreamId>;
 
@@ -27,20 +28,12 @@ export function createPermissionedTree(
     (value) => value.desiredHeads(),
     new Tree({
       rootKey: rootKey,
-      // Because this is empty, desiredWriters will fill in a default writer for
-      // the root shared node.
       roots: HashMap.of([
         rootKey,
         new SharedNode({
           id: rootKey.nodeId,
           shareId,
-          shareData: new ShareData({
-            shareId,
-            writers: HashMap.of([
-              shareId.creator,
-              new PriorityStatus({priority: 0, status: "open"}),
-            ]),
-          }),
+          shareData: ShareData.create(shareId),
           children: HashMap.of(),
         }),
       ]),
@@ -64,7 +57,7 @@ type SetWriter = {
   device: DeviceId;
   type: "set writer";
 
-  targetWriter: DeviceId;
+  targetWriter: ShareId;
   priority: number;
   status: "open" | OpList<AppliedOp> | undefined;
 };
@@ -78,15 +71,6 @@ type SetParent = {
   parentNodeId: NodeId;
   position: number;
 };
-
-// Internal types
-export class PriorityStatus extends ObjectValue<{
-  priority: number;
-  // Open: active
-  // OpList: closed after the listed operation
-  // undefined: removed completely
-  status: "open" | OpList<AppliedOp> | undefined;
-}>() {}
 
 export class NodeKey extends ObjectValue<{
   readonly nodeId: NodeId;
@@ -173,6 +157,7 @@ class Tree extends ObjectValue<{
     }
   }
 
+  @MemoizeInstance
   desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
     // We need to report desired heads based on all of the roots, otherwise we
     // won't have the ops to reconstruct subtrees that used to be in the main
@@ -185,10 +170,7 @@ class Tree extends ObjectValue<{
   }
 
   nodeForNodeKey(nodeKey: NodeKey): Option<SharedNode> {
-    return this.roots.foldLeft(
-      Option.none<SharedNode>(),
-      (soFar, [key, root]) => soFar.orCall(() => root.nodeForNodeKey(nodeKey)),
-    );
+    return Tree.nodeForNodeKey(this.roots, nodeKey);
   }
 
   static nodeForNodeKey(
@@ -273,18 +255,11 @@ export class SharedNode extends ObjectValue<{
       shareId: realShareId,
       id: nodeId,
       children: HashMap.of(),
-      shareData: shareId.isSome()
-        ? new ShareData({
-            shareId: realShareId,
-            writers: HashMap.of([
-              shareId.get().creator,
-              new PriorityStatus({priority: 0, status: "open"}),
-            ]),
-          })
-        : undefined,
+      shareData: shareId.isSome() ? ShareData.create(realShareId) : undefined,
     });
   }
 
+  @MemoizeInstance
   desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
     const shareData = this.shareData;
     const ourDesiredHeads = shareData
@@ -299,7 +274,7 @@ export class SharedNode extends ObjectValue<{
   }
 
   nodeForNodeKey(nodeKey: NodeKey): Option<SharedNode> {
-    if (nodeKey.shareId === this.shareId && nodeKey.nodeId === this.id)
+    if (nodeKey.shareId.equals(this.shareId) && nodeKey.nodeId === this.id)
       return Option.of(this);
     return this.children.foldLeft(
       Option.none<SharedNode>(),
@@ -309,27 +284,55 @@ export class SharedNode extends ObjectValue<{
   }
 }
 
+export class WriterInfo extends ObjectValue<{
+  // The creator of a shared node is always a writer, so these are actually the
+  // extra writers.
+  writer: ShareData;
+
+  // ##WriterPriority: For now this is removed, but the idea is that we store a
+  // priority for every writer node and from that can find a priority path for
+  // any writer device (remove dups in favor of higher priority). Then we
+  // disallow changes to higher priority shares by lower priority devices.
+  // priority: number;
+
+  // Open: active
+  // OpList: closed after the listed operation
+  // undefined: removed completely
+  status: "open" | OpList<AppliedOp> | undefined;
+}>() {}
+
 export class ShareData extends ObjectValue<{
   readonly shareId: ShareId;
-  writers: HashMap<DeviceId, PriorityStatus>;
+  writers: HashMap<ShareId, WriterInfo>;
 }>() {
+  static create(shareId: ShareId): ShareData {
+    return new ShareData({
+      shareId: shareId,
+      writers: HashMap.of(),
+    });
+  }
+
   doOp(op: SetWriter, streamId: StreamId): this {
     if (streamId.type === "share data" && this.shareId === streamId.shareId) {
-      const devicePriority = this.writers
-        .get(op.device)
-        .getOrThrow("Cannot find writer entry for op author").priority;
-      const writerPriority = this.writers
-        .get(op.targetWriter)
-        .getOrUndefined()?.priority;
-      if (writerPriority !== undefined && writerPriority >= devicePriority)
-        return this;
-      if (op.priority >= devicePriority) return this;
+      const writerInfoOpt = this.writers.get(op.targetWriter);
+      // #WriterPriority
+      // const devicePriority = this.writers
+      //   .get(op.device)
+      //   .getOrThrow("Cannot find writer entry for op author").priority;
+      // const writerPriority = writerInfoOpt.getOrUndefined()?.priority;
+      // if (writerPriority !== undefined && writerPriority >= devicePriority)
+      //   return this;
+      // if (op.priority >= devicePriority) return this;
 
       return this.copy({
         writers: this.writers.put(
           op.targetWriter,
-          new PriorityStatus({
-            priority: op.priority,
+          new WriterInfo({
+            writer: writerInfoOpt
+              .map((wi) => wi.writer)
+              .getOrCall(() => ShareData.create(op.targetWriter)),
+            // #WriterPriority
+            // priority: op.priority,
             status: op.status,
           }),
         ),
@@ -339,22 +342,32 @@ export class ShareData extends ObjectValue<{
     return this;
   }
 
+  @MemoizeInstance
   desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
-    return HashMap.ofIterable(
-      this.writers.map((deviceId, {status}) => [
-        new StreamId({
-          deviceId,
-          shareId: this.shareId,
-          type: "share data",
-        }),
-        // TODO: need to report the correct status
-        "open" as const,
-      ]),
+    const ourDesiredHeads = HashMap.ofIterable(
+      this.writerDevices()
+        .toArray()
+        .map((deviceId) => [
+          new StreamId({
+            deviceId,
+            shareId: this.shareId,
+            type: "share data",
+          }),
+          // TODO: need to report the correct status
+          "open" as "open" | OpList<AppliedOp>,
+        ]),
+    );
+    return this.writers.foldLeft(ourDesiredHeads, (heads, [, {writer}]) =>
+      HashMap.ofIterable([...heads, ...writer.desiredHeads()]),
     );
   }
 
   writerDevices(): HashSet<DeviceId> {
-    return this.writers.keySet();
+    return this.writers.foldLeft(
+      HashSet.of(this.shareId.creator),
+      (devices, [, writerInfo]) =>
+        HashSet.ofIterable([...devices, ...writerInfo.writer.writerDevices()]),
+    );
   }
 }
 
