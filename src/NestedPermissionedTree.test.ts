@@ -28,14 +28,9 @@ describe("NestedPermissionedTree", () => {
       AppliedOp["op"]
     >;
   }
-  function openWriterOp(
-    device: DeviceId,
-    writer: ShareId,
-    priority: number,
-  ): AppliedOp["op"] {
+  function openWriterOp(writer: ShareId, priority: number): AppliedOp["op"] {
     return {
       timestamp: clock.now(),
-      device: device,
       type: "set writer",
       targetWriter: writer,
       priority: priority,
@@ -43,7 +38,6 @@ describe("NestedPermissionedTree", () => {
     };
   }
   function setParentOp(args: {
-    device: DeviceId;
     nodeId: NodeId;
     nodeShareId?: ShareId;
     parentNodeId: NodeId;
@@ -51,7 +45,6 @@ describe("NestedPermissionedTree", () => {
   }): AppliedOp["op"] {
     return {
       timestamp: clock.now(),
-      device: args.device,
       type: "set parent",
       nodeId: args.nodeId,
       nodeShareId: args.nodeShareId
@@ -99,7 +92,7 @@ describe("NestedPermissionedTree", () => {
       const tree1 = tree.update(
         HashMap.of([
           new StreamId({deviceId: deviceA, shareId, type: "share data"}),
-          LinkedList.of(openWriterOp(deviceA, shareIdOther, -1)),
+          LinkedList.of(openWriterOp(shareIdOther, -1)),
         ]),
       );
       expectDeepEqual(
@@ -127,7 +120,7 @@ describe("NestedPermissionedTree", () => {
         HashMap.of(
           [
             new StreamId({deviceId: deviceA, shareId, type: "share data"}),
-            LinkedList.of(openWriterOp(deviceA, shareIdOther, -1)),
+            LinkedList.of(openWriterOp(shareIdOther, -1)),
           ],
           [
             new StreamId({
@@ -142,7 +135,6 @@ describe("NestedPermissionedTree", () => {
                 nodeId: shareId.id,
                 nodeShareId: shareId,
                 parentNodeId: shareA.id,
-                device: deviceA,
               }),
             ),
           ],
@@ -167,7 +159,7 @@ describe("NestedPermissionedTree", () => {
       const tree1 = tree.update(
         HashMap.of([
           new StreamId({deviceId: deviceA, shareId, type: "shared node"}),
-          LinkedList.of(openWriterOp(deviceA, shareIdOther, 0)),
+          LinkedList.of(openWriterOp(shareIdOther, 0)),
         ]),
       );
       expectIdentical(
@@ -209,7 +201,7 @@ describe("NestedPermissionedTree", () => {
       const tree1 = tree.update(
         HashMap.of([
           new StreamId({deviceId: deviceA, shareId, type: "share data"}),
-          LinkedList.of(openWriterOp(deviceA, shareIdOther, -1)),
+          LinkedList.of(openWriterOp(shareIdOther, -1)),
         ]),
       );
       expectPreludeEqual(
@@ -307,7 +299,6 @@ describe("NestedPermissionedTree", () => {
             deviceAStreamId,
             opsList(
               setParentOp({
-                device: deviceA,
                 nodeId: nodeA,
                 parentNodeId: nodeB,
               }),
@@ -329,7 +320,6 @@ describe("NestedPermissionedTree", () => {
             deviceAStreamId,
             opsList(
               setParentOp({
-                device: deviceA,
                 nodeId: nodeA,
                 parentNodeId: tree.value.rootKey.nodeId,
               }),
@@ -345,12 +335,10 @@ describe("NestedPermissionedTree", () => {
             deviceAStreamId,
             opsList(
               setParentOp({
-                device: deviceA,
                 nodeId: nodeA,
                 parentNodeId: tree.value.rootKey.nodeId,
               }),
               setParentOp({
-                device: deviceA,
                 nodeId: nodeA,
                 parentNodeId: nodeB,
               }),
@@ -372,17 +360,14 @@ describe("NestedPermissionedTree", () => {
             deviceAStreamId,
             opsList(
               setParentOp({
-                device: deviceA,
                 nodeId: nodeA,
                 parentNodeId: tree.value.rootKey.nodeId,
               }),
               setParentOp({
-                device: deviceA,
                 nodeId: nodeB,
                 parentNodeId: tree.value.rootKey.nodeId,
               }),
               setParentOp({
-                device: deviceA,
                 nodeId: nodeA,
                 parentNodeId: nodeB,
               }),
@@ -405,13 +390,11 @@ describe("NestedPermissionedTree", () => {
             deviceAStreamId,
             opsList(
               setParentOp({
-                device: deviceA,
                 nodeId: nodeA,
                 parentNodeId: tree.value.rootKey.nodeId,
                 position: 0,
               }),
               setParentOp({
-                device: deviceA,
                 nodeId: nodeA,
                 parentNodeId: tree.value.rootKey.nodeId,
                 position: 1,
@@ -432,12 +415,10 @@ describe("NestedPermissionedTree", () => {
             deviceAStreamId,
             opsList(
               setParentOp({
-                device: deviceA,
                 nodeId: nodeA,
                 parentNodeId: nodeB,
               }),
               setParentOp({
-                device: deviceA,
                 nodeId: nodeB,
                 parentNodeId: tree.value.rootKey.nodeId,
               }),
@@ -460,22 +441,18 @@ describe("NestedPermissionedTree", () => {
             deviceAStreamId,
             opsList(
               setParentOp({
-                device: deviceA,
                 nodeId: nodeA,
                 parentNodeId: tree.value.rootKey.nodeId,
               }),
               setParentOp({
-                device: deviceA,
                 nodeId: nodeB,
                 parentNodeId: tree.value.rootKey.nodeId,
               }),
               setParentOp({
-                device: deviceA,
                 nodeId: nodeA,
                 parentNodeId: nodeB,
               }),
               setParentOp({
-                device: deviceA,
                 nodeId: nodeB,
                 parentNodeId: nodeA,
               }),
@@ -511,12 +488,10 @@ describe("NestedPermissionedTree", () => {
       // Make the op in the shared node first, so that the tree has to handle
       // getting an op before it knows where to put it.
       const opBShared0 = setParentOp({
-        device: deviceB,
         nodeId: nodeA,
         parentNodeId: shareShared.id,
       });
       const opAA0 = setParentOp({
-        device: deviceA,
         nodeId: shareShared.id,
         nodeShareId: shareShared,
         parentNodeId: shareA.id,
@@ -602,27 +577,23 @@ describe("NestedPermissionedTree", () => {
       const shareC = new ShareId({creator: deviceId, id: NodeId.create("c")});
       const tree = createPermissionedTree(shareRoot);
       const opAInRoot = setParentOp({
-        device: deviceId,
         nodeId: shareA.id,
         nodeShareId: shareA,
         parentNodeId: shareRoot.id,
         position: 0,
       });
       const opBInRoot = setParentOp({
-        device: deviceId,
         nodeId: shareB.id,
         nodeShareId: shareB,
         parentNodeId: shareRoot.id,
         position: 0,
       });
       const opCInA = setParentOp({
-        device: deviceId,
         nodeId: shareC.id,
         nodeShareId: shareC,
         parentNodeId: shareA.id,
       });
       const opCInB = setParentOp({
-        device: deviceId,
         nodeId: shareC.id,
         nodeShareId: shareC,
         parentNodeId: shareB.id,
@@ -680,7 +651,6 @@ describe("NestedPermissionedTree", () => {
       // Create a shared node (with a different writer) inside the root share,
       // but not inside the root node, so that it forms a different root.
       const op = setParentOp({
-        device: deviceA,
         nodeId: shareShared.id,
         nodeShareId: shareShared,
         parentNodeId: NodeId.create("not in share A"),

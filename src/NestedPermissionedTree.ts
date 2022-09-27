@@ -54,7 +54,6 @@ export class NodeId extends TypedValue<"NodeId", string> {}
 export type AppliedOp = PersistentAppliedOp<Tree, SetWriter | SetParent>;
 type SetWriter = {
   timestamp: Timestamp;
-  device: DeviceId;
   type: "set writer";
 
   targetWriter: ShareId;
@@ -63,7 +62,6 @@ type SetWriter = {
 };
 type SetParent = {
   timestamp: Timestamp;
-  device: DeviceId;
   type: "set parent";
 
   nodeId: NodeId;

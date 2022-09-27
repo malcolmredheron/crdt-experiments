@@ -169,7 +169,6 @@ describe("NestedPermissionedTree.monkey", function () {
                 }),
                 {
                   timestamp: clock.now(),
-                  device: deviceId,
                   type: "set parent",
 
                   nodeId: streamId.shareId.id,
