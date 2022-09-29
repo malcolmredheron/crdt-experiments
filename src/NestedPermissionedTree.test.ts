@@ -4,11 +4,11 @@ import {
   DeviceId,
   NodeId,
   NodeKey,
-  WriterInfo,
   ShareData,
   SharedNode,
   ShareId,
   StreamId,
+  WriterInfo,
 } from "./NestedPermissionedTree";
 import {CountingClock} from "./helper/Clock.testing";
 import {
@@ -17,6 +17,8 @@ import {
   expectPreludeEqual,
 } from "./helper/Shared.testing";
 import {ConsLinkedList, HashMap, LinkedList, Option} from "prelude-ts";
+import {expect} from "chai";
+import {asType} from "./helper/Collection";
 
 describe("NestedPermissionedTree", () => {
   const clock = new CountingClock();
@@ -34,7 +36,6 @@ describe("NestedPermissionedTree", () => {
       type: "set writer",
       writer: writer,
       priority: priority,
-      status: "open",
     };
   }
   function setChildOp(args: {
@@ -60,6 +61,26 @@ describe("NestedPermissionedTree", () => {
     const shareIdOther = new ShareId({
       creator: deviceB,
       id: NodeId.create("shareOther"),
+    });
+    const deviceAShareDataStream = new StreamId({
+      deviceId: deviceA,
+      shareId,
+      type: "share data",
+    });
+    const deviceASharedNodeStream = new StreamId({
+      deviceId: deviceA,
+      shareId,
+      type: "shared node",
+    });
+    const deviceBShareDataStream = new StreamId({
+      deviceId: shareIdOther.creator,
+      shareId,
+      type: "share data",
+    });
+    const deviceBSharedNodeStream = new StreamId({
+      deviceId: shareIdOther.creator,
+      shareId,
+      type: "shared node",
     });
 
     it("starts with one desired head", () => {
@@ -103,7 +124,6 @@ describe("NestedPermissionedTree", () => {
           .getOrUndefined(),
         new WriterInfo({
           writer: ShareData.create(shareIdOther),
-          status: "open",
         }),
       );
     });
@@ -148,7 +168,6 @@ describe("NestedPermissionedTree", () => {
         Option.some(
           new WriterInfo({
             writer: ShareData.create(shareIdOther),
-            status: "open",
           }),
         ),
       );
@@ -200,37 +219,25 @@ describe("NestedPermissionedTree", () => {
       const tree = createPermissionedTree(shareId);
       const tree1 = tree.update(
         HashMap.of([
-          new StreamId({deviceId: deviceA, shareId, type: "share data"}),
+          deviceAShareDataStream,
           LinkedList.of(openWriterOp(shareIdOther, -1)),
         ]),
       );
       expectPreludeEqual(
         tree1.desiredHeads(tree1.value),
         HashMap.of(
-          [
-            new StreamId({
-              deviceId: shareId.creator,
-              shareId: shareId,
-              type: "shared node",
-            }),
-            "open" as const,
-          ],
-          [
-            new StreamId({
-              deviceId: shareId.creator,
-              shareId: shareId,
-              type: "share data",
-            }),
-            "open" as const,
-          ],
-          [
-            new StreamId({
-              deviceId: shareIdOther.creator,
-              shareId: shareIdOther,
-              type: "shared node",
-            }),
-            "open" as const,
-          ],
+          [deviceASharedNodeStream, "open" as const],
+          [deviceAShareDataStream, "open" as const],
+          // This is not an active head, since only the share data is relevant
+          // to our tree.
+          // [
+          //   new StreamId({
+          //     deviceId: shareIdOther.creator,
+          //     shareId: shareIdOther,
+          //     type: "shared node",
+          //   }),
+          //   "open" as const,
+          // ],
           [
             new StreamId({
               deviceId: shareIdOther.creator,
@@ -239,23 +246,75 @@ describe("NestedPermissionedTree", () => {
             }),
             "open" as const,
           ],
-          [
-            new StreamId({
-              deviceId: shareIdOther.creator,
-              shareId: shareId,
-              type: "shared node",
-            }),
-            "open" as const,
-          ],
-          [
-            new StreamId({
-              deviceId: shareIdOther.creator,
-              shareId: shareId,
-              type: "share data",
-            }),
-            "open" as const,
-          ],
+          [deviceBSharedNodeStream, "open" as const],
+          [deviceBShareDataStream, "open" as const],
         ),
+      );
+    });
+
+    it("remove parent writer completely", () => {
+      const tree = createPermissionedTree(shareId);
+      const nodeIdChild = NodeId.create("child");
+      const nodeIdParent = NodeId.create("parent");
+      const deviceAOp0 = openWriterOp(shareIdOther, -1);
+      const deviceCOp0 = setChildOp({
+        nodeId: nodeIdChild,
+        parentNodeId: nodeIdParent,
+      });
+      const deviceAOp1 = asType<AppliedOp["op"]>({
+        timestamp: clock.now(),
+        type: "remove writer",
+
+        writer: shareIdOther,
+        statuses: HashMap.of(),
+      });
+      const tree1 = tree.update(
+        HashMap.of(
+          [deviceAShareDataStream, opsList(deviceAOp0)],
+          [deviceBSharedNodeStream, opsList(deviceCOp0)],
+        ),
+      );
+      expect(tree1.heads.containsKey(deviceBSharedNodeStream)).true;
+
+      const tree2 = tree1.update(
+        HashMap.of(
+          [deviceAShareDataStream, opsList(deviceAOp0, deviceAOp1)],
+          [deviceBSharedNodeStream, opsList(deviceCOp0)],
+        ),
+      );
+      expect(tree2.heads.containsKey(deviceBSharedNodeStream)).false;
+    });
+
+    it("remove parent writer keeping some ops", () => {
+      const tree = createPermissionedTree(shareId);
+      const nodeIdChild = NodeId.create("child");
+      const nodeIdParent = NodeId.create("parent");
+      const deviceBOp0 = setChildOp({
+        nodeId: nodeIdChild,
+        parentNodeId: nodeIdParent,
+      });
+      const deviceAOp0 = openWriterOp(shareIdOther, -1);
+      const deviceAOp1 = {
+        timestamp: clock.now(),
+        type: "remove writer",
+
+        writer: shareIdOther,
+        statuses: HashMap.of([deviceBSharedNodeStream, opsList(deviceBOp0)]),
+      } as AppliedOp["op"];
+      const tree1 = tree.update(
+        HashMap.of(
+          [deviceAShareDataStream, opsList(deviceAOp0, deviceAOp1)],
+          [deviceBSharedNodeStream, opsList(deviceBOp0)],
+        ),
+      );
+      // We can't use expectPreludeEqual because ops don't support .equals. And
+      // we can't use expectIdentical because the two lists aren't identical.
+      expectDeepEqual(
+        tree1
+          .desiredHeads(tree1.value)
+          .get(deviceBSharedNodeStream)
+          .getOrThrow(),
+        opsList(deviceBOp0),
       );
     });
   });
@@ -282,6 +341,8 @@ describe("NestedPermissionedTree", () => {
             shareData: new ShareData({
               shareId,
               writers: HashMap.of(),
+              closedWriterDevicesForShareData: HashMap.of(),
+              closedWriterDevicesForSharedNode: HashMap.of(),
             }),
             children: HashMap.of(),
           }),

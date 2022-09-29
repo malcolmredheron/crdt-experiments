@@ -51,7 +51,10 @@ export class StreamId extends ObjectValue<{
 export class NodeId extends TypedValue<"NodeId", string> {}
 
 // Operations
-export type AppliedOp = PersistentAppliedOp<Tree, SetWriter | SetChild>;
+export type AppliedOp = PersistentAppliedOp<
+  Tree,
+  SetWriter | RemoveWriter | SetChild
+>;
 
 // These ops belong in the `share data` stream for the node whose writer is
 // being set.
@@ -61,7 +64,16 @@ type SetWriter = {
 
   writer: ShareId;
   priority: number;
-  status: "open" | OpList<AppliedOp> | undefined;
+};
+
+type RemoveWriter = {
+  timestamp: Timestamp;
+  type: "remove writer";
+
+  writer: ShareId;
+  // This indicates the final op that we'll accept for any streams that get
+  // removed by this op.
+  statuses: HashMap<StreamId, OpList<AppliedOp>>;
 };
 
 // These ops belong in the `shared node` stream for the parent node.
@@ -130,7 +142,7 @@ class Tree extends ObjectValue<{
         return this.copy({roots: rootsWithoutNode});
 
       return this.copy({roots: roots2});
-    } else if (op.type === "set writer") {
+    } else if (op.type === "set writer" || op.type === "remove writer") {
       const shareKey = new NodeKey({
         shareId: streamId.shareId,
         nodeId: streamId.shareId.id,
@@ -207,7 +219,8 @@ export class SharedNode extends ObjectValue<{
     child: SharedNode | undefined,
   ): this {
     const shareData1 =
-      op.type === "set writer" && this.shareData
+      (op.type === "set writer" || op.type === "remove writer") &&
+      this.shareData
         ? this.shareData.doOp(op, streamId)
         : this.shareData;
 
@@ -266,10 +279,11 @@ export class SharedNode extends ObjectValue<{
   desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
     const shareData = this.shareData;
     const ourDesiredHeads = shareData
-      ? shareData.desiredHeads().flatMap((streamId, status) => [
-          [streamId, status],
-          [streamId.copy({type: "shared node"}), status],
-        ])
+      ? shareData
+          .desiredHeadsForShareData()
+          .mergeWith(shareData.desiredHeadsForSharedNode(), (left, right) => {
+            throw new AssertFailed("Nothing should be in both maps");
+          })
       : HashMap.of<StreamId, "open" | OpList<AppliedOp>>();
     return this.children.foldLeft(ourDesiredHeads, (result, [, {child}]) =>
       HashMap.ofIterable([...result, ...child.desiredHeads()]),
@@ -297,79 +311,141 @@ export class WriterInfo extends ObjectValue<{
   // any writer device (remove dups in favor of higher priority). Then we
   // disallow changes to higher priority shares by lower priority devices.
   // priority: number;
-
-  // Open: active
-  // OpList: closed after the listed operation
-  // undefined: removed completely
-  status: "open" | OpList<AppliedOp> | undefined;
 }>() {}
 
 export class ShareData extends ObjectValue<{
   readonly shareId: ShareId;
   writers: HashMap<ShareId, WriterInfo>;
+  closedWriterDevicesForShareData: HashMap<DeviceId, OpList<AppliedOp>>;
+  closedWriterDevicesForSharedNode: HashMap<DeviceId, OpList<AppliedOp>>;
 }>() {
   static create(shareId: ShareId): ShareData {
     return new ShareData({
       shareId: shareId,
       writers: HashMap.of(),
+      closedWriterDevicesForShareData: HashMap.of(),
+      closedWriterDevicesForSharedNode: HashMap.of(),
     });
   }
 
-  doOp(op: SetWriter, streamId: StreamId): this {
+  doOp(op: SetWriter | RemoveWriter, streamId: StreamId): this {
     if (streamId.type === "share data" && this.shareId === streamId.shareId) {
       const writerInfoOpt = this.writers.get(op.writer);
-      // #WriterPriority
-      // const devicePriority = this.writers
-      //   .get(op.device)
-      //   .getOrThrow("Cannot find writer entry for op author").priority;
-      // const writerPriority = writerInfoOpt.getOrUndefined()?.priority;
-      // if (writerPriority !== undefined && writerPriority >= devicePriority)
-      //   return this;
-      // if (op.priority >= devicePriority) return this;
 
-      return this.copy({
-        writers: this.writers.put(
-          op.writer,
-          new WriterInfo({
-            writer: writerInfoOpt
-              .map((wi) => wi.writer)
-              .getOrCall(() => ShareData.create(op.writer)),
-            // #WriterPriority
-            // priority: op.priority,
-            status: op.status,
-          }),
-        ),
-      });
+      if (op.type === "set writer")
+        return this.copy({
+          writers: this.writers.put(
+            op.writer,
+            new WriterInfo({
+              writer: writerInfoOpt
+                .map((wi) => wi.writer)
+                .getOrCall(() => ShareData.create(op.writer)),
+            }),
+          ),
+        });
+      else {
+        const this1 = this.copy({
+          writers: this.writers.remove(op.writer),
+        });
+        const newlyClosedWriterDevices = this.openWriterDevices()
+          .removeAll(this1.openWriterDevices())
+          .toVector();
+        const closedWriterDevices = (
+          current: HashMap<DeviceId, OpList<AppliedOp>>,
+          type: "share data" | "shared node",
+        ): HashMap<DeviceId, OpList<AppliedOp>> => {
+          return current.mergeWith(
+            HashMap.ofIterable(
+              newlyClosedWriterDevices.mapOption((removedDeviceId) =>
+                op.statuses
+                  .get(
+                    new StreamId({
+                      deviceId: removedDeviceId,
+                      shareId: this.shareId,
+                      type,
+                    }),
+                  )
+                  .map((finalOp) => [removedDeviceId, finalOp]),
+              ),
+            ),
+            (oldOp, newOp) => newOp,
+          );
+        };
+        const this2 = this1.copy({
+          closedWriterDevicesForShareData: closedWriterDevices(
+            this1.closedWriterDevicesForShareData,
+            "share data",
+          ),
+          closedWriterDevicesForSharedNode: closedWriterDevices(
+            this1.closedWriterDevicesForSharedNode,
+            "shared node",
+          ),
+        });
+        return this2;
+      }
     }
 
     return this;
   }
 
   @MemoizeInstance
-  desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
-    const ourDesiredHeads = HashMap.ofIterable(
-      this.writerDevices()
+  desiredHeadsForShareData(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
+    const ourHeads = this.desiredHeadsHelper(
+      this.closedWriterDevicesForShareData,
+      "share data",
+    );
+    // We also need the heads for the writers, since they help to select the ops
+    // that define this object
+    return this.writers.foldLeft(ourHeads, (heads, [, {writer}]) =>
+      HashMap.ofIterable([...heads, ...writer.desiredHeadsForShareData()]),
+    );
+  }
+
+  @MemoizeInstance
+  desiredHeadsForSharedNode(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
+    // We don't need the shared-node heads for the writers, since they don't
+    // influece this shared node. In fact, this is why we split the streams for
+    // share data and shared node.
+    return this.desiredHeadsHelper(
+      this.closedWriterDevicesForSharedNode,
+      "shared node",
+    );
+  }
+
+  desiredHeadsHelper(
+    closedWriterDevices: HashMap<DeviceId, OpList<AppliedOp>>,
+    type: "share data" | "shared node",
+  ): HashMap<StreamId, "open" | OpList<AppliedOp>> {
+    const ourOpenHeads = HashMap.ofIterable(
+      this.openWriterDevices()
         .toArray()
         .map((deviceId) => [
           new StreamId({
             deviceId,
             shareId: this.shareId,
-            type: "share data",
+            type,
           }),
-          // TODO: need to report the correct status
           "open" as "open" | OpList<AppliedOp>,
         ]),
     );
-    return this.writers.foldLeft(ourDesiredHeads, (heads, [, {writer}]) =>
-      HashMap.ofIterable([...heads, ...writer.desiredHeads()]),
-    );
+    const ourClosedHeads = closedWriterDevices.map((deviceId, finalOp) => [
+      new StreamId({deviceId, shareId: this.shareId, type}),
+      finalOp,
+    ]);
+    const ourHeads = ourOpenHeads.mergeWith(ourClosedHeads, (open, closed) => {
+      throw new AssertFailed("One device should not be open and closed");
+    });
+    return ourHeads;
   }
 
-  writerDevices(): HashSet<DeviceId> {
+  openWriterDevices(): HashSet<DeviceId> {
     return this.writers.foldLeft(
       HashSet.of(this.shareId.creator),
       (devices, [, writerInfo]) =>
-        HashSet.ofIterable([...devices, ...writerInfo.writer.writerDevices()]),
+        HashSet.ofIterable([
+          ...devices,
+          ...writerInfo.writer.openWriterDevices(),
+        ]),
     );
   }
 }
