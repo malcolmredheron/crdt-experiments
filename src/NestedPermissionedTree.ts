@@ -332,8 +332,8 @@ export class ShareData extends ObjectValue<{
     if (streamId.type === "share data" && this.shareId === streamId.shareId) {
       const writerInfoOpt = this.writers.get(op.writer);
 
-      if (op.type === "set writer")
-        return this.copy({
+      if (op.type === "set writer") {
+        const this1 = this.copy({
           writers: this.writers.put(
             op.writer,
             new WriterInfo({
@@ -343,7 +343,23 @@ export class ShareData extends ObjectValue<{
             }),
           ),
         });
-      else {
+        const newlyAddedWriterDevices = this1
+          .openWriterDevices()
+          .removeAll(this.openWriterDevices());
+        // Anything that's newly added should no longer be listed as a closed
+        // writer.
+        const this2 = this1.copy({
+          closedWriterDevicesForShareData:
+            this1.closedWriterDevicesForShareData.filterKeys(
+              (deviceId) => !newlyAddedWriterDevices.contains(deviceId),
+            ),
+          closedWriterDevicesForSharedNode:
+            this1.closedWriterDevicesForSharedNode.filterKeys(
+              (deviceId) => !newlyAddedWriterDevices.contains(deviceId),
+            ),
+        });
+        return this2;
+      } else {
         const this1 = this.copy({
           writers: this.writers.remove(op.writer),
         });

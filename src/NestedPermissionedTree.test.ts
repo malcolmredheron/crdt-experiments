@@ -317,6 +317,38 @@ describe("NestedPermissionedTree", () => {
         opsList(deviceBOp0),
       );
     });
+
+    it("remove parent writer keeping some ops, then re-add", () => {
+      const tree = createPermissionedTree(shareId);
+      const nodeIdChild = NodeId.create("child");
+      const nodeIdParent = NodeId.create("parent");
+      const deviceBOp0 = setChildOp({
+        nodeId: nodeIdChild,
+        parentNodeId: nodeIdParent,
+      });
+      const deviceAOp0 = openWriterOp(shareIdOther, -1);
+      const deviceAOp1 = {
+        timestamp: clock.now(),
+        type: "remove writer",
+
+        writer: shareIdOther,
+        statuses: HashMap.of([deviceBSharedNodeStream, opsList(deviceBOp0)]),
+      } as AppliedOp["op"];
+      const deviceAOp2 = openWriterOp(shareIdOther, -1);
+      const tree1 = tree.update(
+        HashMap.of(
+          [deviceAShareDataStream, opsList(deviceAOp0, deviceAOp1, deviceAOp2)],
+          [deviceBSharedNodeStream, opsList(deviceBOp0)],
+        ),
+      );
+      expectIdentical(
+        tree1
+          .desiredHeads(tree1.value)
+          .get(deviceBSharedNodeStream)
+          .getOrThrow(),
+        "open",
+      );
+    });
   });
 
   describe("tree manipulation", () => {
