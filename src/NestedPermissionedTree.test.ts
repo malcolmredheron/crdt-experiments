@@ -124,7 +124,7 @@ describe("NestedPermissionedTree", () => {
           .shareData!.writers.get(shareIdOther)
           .getOrUndefined(),
         new WriterInfo({
-          writer: ShareData.create(shareIdOther),
+          shareData: ShareData.create(shareIdOther),
         }),
       );
     });
@@ -255,7 +255,7 @@ describe("NestedPermissionedTree", () => {
           .shareDataForShareId(shareIdOther)
           .getOrThrow()
           .writers.get(shareId)
-          .getOrThrow().writer,
+          .getOrThrow().shareData,
       );
     });
 

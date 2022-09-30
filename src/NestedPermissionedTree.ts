@@ -363,7 +363,7 @@ export class SharedNode extends ObjectValue<{
       const writersResult = this.shareData.writers.foldLeft(
         Option.none<ShareData>(),
         (soFar, [key, info]) =>
-          soFar.orCall(() => info.writer.shareDataForShareId(shareId)),
+          soFar.orCall(() => info.shareData.shareDataForShareId(shareId)),
       );
       if (writersResult.isSome()) return writersResult;
     }
@@ -378,7 +378,7 @@ export class SharedNode extends ObjectValue<{
 export class WriterInfo extends ObjectValue<{
   // The creator of a shared node is always a writer, so these are actually the
   // extra writers.
-  writer: ShareData;
+  shareData: ShareData;
 
   // ##WriterPriority: For now this is removed, but the idea is that we store a
   // priority for every writer node and from that can find a priority path for
@@ -413,7 +413,7 @@ export class ShareData extends ObjectValue<{
           writers: this.writers.put(
             op.writer,
             new WriterInfo({
-              writer: definedOrThrow(
+              shareData: definedOrThrow(
                 writer,
                 "`writer` must be defined for `set writer` op",
               ),
@@ -489,8 +489,8 @@ export class ShareData extends ObjectValue<{
     );
     // We also need the heads for the writers, since they help to select the ops
     // that define this object
-    return this.writers.foldLeft(ourHeads, (heads, [, {writer}]) =>
-      HashMap.ofIterable([...heads, ...writer.desiredHeadsForShareData()]),
+    return this.writers.foldLeft(ourHeads, (heads, [, {shareData}]) =>
+      HashMap.ofIterable([...heads, ...shareData.desiredHeadsForShareData()]),
     );
   }
 
@@ -537,7 +537,7 @@ export class ShareData extends ObjectValue<{
       (devices, [, writerInfo]) =>
         HashSet.ofIterable([
           ...devices,
-          ...writerInfo.writer.openWriterDevices(),
+          ...writerInfo.shareData.openWriterDevices(),
         ]),
     );
   }
@@ -547,7 +547,7 @@ export class ShareData extends ObjectValue<{
     return this.writers.foldLeft(
       Option.none<ShareData>(),
       (soFar, [key, info]) =>
-        soFar.orCall(() => info.writer.shareDataForShareId(shareId)),
+        soFar.orCall(() => info.shareData.shareDataForShareId(shareId)),
     );
   }
 }
