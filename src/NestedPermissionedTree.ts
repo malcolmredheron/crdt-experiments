@@ -11,6 +11,7 @@ import {ObjectValue} from "./helper/ObjectValue";
 import {match} from "ts-pattern";
 import {AssertFailed} from "./helper/Assert";
 import {MemoizeInstance} from "./helper/Memoize";
+import {definedOrThrow} from "./helper/Collection";
 
 export type NestedPermissionedTree = ControlledOpSet<Tree, AppliedOp, StreamId>;
 
@@ -37,6 +38,7 @@ export function createPermissionedTree(
           children: HashMap.of(),
         }),
       ]),
+      shareDataRoots: HashMap.of(),
     }),
   );
 }
@@ -95,6 +97,7 @@ export class NodeKey extends ObjectValue<{
 class Tree extends ObjectValue<{
   readonly rootKey: NodeKey;
   roots: HashMap<NodeKey, SharedNode>;
+  shareDataRoots: HashMap<ShareId, ShareData>;
 }>() {
   doOp(op: AppliedOp["op"], streamId: StreamId): this {
     if (op.type === "set child") {
@@ -103,7 +106,13 @@ class Tree extends ObjectValue<{
         nodeId: op.childNodeId,
       });
       const child = Tree.nodeForNodeKey(this.roots, childKey).getOrCall(() =>
-        SharedNode.createNode(streamId, op.childNodeId, op.childShareId),
+        Tree.createNode(
+          this.roots,
+          this.shareDataRoots,
+          streamId,
+          op.childNodeId,
+          op.childShareId,
+        ),
       );
 
       const parentKey = new NodeKey({
@@ -119,7 +128,9 @@ class Tree extends ObjectValue<{
       const parentOpt = Tree.nodeForNodeKey(this.roots, parentKey);
       const parentInTree = parentOpt.isSome();
       const parent = parentOpt.getOrCall(() =>
-        SharedNode.createNode(
+        Tree.createNode(
+          this.roots,
+          this.shareDataRoots,
           streamId,
           op.nodeId,
           streamId.shareId.id === op.nodeId
@@ -143,30 +154,34 @@ class Tree extends ObjectValue<{
 
       return this.copy({roots: roots2});
     } else if (op.type === "set writer" || op.type === "remove writer") {
-      const shareKey = new NodeKey({
-        shareId: streamId.shareId,
-        nodeId: streamId.shareId.id,
-      });
-      const roots1 = match({
+      const {roots: roots1, shareDataRoots: shareDataRoots1} = match({
         roots: this.roots,
-        sharePresent: Tree.nodeForNodeKey(this.roots, shareKey).isSome(),
+        shareDataRoots: this.shareDataRoots,
+        sharePresent: Tree.shareDataForShareId(
+          this.roots,
+          this.shareDataRoots,
+          streamId.shareId,
+        ).isSome(),
       })
-        .with({sharePresent: true}, ({roots}) =>
-          mapValuesStable(roots, (root) => root.doOp(op, streamId, undefined)),
-        )
-        .with({sharePresent: false}, ({roots}) =>
-          roots.put(
-            shareKey,
-            SharedNode.createNode(
-              streamId,
-              streamId.shareId.id,
-              Option.some(streamId.shareId),
-            ).doOp(op, streamId, undefined),
+        .with({sharePresent: true}, ({roots, shareDataRoots}) => ({
+          roots: mapValuesStable(roots, (root) =>
+            root.doOp(op, streamId, undefined),
           ),
-        )
+          shareDataRoots: mapValuesStable(shareDataRoots, (root) =>
+            root.doOp(op, streamId),
+          ),
+        }))
+        .with({sharePresent: false}, ({roots, shareDataRoots}) => ({
+          roots: roots,
+          shareDataRoots: shareDataRoots.put(
+            streamId.shareId,
+            ShareData.create(streamId.shareId).doOp(op, streamId),
+          ),
+        }))
         .exhaustive();
-      if (roots1 === this.roots) return this;
-      return this.copy({roots: roots1});
+      if (roots1 === this.roots && shareDataRoots1 === this.shareDataRoots)
+        return this;
+      return this.copy({roots: roots1, shareDataRoots: shareDataRoots1});
     } else {
       throw new AssertFailed("unknown op type");
     }
@@ -177,15 +192,22 @@ class Tree extends ObjectValue<{
     // We need to report desired heads based on all of the roots, otherwise we
     // won't have the ops to reconstruct subtrees that used to be in the main
     // tree but aren't now.
-    return this.roots.foldLeft(
+    const nodeHeads = this.roots.foldLeft(
       HashMap.of<StreamId, "open" | OpList<AppliedOp>>(),
       (result, [, node]) =>
         HashMap.ofIterable([...result, ...node.desiredHeads()]),
+    );
+    return this.shareDataRoots.foldLeft(nodeHeads, (result, [, shareData]) =>
+      HashMap.ofIterable([...result, ...shareData.desiredHeadsForShareData()]),
     );
   }
 
   nodeForNodeKey(nodeKey: NodeKey): Option<SharedNode> {
     return Tree.nodeForNodeKey(this.roots, nodeKey);
+  }
+
+  shareDataForShareId(shareId: ShareId): Option<ShareData> {
+    return Tree.shareDataForShareId(this.roots, this.shareDataRoots, shareId);
   }
 
   static nodeForNodeKey(
@@ -197,8 +219,49 @@ class Tree extends ObjectValue<{
     );
   }
 
+  static shareDataForShareId(
+    roots: HashMap<NodeKey, SharedNode>,
+    shareDataRoots: HashMap<ShareId, ShareData>,
+    shareId: ShareId,
+  ): Option<ShareData> {
+    const nodeOpt = this.nodeForNodeKey(
+      roots,
+      new NodeKey({shareId, nodeId: shareId.id}),
+    );
+    if (nodeOpt.isSome())
+      return Option.of(
+        definedOrThrow(nodeOpt.get().shareData, "expected shareData to be set"),
+      );
+    return shareDataRoots.foldLeft(
+      Option.none<ShareData>(),
+      (soFar, [key, root]) =>
+        soFar.orCall(() => root.shareDataForShareId(shareId)),
+    );
+  }
+
   root(): SharedNode {
     return Tree.nodeForNodeKey(this.roots, this.rootKey).getOrThrow();
+  }
+
+  static createNode(
+    roots: HashMap<NodeKey, SharedNode>,
+    shareDataRoots: HashMap<ShareId, ShareData>,
+    streamId: StreamId,
+    nodeId: NodeId,
+    shareId: Option<ShareId>,
+  ): SharedNode {
+    const realShareId = shareId.getOrElse(streamId.shareId);
+    return new SharedNode({
+      shareId: realShareId,
+      id: nodeId,
+      children: HashMap.of(),
+      shareData: shareId
+        .flatMap((shareId) =>
+          Tree.shareDataForShareId(roots, shareDataRoots, shareId),
+        )
+        .orCall(() => Option.of(ShareData.create(realShareId)))
+        .getOrUndefined(),
+    });
   }
 }
 
@@ -259,20 +322,6 @@ export class SharedNode extends ObjectValue<{
     if (shareData1 == this.shareData && children2 === this.children)
       return this;
     return this.copy({shareData: shareData1, children: children2});
-  }
-
-  static createNode(
-    streamId: StreamId,
-    nodeId: NodeId,
-    shareId: Option<ShareId>,
-  ): SharedNode {
-    const realShareId = shareId.getOrElse(streamId.shareId);
-    return new SharedNode({
-      shareId: realShareId,
-      id: nodeId,
-      children: HashMap.of(),
-      shareData: shareId.isSome() ? ShareData.create(realShareId) : undefined,
-    });
   }
 
   @MemoizeInstance
@@ -428,7 +477,7 @@ export class ShareData extends ObjectValue<{
     );
   }
 
-  desiredHeadsHelper(
+  private desiredHeadsHelper(
     closedWriterDevices: HashMap<DeviceId, OpList<AppliedOp>>,
     type: "share data" | "shared node",
   ): HashMap<StreamId, "open" | OpList<AppliedOp>> {
@@ -454,7 +503,7 @@ export class ShareData extends ObjectValue<{
     return ourHeads;
   }
 
-  openWriterDevices(): HashSet<DeviceId> {
+  private openWriterDevices(): HashSet<DeviceId> {
     return this.writers.foldLeft(
       HashSet.of(this.shareId.creator),
       (devices, [, writerInfo]) =>
@@ -462,6 +511,15 @@ export class ShareData extends ObjectValue<{
           ...devices,
           ...writerInfo.writer.openWriterDevices(),
         ]),
+    );
+  }
+
+  shareDataForShareId(shareId: ShareId): Option<ShareData> {
+    if (shareId.equals(this.shareId)) return Option.of(this);
+    return this.writers.foldLeft(
+      Option.none<ShareData>(),
+      (soFar, [key, info]) =>
+        soFar.orCall(() => info.writer.shareDataForShareId(shareId)),
     );
   }
 }

@@ -19,6 +19,7 @@ import {
 import {ConsLinkedList, HashMap, LinkedList, Option} from "prelude-ts";
 import {expect} from "chai";
 import {asType} from "./helper/Collection";
+import {OpList} from "./ControlledOpSet";
 
 describe("NestedPermissionedTree", () => {
   const clock = new CountingClock();
@@ -130,14 +131,26 @@ describe("NestedPermissionedTree", () => {
 
     // This is what happens when we share a node with a device before adding the
     // node to the device's tree.
-    it("creates shared node when setting writer on an unknown node", () => {
-      const shareA = new ShareId({
+    it("makes nodes for unknown children, only share datas for unknown writers", () => {
+      const shareRoot = new ShareId({
         creator: deviceA,
         id: NodeId.create("a root"),
       });
-      const tree = createPermissionedTree(shareA);
+      const shareIdOther2 = new ShareId({
+        creator: deviceB,
+        id: NodeId.create("shareOther2"),
+      });
+      const tree = createPermissionedTree(shareRoot);
       const tree1 = tree.update(
         HashMap.of(
+          [
+            new StreamId({
+              deviceId: deviceB,
+              shareId: shareIdOther,
+              type: "share data",
+            }),
+            LinkedList.of(openWriterOp(shareIdOther2, -1)),
+          ],
           [
             new StreamId({deviceId: deviceA, shareId, type: "share data"}),
             LinkedList.of(openWriterOp(shareIdOther, -1)),
@@ -145,7 +158,7 @@ describe("NestedPermissionedTree", () => {
           [
             new StreamId({
               deviceId: deviceA,
-              shareId: shareA,
+              shareId: shareRoot,
               type: "shared node",
             }),
             LinkedList.of(
@@ -154,10 +167,51 @@ describe("NestedPermissionedTree", () => {
               setChildOp({
                 nodeId: shareId.id,
                 nodeShareId: shareId,
-                parentNodeId: shareA.id,
+                parentNodeId: shareRoot.id,
               }),
             ),
           ],
+        ),
+      );
+
+      expectPreludeEqual(
+        tree1.desiredHeads(tree1.value),
+        desiredHeads(
+          HashMap.of(
+            // The root has both node and share data.
+            [
+              shareRoot,
+              HashMap.of([
+                deviceA,
+                HashMap.of(["share data", "open"], ["shared node", "open"]),
+              ]),
+            ],
+            // shareId has both node and share data because it's a child in the
+            // tree.
+            [
+              shareId,
+              HashMap.of(
+                [
+                  deviceA,
+                  HashMap.of(["share data", "open"], ["shared node", "open"]),
+                ],
+                [
+                  deviceB,
+                  HashMap.of(["share data", "open"], ["shared node", "open"]),
+                ],
+              ),
+            ],
+            // We should only have the share data for these, since they don't
+            // appear in our tree (just as a writer on things in the tree).
+            [
+              shareIdOther,
+              HashMap.of([deviceB, HashMap.of(["share data", "open"])]),
+            ],
+            [
+              shareIdOther2,
+              HashMap.of([deviceB, HashMap.of(["share data", "open"])]),
+            ],
+          ),
         ),
       );
       expectPreludeEqual(
@@ -800,3 +854,23 @@ describe("NestedPermissionedTree", () => {
     });
   });
 });
+
+// Makes a desired-heads map from a nested structure that is more
+// convenient for writing out.
+function desiredHeads(
+  heads: HashMap<
+    ShareId,
+    HashMap<
+      DeviceId,
+      HashMap<"share data" | "shared node", "open" | OpList<AppliedOp>>
+    >
+  >,
+): HashMap<StreamId, "open" | OpList<AppliedOp>> {
+  return heads.flatMap((shareId, map) =>
+    map.flatMap((deviceId, map) =>
+      map.flatMap((type, status) => [
+        [new StreamId({shareId, type, deviceId}), status],
+      ]),
+    ),
+  );
+}
