@@ -11,7 +11,7 @@ import {ObjectValue} from "./helper/ObjectValue";
 import {match} from "ts-pattern";
 import {AssertFailed} from "./helper/Assert";
 import {MemoizeInstance} from "./helper/Memoize";
-import {definedOrThrow} from "./helper/Collection";
+import {asType} from "./helper/Collection";
 
 export type NestedPermissionedTree = ControlledOpSet<Tree, AppliedOp, StreamId>;
 
@@ -89,6 +89,16 @@ type SetChild = {
   position: number;
 };
 
+type InternalOp = SetWriterInternal | RemoveWriter | SetChildInternal;
+
+type SetWriterInternal = SetWriter & {
+  writerShareData: ShareData;
+};
+
+type SetChildInternal = SetChild & {
+  child: SharedNode;
+};
+
 export class NodeKey extends ObjectValue<{
   readonly nodeId: NodeId;
   readonly shareId: ShareId;
@@ -114,6 +124,7 @@ class Tree extends ObjectValue<{
           op.childShareId,
         ),
       );
+      const internalOp = asType<SetChildInternal>({child, ...op});
 
       const parentKey = new NodeKey({
         shareId: streamId.shareId,
@@ -140,10 +151,10 @@ class Tree extends ObjectValue<{
       );
 
       const roots1 = mapValuesStable(this.roots, (root) =>
-        root.doOp(op, streamId, child, undefined),
+        root.doOp(internalOp, streamId),
       );
       const roots2 = !parentInTree
-        ? roots1.put(parentKey, parent.doOp(op, streamId, child, undefined))
+        ? roots1.put(parentKey, parent.doOp(internalOp, streamId))
         : roots1;
       if (roots2 === this.roots) return this;
 
@@ -154,14 +165,17 @@ class Tree extends ObjectValue<{
 
       return this.copy({roots: roots2});
     } else if (op.type === "set writer" || op.type === "remove writer") {
-      const writer =
-        op.type === "remove writer"
-          ? undefined
-          : Tree.shareDataForShareId(
-              this.roots,
-              this.shareDataRoots,
-              op.writer,
-            ).getOrCall(() => ShareData.create(op.writer));
+      const opInternal =
+        op.type === "set writer"
+          ? asType<SetWriterInternal>({
+              ...op,
+              writerShareData: Tree.shareDataForShareId(
+                this.roots,
+                this.shareDataRoots,
+                op.writer,
+              ).getOrCall(() => ShareData.create(op.writer)),
+            })
+          : op;
       const {roots: roots1, shareDataRoots: shareDataRoots1} = match({
         roots: this.roots,
         shareDataRoots: this.shareDataRoots,
@@ -173,17 +187,17 @@ class Tree extends ObjectValue<{
       })
         .with({sharePresent: true}, ({roots, shareDataRoots}) => ({
           roots: mapValuesStable(roots, (root) =>
-            root.doOp(op, streamId, undefined, writer),
+            root.doOp(opInternal, streamId),
           ),
           shareDataRoots: mapValuesStable(shareDataRoots, (root) =>
-            root.doOp(op, streamId, writer),
+            root.doOp(opInternal, streamId),
           ),
         }))
         .with({sharePresent: false}, ({roots, shareDataRoots}) => ({
           roots: roots,
           shareDataRoots: shareDataRoots.put(
             streamId.shareId,
-            ShareData.create(streamId.shareId).doOp(op, streamId, writer),
+            ShareData.create(streamId.shareId).doOp(opInternal, streamId),
           ),
         }))
         .exhaustive();
@@ -281,18 +295,11 @@ export class SharedNode extends ObjectValue<{
   shareData: undefined | ShareData;
   children: HashMap<NodeId, ChildInfo>;
 }>() {
-  doOp(
-    op: AppliedOp["op"],
-    streamId: StreamId,
-    // Defined if op is a "set child".
-    child: undefined | SharedNode,
-    // Defined if op is a "set writer".
-    writer: undefined | ShareData,
-  ): this {
+  doOp(op: InternalOp, streamId: StreamId): this {
     const shareData1 =
       (op.type === "set writer" || op.type === "remove writer") &&
       this.shareData
-        ? this.shareData.doOp(op, streamId, writer)
+        ? this.shareData.doOp(op, streamId)
         : this.shareData;
 
     const children1 = match({op, children: this.children, id: this.id})
@@ -303,11 +310,11 @@ export class SharedNode extends ObjectValue<{
           streamId.shareId.equals(this.shareId) &&
           op.nodeId === id,
         ({op, children}) => {
-          if (child === undefined)
+          if (op.child === undefined)
             throw new AssertFailed("child must be defined");
           return children.put(
-            child.id,
-            new ChildInfo({child, position: op.position}),
+            op.child.id,
+            new ChildInfo({child: op.child, position: op.position}),
           );
         },
       )
@@ -322,7 +329,7 @@ export class SharedNode extends ObjectValue<{
       )
       .otherwise(({children}) => children);
     const children2 = mapValuesStable(children1, (info) => {
-      const childNode1 = info.child.doOp(op, streamId, child, writer);
+      const childNode1 = info.child.doOp(op, streamId);
       if (childNode1 === info.child) return info;
       return info.copy({child: childNode1});
     });
@@ -376,8 +383,6 @@ export class SharedNode extends ObjectValue<{
 }
 
 export class WriterInfo extends ObjectValue<{
-  // The creator of a shared node is always a writer, so these are actually the
-  // extra writers.
   shareData: ShareData;
 
   // ##WriterPriority: For now this is removed, but the idea is that we store a
@@ -389,6 +394,8 @@ export class WriterInfo extends ObjectValue<{
 
 export class ShareData extends ObjectValue<{
   readonly shareId: ShareId;
+  // The creator of a shared node is always a writer, so these are actually the
+  // extra writers.
   writers: HashMap<ShareId, WriterInfo>;
   closedWriterDevicesForShareData: HashMap<DeviceId, OpList<AppliedOp>>;
   closedWriterDevicesForSharedNode: HashMap<DeviceId, OpList<AppliedOp>>;
@@ -402,21 +409,14 @@ export class ShareData extends ObjectValue<{
     });
   }
 
-  doOp(
-    op: SetWriter | RemoveWriter,
-    streamId: StreamId,
-    writer: undefined | ShareData,
-  ): this {
+  doOp(op: SetWriterInternal | RemoveWriter, streamId: StreamId): this {
     if (streamId.type === "share data" && this.shareId === streamId.shareId) {
       if (op.type === "set writer") {
         const this1 = this.copy({
           writers: this.writers.put(
             op.writer,
             new WriterInfo({
-              shareData: definedOrThrow(
-                writer,
-                "`writer` must be defined for `set writer` op",
-              ),
+              shareData: op.writerShareData,
             }),
           ),
         });
