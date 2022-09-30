@@ -57,7 +57,7 @@ describe("NestedPermissionedTree", () => {
     };
   }
 
-  describe("permissions", () => {
+  describe("writers", () => {
     const shareId = new ShareId({creator: deviceA, id: NodeId.create("share")});
     const shareIdOther = new ShareId({
       creator: deviceB,
@@ -214,16 +214,48 @@ describe("NestedPermissionedTree", () => {
           ),
         ),
       );
-      expectPreludeEqual(
-        tree1.value
-          .nodeForNodeKey(new NodeKey({shareId, nodeId: shareId.id}))
-          .getOrThrow()
-          .shareData!.writers.get(shareIdOther),
-        Option.some(
-          new WriterInfo({
-            writer: ShareData.create(shareIdOther),
-          }),
+    });
+
+    it("uses existing share data for parent when adding a writer", () => {
+      const tree = createPermissionedTree(shareId).update(
+        HashMap.of(
+          [
+            deviceASharedNodeStream,
+            opsList(
+              setChildOp({
+                parentNodeId: shareId.id,
+                nodeShareId: shareIdOther,
+                nodeId: shareIdOther.id,
+              }),
+            ),
+          ],
+          [
+            new StreamId({
+              deviceId: deviceB,
+              shareId: shareIdOther,
+              type: "share data",
+            }),
+            opsList(openWriterOp(shareId, -1)),
+          ],
         ),
+      );
+      expectIdentical(tree.value.shareDataForShareId(shareId).isSome(), true);
+      expectIdentical(tree.value.shareDataRoots.containsKey(shareId), false);
+      expectIdentical(
+        tree.value.shareDataForShareId(shareIdOther).isSome(),
+        true,
+      );
+      expectIdentical(
+        tree.value.shareDataRoots.containsKey(shareIdOther),
+        false,
+      );
+      expectIdentical(
+        tree.value.shareDataForShareId(shareId).getOrThrow(),
+        tree.value
+          .shareDataForShareId(shareIdOther)
+          .getOrThrow()
+          .writers.get(shareId)
+          .getOrThrow().writer,
       );
     });
 

@@ -140,10 +140,10 @@ class Tree extends ObjectValue<{
       );
 
       const roots1 = mapValuesStable(this.roots, (root) =>
-        root.doOp(op, streamId, child),
+        root.doOp(op, streamId, child, undefined),
       );
       const roots2 = !parentInTree
-        ? roots1.put(parentKey, parent.doOp(op, streamId, child))
+        ? roots1.put(parentKey, parent.doOp(op, streamId, child, undefined))
         : roots1;
       if (roots2 === this.roots) return this;
 
@@ -154,6 +154,14 @@ class Tree extends ObjectValue<{
 
       return this.copy({roots: roots2});
     } else if (op.type === "set writer" || op.type === "remove writer") {
+      const writer =
+        op.type === "remove writer"
+          ? undefined
+          : Tree.shareDataForShareId(
+              this.roots,
+              this.shareDataRoots,
+              op.writer,
+            ).getOrCall(() => ShareData.create(op.writer));
       const {roots: roots1, shareDataRoots: shareDataRoots1} = match({
         roots: this.roots,
         shareDataRoots: this.shareDataRoots,
@@ -165,17 +173,17 @@ class Tree extends ObjectValue<{
       })
         .with({sharePresent: true}, ({roots, shareDataRoots}) => ({
           roots: mapValuesStable(roots, (root) =>
-            root.doOp(op, streamId, undefined),
+            root.doOp(op, streamId, undefined, writer),
           ),
           shareDataRoots: mapValuesStable(shareDataRoots, (root) =>
-            root.doOp(op, streamId),
+            root.doOp(op, streamId, writer),
           ),
         }))
         .with({sharePresent: false}, ({roots, shareDataRoots}) => ({
           roots: roots,
           shareDataRoots: shareDataRoots.put(
             streamId.shareId,
-            ShareData.create(streamId.shareId).doOp(op, streamId),
+            ShareData.create(streamId.shareId).doOp(op, streamId, writer),
           ),
         }))
         .exhaustive();
@@ -224,14 +232,12 @@ class Tree extends ObjectValue<{
     shareDataRoots: HashMap<ShareId, ShareData>,
     shareId: ShareId,
   ): Option<ShareData> {
-    const nodeOpt = this.nodeForNodeKey(
-      roots,
-      new NodeKey({shareId, nodeId: shareId.id}),
+    const nodesResult = roots.foldLeft(
+      Option.none<ShareData>(),
+      (soFar, [key, root]) =>
+        soFar.orCall(() => root.shareDataForShareId(shareId)),
     );
-    if (nodeOpt.isSome())
-      return Option.of(
-        definedOrThrow(nodeOpt.get().shareData, "expected shareData to be set"),
-      );
+    if (nodesResult.isSome()) return nodesResult;
     return shareDataRoots.foldLeft(
       Option.none<ShareData>(),
       (soFar, [key, root]) =>
@@ -279,12 +285,14 @@ export class SharedNode extends ObjectValue<{
     op: AppliedOp["op"],
     streamId: StreamId,
     // Defined if op is a "set child".
-    child: SharedNode | undefined,
+    child: undefined | SharedNode,
+    // Defined if op is a "set writer".
+    writer: undefined | ShareData,
   ): this {
     const shareData1 =
       (op.type === "set writer" || op.type === "remove writer") &&
       this.shareData
-        ? this.shareData.doOp(op, streamId)
+        ? this.shareData.doOp(op, streamId, writer)
         : this.shareData;
 
     const children1 = match({op, children: this.children, id: this.id})
@@ -314,7 +322,7 @@ export class SharedNode extends ObjectValue<{
       )
       .otherwise(({children}) => children);
     const children2 = mapValuesStable(children1, (info) => {
-      const childNode1 = info.child.doOp(op, streamId, child);
+      const childNode1 = info.child.doOp(op, streamId, child, writer);
       if (childNode1 === info.child) return info;
       return info.copy({child: childNode1});
     });
@@ -348,6 +356,23 @@ export class SharedNode extends ObjectValue<{
         soFar.orCall(() => info.child.nodeForNodeKey(nodeKey)),
     );
   }
+
+  shareDataForShareId(shareId: ShareId): Option<ShareData> {
+    if (this.shareData) {
+      if (shareId.equals(this.shareId)) return Option.of(this.shareData);
+      const writersResult = this.shareData.writers.foldLeft(
+        Option.none<ShareData>(),
+        (soFar, [key, info]) =>
+          soFar.orCall(() => info.writer.shareDataForShareId(shareId)),
+      );
+      if (writersResult.isSome()) return writersResult;
+    }
+    return this.children.foldLeft(
+      Option.none<ShareData>(),
+      (soFar, [key, info]) =>
+        soFar.orCall(() => info.child.shareDataForShareId(shareId)),
+    );
+  }
 }
 
 export class WriterInfo extends ObjectValue<{
@@ -377,18 +402,21 @@ export class ShareData extends ObjectValue<{
     });
   }
 
-  doOp(op: SetWriter | RemoveWriter, streamId: StreamId): this {
+  doOp(
+    op: SetWriter | RemoveWriter,
+    streamId: StreamId,
+    writer: undefined | ShareData,
+  ): this {
     if (streamId.type === "share data" && this.shareId === streamId.shareId) {
-      const writerInfoOpt = this.writers.get(op.writer);
-
       if (op.type === "set writer") {
         const this1 = this.copy({
           writers: this.writers.put(
             op.writer,
             new WriterInfo({
-              writer: writerInfoOpt
-                .map((wi) => wi.writer)
-                .getOrCall(() => ShareData.create(op.writer)),
+              writer: definedOrThrow(
+                writer,
+                "`writer` must be defined for `set writer` op",
+              ),
             }),
           ),
         });
