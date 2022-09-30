@@ -1,6 +1,7 @@
 import {areEqual, fieldsHashCode} from "prelude-ts";
 import {scalarComparison} from "./Collection";
 import {WritableProps} from "./TypeMapping";
+import {MemoizeInstance} from "./Memoize";
 
 /*
 ObjectValue is for making values that are objects. Being a value means that it's
@@ -44,6 +45,16 @@ class ObjectValueBase<Props extends {}> {
     return new (this.constructor as {
       new (props: Props): ObjectValueBase<Props>;
     })(props) as this;
+  }
+
+  @MemoizeInstance
+  toString(): string {
+    // We want different intances to have different strings so that they stay
+    // separate when used as keys, such as in expectIdenticalMismatches. We
+    // could do this by fully serializing the object, but that produces a lot of
+    // text. Instead we just use a random number. We memoize it so that it's at
+    // least stable.
+    return `${this.constructor.name} ${Math.random()}`;
   }
 
   private orderedFieldValues(): ReadonlyArray<unknown> {

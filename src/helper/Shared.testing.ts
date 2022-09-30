@@ -31,8 +31,9 @@ export function expectPreludeEqual<T extends HasEquals>(
   expected: T,
 ): void {
   if (!actual.equals(expected)) {
+    const mismatches = expectIdenticalMismatches(actual, expected);
     debugger;
-    expect(actual).deep.equal(expected);
+    expect(mismatches).equal(null);
   }
 }
 
@@ -71,6 +72,19 @@ export function expectIdenticalMismatches<T>(
         mismatches["expected" + i++] = v;
       }
     }
+  } else if (actual instanceof HashMap && expected instanceof HashMap) {
+    const keys = actual.keySet().addAll(expected.keySet());
+    for (const key of keys) {
+      const actualValue = actual.get(key).getOrUndefined();
+      const expectedValue = expected.get(key).getOrUndefined();
+      const childMismatches = expectIdenticalMismatches(
+        actualValue,
+        expectedValue,
+      );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (childMismatches !== null) (childMismatches as any).key = key;
+      mismatches[key] = childMismatches;
+    }
   } else {
     const actualMap = HashMap.ofIterable(Object.entries(actual));
     const expectedMap = HashMap.ofIterable(Object.entries(expected));
@@ -78,7 +92,13 @@ export function expectIdenticalMismatches<T>(
     for (const key of keys) {
       const actualValue = actualMap.get(key).getOrUndefined();
       const expectedValue = expectedMap.get(key).getOrUndefined();
-      mismatches[key] = expectIdenticalMismatches(actualValue, expectedValue);
+      const childMismatches = expectIdenticalMismatches(
+        actualValue,
+        expectedValue,
+      );
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (childMismatches !== null) (childMismatches as any).key = key;
+      mismatches[key] = childMismatches;
     }
   }
 
