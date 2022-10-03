@@ -13,6 +13,9 @@ import {AssertFailed} from "./helper/Assert";
 import {MemoizeInstance} from "./helper/Memoize";
 import {asType} from "./helper/Collection";
 
+// This really shouldn't be here, but ...
+import {expectPreludeEqual} from "./helper/Shared.testing";
+
 export type NestedPermissionedTree = ControlledOpSet<Tree, AppliedOp, StreamId>;
 
 // Creates a new PermissionedTreeValue with shareId.creator as the initial
@@ -109,6 +112,14 @@ class Tree extends ObjectValue<{
   roots: HashMap<NodeKey, SharedNode>;
   shareDataRoots: HashMap<ShareId, ShareData>;
 }>() {
+  // Hopefully this assertion is temporary, so it doesn't seem worth extracting
+  // a type for the props.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  constructor(props: any) {
+    super(props);
+    this.assertRootsConsistent();
+  }
+
   doOp(op: AppliedOp["op"], streamId: StreamId): this {
     if (op.type === "set child") {
       const childKey = new NodeKey({
@@ -159,11 +170,16 @@ class Tree extends ObjectValue<{
       if (roots2 === this.roots) return this;
 
       const rootsWithoutNode = roots2.remove(childKey);
-      if (Tree.nodeForNodeKey(rootsWithoutNode, childKey).isSome())
-        // The node is somewhere else in the tree. Remove it as a root.
-        return this.copy({roots: rootsWithoutNode});
-
-      return this.copy({roots: roots2});
+      const shareDataRoots1 = child.shareData
+        ? this.shareDataRoots.remove(child.shareData.shareId)
+        : this.shareDataRoots;
+      const shareDataRoots2 = parent.shareData
+        ? shareDataRoots1.remove(parent.shareData.shareId)
+        : shareDataRoots1;
+      return this.copy({
+        roots: rootsWithoutNode,
+        shareDataRoots: shareDataRoots2,
+      });
     } else if (op.type === "set writer" || op.type === "remove writer") {
       const opInternal =
         op.type === "set writer"
@@ -203,9 +219,69 @@ class Tree extends ObjectValue<{
         .exhaustive();
       if (roots1 === this.roots && shareDataRoots1 === this.shareDataRoots)
         return this;
-      return this.copy({roots: roots1, shareDataRoots: shareDataRoots1});
+      return this.copy({
+        roots: roots1,
+        shareDataRoots: shareDataRoots1.remove(op.writer),
+      });
     } else {
       throw new AssertFailed("unknown op type");
+    }
+  }
+
+  assertRootsConsistent(): void {
+    // All copies of the same object should be equal
+    // All roots should be necessary, ie nowhere else in the tree
+
+    let objects = HashMap.of<
+      NodeKey | ShareId,
+      {root: boolean; object: SharedNode | ShareData}
+    >();
+    const addObject = (
+      key: NodeKey | ShareId,
+      object: SharedNode | ShareData,
+      root: boolean,
+    ): void => {
+      const objectInfo = objects.get(key);
+      if (objectInfo.isSome()) {
+        expectPreludeEqual(object, objectInfo.get().object);
+        if (objectInfo.get().root || root)
+          throw new AssertFailed(
+            "Found root and non-root versions of an object",
+          );
+      } else {
+        objects = objects.put(key, {object, root});
+      }
+    };
+    const traverseShareData = (shareData: ShareData): void => {
+      for (const writerInfo of shareData.writers.valueIterable()) {
+        addObject(writerInfo.shareData.shareId, writerInfo.shareData, false);
+        traverseShareData(writerInfo.shareData);
+      }
+    };
+    const traverseSharedNode = (node: SharedNode): void => {
+      if (node.shareData) {
+        addObject(node.shareData.shareId, node.shareData, false);
+        traverseShareData(node.shareData);
+      }
+      for (const childInfo of node.children.valueIterable()) {
+        addObject(
+          new NodeKey({
+            shareId: childInfo.child.shareId,
+            nodeId: childInfo.child.id,
+          }),
+          childInfo.child,
+          false,
+        );
+        traverseSharedNode(childInfo.child);
+      }
+    };
+    for (const [nodeKey, root] of this.roots) {
+      addObject(nodeKey, root, true);
+      traverseSharedNode(root);
+    }
+    for (const [shareId, root] of this.shareDataRoots) {
+      addObject(shareId, root, true);
+      traverseShareData(root);
     }
   }
 
@@ -277,9 +353,10 @@ class Tree extends ObjectValue<{
       children: HashMap.of(),
       shareData: shareId
         .flatMap((shareId) =>
-          Tree.shareDataForShareId(roots, shareDataRoots, shareId),
+          Tree.shareDataForShareId(roots, shareDataRoots, shareId).orCall(() =>
+            Option.of(ShareData.create(shareId)),
+          ),
         )
-        .orCall(() => Option.of(ShareData.create(realShareId)))
         .getOrUndefined(),
     });
   }
