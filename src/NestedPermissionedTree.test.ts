@@ -249,7 +249,7 @@ describe("NestedPermissionedTree", () => {
         tree.value.shareDataRoots.containsKey(shareIdOther),
         false,
       );
-      expectIdentical(
+      expectPreludeEqual(
         tree.value.shareDataForShareId(shareId).getOrThrow(),
         tree.value
           .shareDataForShareId(shareIdOther)
@@ -335,6 +335,42 @@ describe("NestedPermissionedTree", () => {
           [deviceBSharedNodeStream, "open" as const],
           [deviceBShareDataStream, "open" as const],
         ),
+      );
+    });
+
+    it("applies ops to parent writers", () => {
+      const shareIdOther2 = new ShareId({
+        creator: deviceB,
+        id: NodeId.create("shareOther2"),
+      });
+      const tree = createPermissionedTree(shareId).update(
+        HashMap.of(
+          [
+            deviceAShareDataStream,
+            LinkedList.of(openWriterOp(shareIdOther, -1)),
+          ],
+          [
+            new StreamId({
+              deviceId: shareIdOther.creator,
+              shareId: shareIdOther,
+              type: "share data",
+            }),
+            LinkedList.of(openWriterOp(shareIdOther2, -1)),
+          ],
+        ),
+      );
+      // The share data should not be in the roots ...
+      expectIdentical(
+        tree.value.shareDataRoots.containsKey(shareIdOther),
+        false,
+      );
+      // ... but it should still have been updated.
+      expectIdentical(
+        tree.value
+          .shareDataForShareId(shareIdOther)
+          .getOrThrow()
+          .writers.containsKey(shareIdOther2),
+        true,
       );
     });
 

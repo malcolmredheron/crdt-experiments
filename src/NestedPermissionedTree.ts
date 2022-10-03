@@ -487,10 +487,15 @@ export class ShareData extends ObjectValue<{
   }
 
   doOp(op: SetWriterInternal | RemoveWriter, streamId: StreamId): this {
+    const writers1 = mapValuesStable(this.writers, (writerInfo) => {
+      const shareData1 = writerInfo.shareData.doOp(op, streamId);
+      if (shareData1 === writerInfo.shareData) return writerInfo;
+      return writerInfo.copy({shareData: shareData1});
+    });
     if (streamId.type === "share data" && this.shareId === streamId.shareId) {
       if (op.type === "set writer") {
         const this1 = this.copy({
-          writers: this.writers.put(
+          writers: writers1.put(
             op.writer,
             new WriterInfo({
               shareData: op.writerShareData,
@@ -515,7 +520,7 @@ export class ShareData extends ObjectValue<{
         return this2;
       } else {
         const this1 = this.copy({
-          writers: this.writers.remove(op.writer),
+          writers: writers1.remove(op.writer),
         });
         const newlyClosedWriterDevices = this.openWriterDevices()
           .removeAll(this1.openWriterDevices())
@@ -555,7 +560,7 @@ export class ShareData extends ObjectValue<{
       }
     }
 
-    return this;
+    return this.copy({writers: writers1});
   }
 
   @MemoizeInstance
