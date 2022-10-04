@@ -6,9 +6,9 @@ import {
   persistentDoOpFactory,
   persistentUndoOp,
 } from "./PersistentUndoHelper";
-import {HashMap, HashSet, Option} from "prelude-ts";
+import {HashMap, HashSet, Option, Vector} from "prelude-ts";
 import {ObjectValue} from "./helper/ObjectValue";
-import {match} from "ts-pattern";
+import {match, P} from "ts-pattern";
 import {AssertFailed} from "./helper/Assert";
 import {MemoizeInstance} from "./helper/Memoize";
 import {asType} from "./helper/Collection";
@@ -126,6 +126,8 @@ class Tree extends ObjectValue<{
         shareId: op.childShareId.getOrElse(streamId.shareId),
         nodeId: op.childNodeId,
       });
+
+      // Make the child if we don't have it.
       const child = Tree.nodeForNodeKey(this.roots, childKey).getOrCall(() =>
         Tree.createNode(
           this.roots,
@@ -135,7 +137,6 @@ class Tree extends ObjectValue<{
           op.childShareId,
         ),
       );
-      const internalOp = asType<SetChildInternal>({child, ...op});
 
       const parentKey = new NodeKey({
         shareId: streamId.shareId,
@@ -147,40 +148,51 @@ class Tree extends ObjectValue<{
         return this;
       }
 
-      const parentOpt = Tree.nodeForNodeKey(this.roots, parentKey);
-      const parentInTree = parentOpt.isSome();
-      const parent = parentOpt.getOrCall(() =>
-        Tree.createNode(
-          this.roots,
-          this.shareDataRoots,
-          streamId,
-          op.nodeId,
-          streamId.shareId.id === op.nodeId
-            ? Option.some(streamId.shareId)
-            : Option.none(),
-        ),
-      );
+      const {roots: roots1, parent} = match(
+        Tree.nodeForNodeKey(this.roots, parentKey).getOrUndefined(),
+      )
+        .with(undefined, () => {
+          const parent = Tree.createNode(
+            this.roots,
+            this.shareDataRoots,
+            streamId,
+            op.nodeId,
+            streamId.shareId.id === op.nodeId
+              ? Option.some(streamId.shareId)
+              : Option.none(),
+          );
+          return {roots: this.roots.put(parentKey, parent), parent};
+        })
+        .with(P.not(undefined), (node) => ({roots: this.roots, parent: node}))
+        .exhaustive();
 
-      const roots1 = mapValuesStable(this.roots, (root) =>
-        root.doOp(internalOp, streamId),
+      const roots2 = mapValuesStable(roots1, (root) =>
+        root.doOp({child, ...op}, streamId),
       );
-      const roots2 = !parentInTree
-        ? roots1.put(parentKey, parent.doOp(internalOp, streamId))
-        : roots1;
       if (roots2 === this.roots) return this;
 
-      const rootsWithoutNode = roots2.remove(childKey);
-      const shareDataRoots1 = child.shareData
-        ? this.shareDataRoots.remove(child.shareData.shareId)
-        : this.shareDataRoots;
-      const shareDataRoots2 = parent.shareData
-        ? shareDataRoots1.remove(parent.shareData.shareId)
-        : shareDataRoots1;
+      // Remove anything that used to be a root but is now included elsewhere in
+      // the tree.
       return this.copy({
-        roots: rootsWithoutNode,
-        shareDataRoots: shareDataRoots2,
+        roots: roots2.remove(childKey),
+        shareDataRoots: Vector.of(parent, child).foldLeft(
+          this.shareDataRoots,
+          (roots, node) =>
+            node.shareData ? roots.remove(node.shareData.shareId) : roots,
+        ),
       });
     } else if (op.type === "set writer" || op.type === "remove writer") {
+      const shareDataRoots1 = Tree.shareDataForShareId(
+        this.roots,
+        this.shareDataRoots,
+        streamId.shareId,
+      ).isSome()
+        ? this.shareDataRoots
+        : this.shareDataRoots.put(
+            streamId.shareId,
+            ShareData.create(streamId.shareId),
+          );
+
       const opInternal =
         op.type === "set writer"
           ? asType<SetWriterInternal>({
@@ -192,36 +204,18 @@ class Tree extends ObjectValue<{
               ).getOrCall(() => ShareData.create(op.writer)),
             })
           : op;
-      const {roots: roots1, shareDataRoots: shareDataRoots1} = match({
-        roots: this.roots,
-        shareDataRoots: this.shareDataRoots,
-        sharePresent: Tree.shareDataForShareId(
-          this.roots,
-          this.shareDataRoots,
-          streamId.shareId,
-        ).isSome(),
-      })
-        .with({sharePresent: true}, ({roots, shareDataRoots}) => ({
-          roots: mapValuesStable(roots, (root) =>
-            root.doOp(opInternal, streamId),
-          ),
-          shareDataRoots: mapValuesStable(shareDataRoots, (root) =>
-            root.doOp(opInternal, streamId),
-          ),
-        }))
-        .with({sharePresent: false}, ({roots, shareDataRoots}) => ({
-          roots: roots,
-          shareDataRoots: shareDataRoots.put(
-            streamId.shareId,
-            ShareData.create(streamId.shareId).doOp(opInternal, streamId),
-          ),
-        }))
-        .exhaustive();
-      if (roots1 === this.roots && shareDataRoots1 === this.shareDataRoots)
+      const roots1 = mapValuesStable(this.roots, (root) =>
+        root.doOp(opInternal, streamId),
+      );
+      const shareDataRoots2 = mapValuesStable(shareDataRoots1, (root) =>
+        root.doOp(opInternal, streamId),
+      );
+
+      if (roots1 === this.roots && shareDataRoots2 === this.shareDataRoots)
         return this;
       return this.copy({
         roots: roots1,
-        shareDataRoots: shareDataRoots1.remove(op.writer),
+        shareDataRoots: shareDataRoots2.remove(op.writer),
       });
     } else {
       throw new AssertFailed("unknown op type");
