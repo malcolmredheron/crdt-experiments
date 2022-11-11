@@ -3,7 +3,7 @@ import {expectIdentical, expectPreludeEqual} from "./Shared.testing";
 import {Vector} from "prelude-ts";
 
 describe("ObjectValue", () => {
-  let initedNames = Vector<string>.of();
+  let initedNames = Vector.of<string>();
 
   type NameProps = {first: string; last: string};
   class Name extends ObjectValue<NameProps>() {

@@ -31,7 +31,7 @@ describe("ControlledOpSet", () => {
       }),
       persistentUndoOp,
       (value) => HashMap.of([deviceA, "open"], [deviceB, "open"]),
-      Vector<string>.of(),
+      Vector.of<string>(),
     );
     const opA0 = LinkedList.of<AppliedOp["op"]>({
       token: "a0",

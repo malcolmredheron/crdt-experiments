@@ -16,7 +16,7 @@ export type PermissionedTree = ControlledOpSet<Tree, AppliedOp, DeviceId>;
 export function createPermissionedTree(
   ownerDeviceId: DeviceId,
 ): PermissionedTree {
-  return ControlledOpSet<Tree, AppliedOp, DeviceId>.create(
+  return ControlledOpSet.create<Tree, AppliedOp, DeviceId>(
     persistentDoOpFactory((value, op, deviceId) => value.doOp(op)),
     persistentUndoOp,
     (value) => value.desiredHeads(),

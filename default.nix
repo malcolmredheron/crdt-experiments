@@ -1,6 +1,6 @@
 # nixos-unstable. Find the current hash at https://status.nixos.org/.
 # Check https://nodejs.org/en/about/releases/ for the current npm release.
-{ nixpkgs ? import (fetchTarball "https://github.com/NixOS/nixpkgs/archive/ff8e8d4b4f7c934e16546beefce9e547b6b65d5c.tar.gz") {config.allowUnfree = true;}
+{ nixpkgs ? import (fetchTarball "https://github.com/NixOS/nixpkgs/archive/d01cb18be494e3d860fcfe6be4ad63614360333c.tar.gz") {config.allowUnfree = true;}
 }:
 
 let
@@ -8,7 +8,7 @@ let
     nixpkgs.docker
     nixpkgs.docker-compose
     nixpkgs.git
-    nixpkgs.nodejs-18_x
+    nixpkgs.nodejs-19_x
     nixpkgs.openssh
     nixpkgs.which
   ];

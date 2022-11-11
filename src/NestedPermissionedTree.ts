@@ -24,7 +24,7 @@ export function createPermissionedTree(
   shareId: ShareId,
 ): NestedPermissionedTree {
   const rootKey = new NodeKey({shareId: shareId, nodeId: shareId.id});
-  return ControlledOpSet<Tree, AppliedOp, StreamId>.create(
+  return ControlledOpSet.create<Tree, AppliedOp, StreamId>(
     persistentDoOpFactory((value, op, deviceId) => {
       return value.doOp(op, deviceId);
     }),

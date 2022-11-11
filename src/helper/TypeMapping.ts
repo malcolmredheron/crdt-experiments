@@ -1,6 +1,6 @@
 import {ReadonlyKeys, WritableKeys} from "ts-essentials";
 
-export type WritableProps<T> = Pick<T, WritableKeys<T>>;
+export type WritableProps<T extends object> = Pick<T, WritableKeys<T>>;
 export type ReadonlyProps<T extends object> = Pick<T, ReadonlyKeys<T>>;
 
 // Sadly, Typescript treats {} as an object that can contain any fields.

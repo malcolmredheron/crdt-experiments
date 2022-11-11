@@ -98,7 +98,7 @@ describe("NestedPermissionedTree.monkey", function () {
       seq: () => nextInSeq++,
     };
 
-    let devices = HashMap<DeviceId, NestedPermissionedTree>.ofIterable(
+    let devices = HashMap.ofIterable<DeviceId, NestedPermissionedTree>(
       Array.from(Array(4).keys()).map((index) => {
         const deviceId = DeviceId.create(`device${index}`);
         const shareId = new ShareId({creator: deviceId, id: rootNodeId});

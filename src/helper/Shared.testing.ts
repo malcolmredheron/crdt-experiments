@@ -47,7 +47,9 @@ export function expectIdenticalMismatches<T>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mismatches: any = {};
 
-  if (typeof actual === "string" && typeof expected === "string") {
+  if (typeof actual !== typeof expected) {
+    return {actual, expected};
+  } else if (typeof actual === "string" && typeof expected === "string") {
     return {actual, expected};
   } else if (typeof actual === "number" && typeof expected === "number") {
     return {actual, expected};
@@ -86,7 +88,9 @@ export function expectIdenticalMismatches<T>(
       mismatches[key] = childMismatches;
     }
   } else {
+    // @ts-ignore We think that we have an object or array by now
     const actualMap = HashMap.ofIterable(Object.entries(actual));
+    // @ts-ignore We think that we have an object or array by now
     const expectedMap = HashMap.ofIterable(Object.entries(expected));
     const keys = actualMap.keySet().addAll(expectedMap.keySet());
     for (const key of keys) {
