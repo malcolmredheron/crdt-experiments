@@ -7,8 +7,8 @@ import {
   NestedPermissionedTree,
   NodeId,
   NodeKey,
-  ShareData,
-  SharedNode,
+  UpNode,
+  DownNode,
   ShareId,
   StreamId,
 } from "./NestedPermissionedTree";
@@ -194,7 +194,7 @@ describe("NestedPermissionedTree.monkey", function () {
       (device, tree) => [device, tree.update(localHeadsForEachDevice)],
     );
     const referenceSharedNodes = devices1.foldLeft(
-      HashMap.of<ShareId, SharedNode & {shareData: ShareData}>(),
+      HashMap.of<ShareId, DownNode & {shareData: UpNode}>(),
       (refs, [, tree]) =>
         refs.mergeWith(
           shareRoots(tree.value.root()),
@@ -205,7 +205,7 @@ describe("NestedPermissionedTree.monkey", function () {
     // fun. (The creator is already a writer, hence `> 0`.)
     expectIdentical(
       referenceSharedNodes
-        .filterValues((node) => node.shareData.writers.length() > 0)
+        .filterValues((node) => node.shareData.parents.length() > 0)
         .length() > 1,
       true,
     );
@@ -253,7 +253,7 @@ function opForOpType(
     .map((streamId) => streamId.shareId);
   if (shareIds.isEmpty()) return Option.none();
   const shareId = randomInArray(rand, shareIds.toArray());
-  const sharedNode = tree.value.nodeForNodeKey(
+  const sharedNode = tree.value.downNodeForNodeId(
     new NodeKey({shareId, nodeId: shareId.id}),
   );
   if (sharedNode.isNone()) return Option.none();
@@ -421,7 +421,7 @@ function applyNewOp(
   return tree.update(heads1);
 }
 
-function nodesWithSameShareId(node: SharedNode): HashMap<NodeId, SharedNode> {
+function nodesWithSameShareId(node: DownNode): HashMap<NodeId, DownNode> {
   return node.children.foldLeft(
     HashMap.of([node.id, node]),
     (nodes, [, info]) => {
@@ -435,11 +435,11 @@ function nodesWithSameShareId(node: SharedNode): HashMap<NodeId, SharedNode> {
 }
 
 function shareRoots(
-  node: SharedNode,
-): HashMap<ShareId, SharedNode & {shareData: ShareData}> {
+  node: DownNode,
+): HashMap<ShareId, DownNode & {shareData: UpNode}> {
   return node.children.foldLeft(
     node.shareData
-      ? HashMap.of([node.shareId, node as SharedNode & {shareData: ShareData}])
+      ? HashMap.of([node.shareId, node as DownNode & {shareData: UpNode}])
       : HashMap.of(),
     (roots, [, info]) => {
       return shareRoots(info.child).foldLeft(
@@ -450,7 +450,7 @@ function shareRoots(
   );
 }
 
-function numNodes(node: SharedNode): number {
+function numNodes(node: DownNode): number {
   return (
     1 + node.children.foldLeft(0, (num, [, {child}]) => num + numNodes(child))
   );

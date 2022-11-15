@@ -1,27 +1,95 @@
 import {
-  AppliedOp,
   createPermissionedTree,
   DeviceId,
+  EdgeId,
   NodeId,
-  NodeKey,
-  ShareData,
-  SharedNode,
-  ShareId,
+  Rank,
   StreamId,
-  WriterInfo,
 } from "./NestedPermissionedTree";
+import {expectIdentical, expectPreludeEqual} from "./helper/Shared.testing";
+import {HashMap} from "prelude-ts";
 import {CountingClock} from "./helper/Clock.testing";
-import {
-  expectDeepEqual,
-  expectIdentical,
-  expectPreludeEqual,
-} from "./helper/Shared.testing";
-import {ConsLinkedList, HashMap, LinkedList, Option} from "prelude-ts";
-import {expect} from "chai";
-import {asType} from "./helper/Collection";
-import {OpList} from "./ControlledOpSet";
 
 describe("NestedPermissionedTree", () => {
+  it("starts with desired heads for the root node", () => {
+    const deviceId = DeviceId.create("device");
+    const tree = createPermissionedTree(deviceId);
+    expectPreludeEqual(
+      tree.desiredHeads(tree.value),
+      HashMap.of(
+        [
+          new StreamId({deviceId, nodeId: tree.value.rootNodeId, type: "up"}),
+          "open" as const,
+        ],
+        [
+          new StreamId({deviceId, nodeId: tree.value.rootNodeId, type: "down"}),
+          "open" as const,
+        ],
+      ),
+    );
+  });
+
+  it("creates UpNodes for an up-streamed operation", () => {
+    const clock = new CountingClock();
+    const deviceId = DeviceId.create("device");
+    const tree = createPermissionedTree(deviceId);
+    const parentId = new NodeId({creator: deviceId, rest: "parent"});
+    const childId = new NodeId({creator: deviceId, rest: "child"});
+    const tree1 = tree.updateWithOneOp(
+      {
+        timestamp: clock.now(),
+        type: "set edge",
+        edgeId: EdgeId.create("edge"),
+        parentId: parentId,
+        childId: childId,
+        rank: Rank.create(0),
+        streams: HashMap.of(),
+      },
+      new StreamId({deviceId, nodeId: childId, type: "up"}),
+    );
+    const edge = tree1.value.upRoots
+      .get(childId)
+      .getOrThrow()
+      .parents.get(EdgeId.create("edge"))
+      .getOrThrow();
+    expectPreludeEqual(edge.parent.nodeId, parentId);
+    expectIdentical(tree1.value.upRoots.get(parentId).isNone(), true);
+  });
+
+  it("does not create DownNodes for a down-streamed operation without a matching up-streamed operation", () => {
+    const clock = new CountingClock();
+    const deviceId = DeviceId.create("device");
+    const tree = createPermissionedTree(deviceId);
+    const parentId = new NodeId({creator: deviceId, rest: "parent"});
+    const childId = new NodeId({creator: deviceId, rest: "child"});
+    const tree1 = tree.updateWithOneOp(
+      {
+        timestamp: clock.now(),
+        type: "set edge",
+        edgeId: EdgeId.create("edge"),
+        parentId: parentId,
+        childId: childId,
+        rank: Rank.create(0),
+        streams: HashMap.of(),
+      },
+      new StreamId({deviceId, nodeId: parentId, type: "down"}),
+    );
+    // The down edge should not have been created because the up-child does not
+    // list the parent, which is because we didn't provide the op in the right
+    // up stream.
+    expectIdentical(
+      tree1.value.downRoots
+        .get(parentId)
+        .getOrThrow()
+        .children.get(childId)
+        .isNone(),
+      true,
+    );
+  });
+});
+
+/*
+describe("NestedPermissionedTree old", () => {
   const clock = new CountingClock();
   const deviceA = DeviceId.create("A");
   const deviceB = DeviceId.create("B");
@@ -123,8 +191,8 @@ describe("NestedPermissionedTree", () => {
           .getOrThrow()
           .shareData!.writers.get(shareIdOther)
           .getOrUndefined(),
-        new WriterInfo({
-          shareData: ShareData.create(shareIdOther),
+        new Edge({
+          shareData: UpNode.create(shareIdOther),
         }),
       );
     });
@@ -239,22 +307,19 @@ describe("NestedPermissionedTree", () => {
           ],
         ),
       );
-      expectIdentical(tree.value.shareDataForShareId(shareId).isSome(), true);
+      expectIdentical(tree.value.upNodeForNodeId(shareId).isSome(), true);
       expectIdentical(tree.value.shareDataRoots.containsKey(shareId), false);
-      expectIdentical(
-        tree.value.shareDataForShareId(shareIdOther).isSome(),
-        true,
-      );
+      expectIdentical(tree.value.upNodeForNodeId(shareIdOther).isSome(), true);
       expectIdentical(
         tree.value.shareDataRoots.containsKey(shareIdOther),
         false,
       );
       expectPreludeEqual(
-        tree.value.shareDataForShareId(shareId).getOrThrow(),
+        tree.value.upNodeForNodeId(shareId).getOrThrow(),
         tree.value
-          .shareDataForShareId(shareIdOther)
+          .upNodeForNodeId(shareIdOther)
           .getOrThrow()
-          .writers.get(shareId)
+          .parents.get(shareId)
           .getOrThrow().shareData,
       );
     });
@@ -367,9 +432,9 @@ describe("NestedPermissionedTree", () => {
       // ... but it should still have been updated.
       expectIdentical(
         tree.value
-          .shareDataForShareId(shareIdOther)
+          .upNodeForNodeId(shareIdOther)
           .getOrThrow()
-          .writers.containsKey(shareIdOther2),
+          .parents.containsKey(shareIdOther2),
         true,
       );
     });
@@ -388,7 +453,7 @@ describe("NestedPermissionedTree", () => {
         type: "remove writer",
 
         writer: shareIdOther,
-        statuses: HashMap.of(),
+        streams: HashMap.of(),
       });
       const tree1 = tree.update(
         HashMap.of(
@@ -421,7 +486,7 @@ describe("NestedPermissionedTree", () => {
         type: "remove writer",
 
         writer: shareIdOther,
-        statuses: HashMap.of([deviceBSharedNodeStream, opsList(deviceBOp0)]),
+        streams: HashMap.of([deviceBSharedNodeStream, opsList(deviceBOp0)]),
       } as AppliedOp["op"];
       const tree1 = tree.update(
         HashMap.of(
@@ -454,7 +519,7 @@ describe("NestedPermissionedTree", () => {
         type: "remove writer",
 
         writer: shareIdOther,
-        statuses: HashMap.of([deviceBSharedNodeStream, opsList(deviceBOp0)]),
+        streams: HashMap.of([deviceBSharedNodeStream, opsList(deviceBOp0)]),
       } as AppliedOp["op"];
       const deviceAOp2 = openWriterOp(shareIdOther, -1);
       const tree1 = tree.update(
@@ -489,10 +554,10 @@ describe("NestedPermissionedTree", () => {
         tree.value.roots,
         HashMap.of([
           rootKey,
-          new SharedNode({
+          new DownNode({
             id: shareId.id,
             shareId,
-            shareData: new ShareData({
+            shareData: new UpNode({
               shareId,
               writers: HashMap.of(),
               closedWriterDevicesForShareData: HashMap.of(),
@@ -835,18 +900,18 @@ describe("NestedPermissionedTree", () => {
       expectIdentical(
         tree1.value
           .root()
-          .nodeForNodeKey(new NodeKey({shareId: shareA, nodeId: shareA.id}))
+          .downNodeForNodeId(new NodeKey({shareId: shareA, nodeId: shareA.id}))
           .getOrThrow()
-          .nodeForNodeKey(new NodeKey({shareId: shareC, nodeId: shareC.id}))
+          .downNodeForNodeId(new NodeKey({shareId: shareC, nodeId: shareC.id}))
           .isSome(),
         true,
       );
       expectIdentical(
         tree1.value
           .root()
-          .nodeForNodeKey(new NodeKey({shareId: shareB, nodeId: shareB.id}))
+          .downNodeForNodeId(new NodeKey({shareId: shareB, nodeId: shareB.id}))
           .getOrThrow()
-          .nodeForNodeKey(new NodeKey({shareId: shareC, nodeId: shareC.id}))
+          .downNodeForNodeId(new NodeKey({shareId: shareC, nodeId: shareC.id}))
           .isSome(),
         true,
       );
@@ -942,3 +1007,4 @@ function desiredHeads(
     ),
   );
 }
+*/
