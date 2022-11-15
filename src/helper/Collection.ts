@@ -1,4 +1,5 @@
 import {AssertFailed} from "./Assert";
+import {HashMap} from "prelude-ts";
 
 export function asType<T>(value: T): T {
   return value;
@@ -46,4 +47,19 @@ export function transformedValue<T>(
 // calling it in the same expression.
 export function transformedOnce<T, U>(value: T, func: (value: T) => U): U {
   return func(value);
+}
+
+// Maps the values in the map, returning a new value only if func returned a
+// different value for at least one of the entries.
+export function mapValuesStable<K, V>(
+  map: HashMap<K, V>,
+  func: (v: V) => V,
+): HashMap<K, V> {
+  let changed = false;
+  const map1 = map.mapValues((v) => {
+    const v1 = func(v);
+    if (v1 !== v) changed = true;
+    return v1;
+  });
+  return changed ? map1 : map;
 }
