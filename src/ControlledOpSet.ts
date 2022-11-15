@@ -127,6 +127,31 @@ export class ControlledOpSet<
     return this1.update(remoteHeads);
   }
 
+  // This should only be used for testing. It doesn't ensure that ops are
+  // applied in order. However, it is sometimes useful to force ops into an
+  // opset in a test without having to arrange for the opset to subscribe to
+  // various streams.
+  updateWithOneOp(
+    op: AppliedOp["op"],
+    deviceId: DeviceId,
+  ): ControlledOpSet<Value, AppliedOp, DeviceId> {
+    const xxx = this.doOp(this.value, op, deviceId);
+    const heads1 = this.heads
+      .get(deviceId)
+      .map((head) => this.heads.put(deviceId, head.prepend(xxx.appliedOp.op)))
+      .getOrCall(() =>
+        this.heads.put(deviceId, LinkedList.of(xxx.appliedOp.op)),
+      );
+    return new ControlledOpSet(
+      this.doOp,
+      this.undoOp,
+      this.desiredHeads,
+      xxx.value,
+      this.appliedOps.prepend(xxx.appliedOp),
+      heads1,
+    );
+  }
+
   private static commonStateAndDesiredOps<
     Value,
     AppliedOp extends AppliedOpBase,
