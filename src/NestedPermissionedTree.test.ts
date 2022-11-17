@@ -1,4 +1,5 @@
 import {
+  AppliedOp,
   createPermissionedTree,
   DeviceId,
   EdgeId,
@@ -7,13 +8,26 @@ import {
   StreamId,
 } from "./NestedPermissionedTree";
 import {expectIdentical, expectPreludeEqual} from "./helper/Shared.testing";
-import {HashMap} from "prelude-ts";
+import {HashMap, HashSet} from "prelude-ts";
 import {CountingClock} from "./helper/Clock.testing";
 
 describe("NestedPermissionedTree", () => {
-  it("starts with desired heads for the root node", () => {
-    const deviceId = DeviceId.create("device");
-    const tree = createPermissionedTree(deviceId);
+  const clock = new CountingClock();
+  const deviceId = DeviceId.create("device");
+  const tree = createPermissionedTree(deviceId);
+  const parentId = new NodeId({creator: deviceId, rest: "parent"});
+  const childId = new NodeId({creator: deviceId, rest: "child"});
+  const op: AppliedOp["op"] = {
+    timestamp: clock.now(),
+    type: "set edge",
+    edgeId: EdgeId.create("edge"),
+    parentId: parentId,
+    childId: childId,
+    rank: Rank.create(0),
+    streams: HashMap.of(),
+  };
+
+  it("has desired heads for the root node", () => {
     expectPreludeEqual(
       tree.desiredHeads(tree.value),
       HashMap.of(
@@ -29,26 +43,18 @@ describe("NestedPermissionedTree", () => {
     );
   });
 
-  it("creates UpNodes for an up-streamed operation", () => {
-    const clock = new CountingClock();
-    const deviceId = DeviceId.create("device");
-    const tree = createPermissionedTree(deviceId);
-    const parentId = new NodeId({creator: deviceId, rest: "parent"});
-    const childId = new NodeId({creator: deviceId, rest: "child"});
+  it("creates UpNodes and edges for an up-streamed operation", () => {
     const tree1 = tree.updateWithOneOp(
-      {
-        timestamp: clock.now(),
-        type: "set edge",
-        edgeId: EdgeId.create("edge"),
-        parentId: parentId,
-        childId: childId,
-        rank: Rank.create(0),
-        streams: HashMap.of(),
-      },
-      new StreamId({deviceId, nodeId: childId, type: "up"}),
+      op,
+      HashSet.of(new StreamId({deviceId, nodeId: childId, type: "up"})),
     );
-    const edge = tree1.value.upRoots
-      .get(childId)
+    expectPreludeEqual(tree1.value.upRoots.keySet(), HashSet.of(childId));
+    expectPreludeEqual(
+      tree1.value.downRoots.keySet(),
+      HashSet.of(tree1.value.rootNodeId),
+    );
+    const edge = tree1.value
+      .upNodeForNodeId(childId)
       .getOrThrow()
       .parents.get(EdgeId.create("edge"))
       .getOrThrow();
@@ -57,32 +63,58 @@ describe("NestedPermissionedTree", () => {
   });
 
   it("does not create DownNodes for a down-streamed operation without a matching up-streamed operation", () => {
-    const clock = new CountingClock();
-    const deviceId = DeviceId.create("device");
-    const tree = createPermissionedTree(deviceId);
-    const parentId = new NodeId({creator: deviceId, rest: "parent"});
-    const childId = new NodeId({creator: deviceId, rest: "child"});
     const tree1 = tree.updateWithOneOp(
-      {
-        timestamp: clock.now(),
-        type: "set edge",
-        edgeId: EdgeId.create("edge"),
-        parentId: parentId,
-        childId: childId,
-        rank: Rank.create(0),
-        streams: HashMap.of(),
-      },
-      new StreamId({deviceId, nodeId: parentId, type: "down"}),
+      op,
+      HashSet.of(new StreamId({deviceId, nodeId: parentId, type: "down"})),
     );
+
     // The down edge should not have been created because the up-child does not
     // list the parent, which is because we didn't provide the op in the right
     // up stream.
+    expectPreludeEqual(tree1.value.upRoots.keySet(), HashSet.of());
+    expectPreludeEqual(
+      tree1.value.downRoots.keySet(),
+      HashSet.of(tree1.value.rootNodeId, parentId, childId),
+    );
+    expectIdentical(
+      tree1.value
+        .downNodeForNodeId(parentId)
+        .getOrThrow()
+        .children.get(childId)
+        .isNone(),
+      true,
+    );
+  });
+
+  it("creates up and down nodes and edges when the op is in both streams", () => {
+    const tree1 = tree.updateWithOneOp(
+      op,
+      HashSet.of(
+        new StreamId({deviceId, nodeId: parentId, type: "down"}),
+        new StreamId({deviceId, nodeId: childId, type: "up"}),
+      ),
+    );
+
+    expectPreludeEqual(tree1.value.upRoots.keySet(), HashSet.of());
+    expectPreludeEqual(
+      tree1.value.downRoots.keySet(),
+      HashSet.of(tree1.value.rootNodeId, parentId),
+    );
+
+    const edge = tree1.value
+      .upNodeForNodeId(childId)
+      .getOrThrow()
+      .parents.get(EdgeId.create("edge"))
+      .getOrThrow();
+    expectPreludeEqual(edge.parent.nodeId, parentId);
+    expectIdentical(tree1.value.upRoots.get(parentId).isNone(), true);
+
     expectIdentical(
       tree1.value.downRoots
         .get(parentId)
         .getOrThrow()
         .children.get(childId)
-        .isNone(),
+        .isSome(),
       true,
     );
   });

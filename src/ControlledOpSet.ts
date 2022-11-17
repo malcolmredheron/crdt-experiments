@@ -1,9 +1,10 @@
 import {Timestamp} from "./helper/Timestamp";
-import {asType} from "./helper/Collection";
+import {asType, throwError} from "./helper/Collection";
 import {AssertFailed} from "./helper/Assert";
 import {
   ConsLinkedList,
   HashMap,
+  HashSet,
   LinkedList,
   Option,
   WithEquality,
@@ -29,7 +30,7 @@ export type DoOp<
   op: AppliedOp["op"],
   // This is the id of the stream that published the operation that we are now
   // doing.
-  streamId: StreamId,
+  streamIds: HashSet<StreamId>,
 ) => {
   value: Value;
   appliedOp: AppliedOp;
@@ -111,8 +112,8 @@ export class ControlledOpSet<
 
     const {value: appState1, appliedOps: appliedOps1} = ops.foldLeft(
       {value, appliedOps},
-      ({value, appliedOps}, {op, streamId}) =>
-        ControlledOpSet.doOnce(this.doOp, value, appliedOps, op, streamId),
+      ({value, appliedOps}, {op, streamIds}) =>
+        ControlledOpSet.doOnce(this.doOp, value, appliedOps, op, streamIds),
     );
     const this1 = new ControlledOpSet(
       this.doOp,
@@ -133,21 +134,21 @@ export class ControlledOpSet<
   // various streams.
   updateWithOneOp(
     op: AppliedOp["op"],
-    streamId: StreamId,
+    streamIds: HashSet<StreamId>,
   ): ControlledOpSet<Value, AppliedOp, StreamId> {
-    const xxx = this.doOp(this.value, op, streamId);
-    const heads1 = this.heads
-      .get(streamId)
-      .map((head) => this.heads.put(streamId, head.prepend(xxx.appliedOp.op)))
-      .getOrCall(() =>
-        this.heads.put(streamId, LinkedList.of(xxx.appliedOp.op)),
-      );
+    const {value: value1, appliedOp} = this.doOp(this.value, op, streamIds);
+    const heads1 = streamIds.foldLeft(this.heads, (heads, streamId) =>
+      heads
+        .get(streamId)
+        .map((head) => this.heads.put(streamId, head.prepend(appliedOp.op)))
+        .getOrCall(() => this.heads.put(streamId, LinkedList.of(appliedOp.op))),
+    );
     return new ControlledOpSet(
       this.doOp,
       this.undoOp,
       this.desiredHeads,
-      xxx.value,
-      this.appliedOps.prepend(xxx.appliedOp),
+      value1,
+      this.appliedOps.prepend(appliedOp),
       heads1,
     );
   }
@@ -165,10 +166,12 @@ export class ControlledOpSet<
   ): {
     value: Value;
     appliedOps: LinkedList<AppliedOp>;
-    ops: Seq<{op: AppliedOp["op"]; streamId: StreamId}>;
+    ops: Seq<{op: AppliedOp["op"]; streamIds: HashSet<StreamId>}>;
   } {
     let ops =
-      LinkedList.of<Readonly<{op: AppliedOp["op"]; streamId: StreamId}>>();
+      LinkedList.of<
+        Readonly<{op: AppliedOp["op"]; streamIds: HashSet<StreamId>}>
+      >();
 
     while (!ControlledOpSet.headsEqual(desiredHeads, actualHeads)) {
       const desired = ControlledOpSet.undoHeadsOnce(desiredHeads);
@@ -179,9 +182,9 @@ export class ControlledOpSet<
         (actual.isNone() ||
           desired.get().op.timestamp > actual.get().op.timestamp)
       ) {
-        const {heads, op, streamId} = desired.get();
+        const {heads, op, streamIds} = desired.get();
         desiredHeads = heads;
-        ops = ops.prepend({op, streamId});
+        ops = ops.prepend({op, streamIds});
       } else if (
         actual.isSome() &&
         (desired.isNone() ||
@@ -199,9 +202,9 @@ export class ControlledOpSet<
         actual.isSome() &&
         desired.get().op.timestamp === actual.get().op.timestamp
       ) {
-        const {heads: desiredHeads1, op, streamId} = desired.get();
+        const {heads: desiredHeads1, op, streamIds} = desired.get();
         desiredHeads = desiredHeads1;
-        ops = ops.prepend({op, streamId});
+        ops = ops.prepend({op, streamIds});
         actualHeads = actual.get().heads;
         ({value, appliedOps} = ControlledOpSet.undoOnce(
           undoOp,
@@ -244,26 +247,52 @@ export class ControlledOpSet<
     heads: HashMap<StreamId, OpList<AppliedOp>>,
   ): Option<{
     op: AppliedOp["op"];
-    streamId: StreamId;
+    streamIds: HashSet<StreamId>;
     heads: HashMap<StreamId, OpList<AppliedOp>>;
   }> {
     if (heads.isEmpty()) return Option.none();
 
-    const newestStreamAndOpList = heads.reduce((winner, current) => {
-      return winner[1].head().get().timestamp >
-        current[1].head().get().timestamp
+    const newestStreamAndOpList = heads.foldLeft<
+      Option<{
+        op: AppliedOp["op"];
+        streamIds: HashSet<StreamId>;
+      }>
+    >(Option.none(), (winner, current) => {
+      return winner.isNone()
+        ? Option.some({
+            op: current[1].head().get(),
+            streamIds: HashSet.of(current[0]),
+          })
+        : winner.get().op.timestamp > current[1].head().get().timestamp
         ? winner
-        : current;
+        : winner.get().op === current[1].head().get()
+        ? Option.some({
+            op: winner.get().op,
+            streamIds: winner.get().streamIds.add(current[0]),
+          })
+        : winner.get().op.timestamp === current[1].head().get().timestamp
+        ? throwError("If ops have the same timestamp, they must be identical")
+        : Option.some({
+            op: current[1].head().get(),
+            streamIds: HashSet.of(current[0]),
+          });
     });
-    if (Option.isNone(newestStreamAndOpList)) return Option.none();
-    const [newestStreamId, newestOpList] = newestStreamAndOpList.get();
-    const heads1 = newestOpList.tail().getOrElse(LinkedList.of());
+    if (newestStreamAndOpList.isNone()) return Option.none();
+    const {op, streamIds} = newestStreamAndOpList.get();
+    const heads1 = streamIds.foldLeft(heads, (heads, streamId) => {
+      const head1 = heads
+        .get(streamId)
+        .getOrThrow()
+        .tail()
+        .getOrElse(LinkedList.of());
+      return LinkedList.isNotEmpty(head1)
+        ? heads.put(streamId, head1)
+        : heads.remove(streamId);
+    });
     return Option.some({
-      op: newestOpList.head().get(),
-      streamId: newestStreamId,
-      heads: LinkedList.isNotEmpty(heads1)
-        ? heads.put(newestStreamId, heads1)
-        : heads.remove(newestStreamId),
+      op,
+      streamIds,
+      heads: heads1,
     });
   }
 
@@ -276,9 +305,9 @@ export class ControlledOpSet<
     value: Value,
     appliedOps: LinkedList<AppliedOp>,
     op: AppliedOp["op"],
-    streamId: StreamId,
+    streamIds: HashSet<StreamId>,
   ): {value: Value; appliedOps: LinkedList<AppliedOp>} {
-    const {value: appState1, appliedOp} = doOp(value, op, streamId);
+    const {value: appState1, appliedOp} = doOp(value, op, streamIds);
     return {
       value: appState1,
       appliedOps: appliedOps.prepend(appliedOp),

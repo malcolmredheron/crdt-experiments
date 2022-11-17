@@ -10,7 +10,7 @@ import {HashMap, HashSet, Option, Vector} from "prelude-ts";
 import {ObjectValue} from "./helper/ObjectValue";
 import {AssertFailed} from "./helper/Assert";
 import {MemoizeInstance} from "./helper/Memoize";
-import {mapValuesStable} from "./helper/Collection";
+import {asType, mapValuesStable} from "./helper/Collection";
 
 // This really shouldn't be here, but ...
 import {expectPreludeEqual} from "./helper/Shared.testing";
@@ -25,8 +25,8 @@ export function createPermissionedTree(
 ): NestedPermissionedTree {
   const rootNodeId = new NodeId({creator: deviceId, rest: undefined});
   return ControlledOpSet.create<Tree, AppliedOp, StreamId>(
-    persistentDoOpFactory((value, op, deviceId) => {
-      return value.doOp(op, deviceId);
+    persistentDoOpFactory((value, op, streamIds) => {
+      return value.doOp(op, streamIds);
     }),
     persistentUndoOp,
     (value) => value.desiredHeads(),
@@ -98,77 +98,88 @@ class Tree extends ObjectValue<TreeProps>() {
     this.assertRootsConsistent();
   }
 
-  doOp(op: AppliedOp["op"], streamId: StreamId): this {
-    if (streamId.type === "up" && streamId.nodeId.equals(op.childId)) {
-      const {upRoots: upRoots1, node: upParent} =
-        Tree.getOrCreateUpNodeForNodeId(
-          this.upRoots,
+  doOp(op: AppliedOp["op"], streamIds: HashSet<StreamId>): this {
+    const up = streamIds.anyMatch(
+      (streamId) =>
+        streamId.type === "up" && streamId.nodeId.equals(op.childId),
+    );
+    const down = streamIds.anyMatch(
+      (streamId) =>
+        streamId.type === "down" && streamId.nodeId.equals(op.parentId),
+    );
+
+    const {upRoots: upRoots1, upParent} = match({up})
+      .with({up: true}, () => {
+        const {upRoots: upRoots1, node: upParent} =
+          Tree.getOrCreateUpNodeForNodeId(
+            this.upRoots,
+            this.downRoots,
+            op.parentId,
+          );
+        const {upRoots: upRoots2} = Tree.getOrCreateUpNodeForNodeId(
+          upRoots1,
+          this.downRoots,
+          op.childId,
+        );
+        return {upRoots: upRoots2, upParent: Option.some(upParent)};
+      })
+      .with({up: false}, () => ({
+        upRoots: this.upRoots,
+        upParent: Option.none<UpNode>(),
+      }))
+      .exhaustive();
+
+    if (
+      upParent.isSome() &&
+      upParent.get().upNodeForNodeId(op.childId).isSome()
+    ) {
+      // Avoid creating a cycle.
+      return this;
+    }
+
+    const {downRoots: downRoots1, downChild} = match({down})
+      .with({down: true}, () => {
+        const {downRoots: downRoots1} = Tree.getOrCreateDownNodeForNodeId(
+          upRoots1,
           this.downRoots,
           op.parentId,
         );
-      if (upParent.upNodeForNodeId(op.childId).isSome()) {
-        // Avoid creating a cycle.
-        return this;
-      }
-      const {upRoots: upRoots2} = Tree.getOrCreateUpNodeForNodeId(
-        upRoots1,
-        this.downRoots,
-        op.childId,
-      );
+        const {downRoots: downRoots2, node: downChild} =
+          Tree.getOrCreateDownNodeForNodeId(upRoots1, downRoots1, op.childId);
+        return {downRoots: downRoots2, downChild: Option.some(downChild)};
+      })
+      .with({down: false}, () => ({
+        downRoots: this.downRoots,
+        downChild: Option.none<DownNode>(),
+      }))
+      .exhaustive();
 
-      const upRoots3 = mapValuesStable(upRoots2, (root) =>
-        root.doOp({
-          child: Option.none(),
-          parent: Option.of(upParent),
-          ...op,
-        }),
-      );
-      if (upRoots3 === this.upRoots) return this;
+    const internalOp = asType<InternalOp>({
+      parent: upParent,
+      child: downChild,
+      ...op,
+    });
+    const upRoots2 = mapValuesStable(upRoots1, (root) => root.doOp(internalOp));
+    const downRoots2 = mapValuesStable(downRoots1, (root) =>
+      root.doOp(internalOp),
+    );
+    if (upRoots2 === this.upRoots && downRoots2 === this.downRoots) return this;
 
-      // Remove anything that used to be a root but is now included elsewhere in
-      // the tree.
-      const upRoots4 = Vector.of(op.parentId, op.childId).foldLeft(
-        upRoots3,
-        (upRoots, nodeId) =>
-          Tree.cleanedUpRoots(upRoots, this.downRoots, nodeId),
-      );
+    // Remove anything that used to be a root but is now included elsewhere in
+    // the tree.
+    const upRoots3 = Vector.of(op.parentId, op.childId).foldLeft(
+      upRoots2,
+      (upRoots, nodeId) => Tree.cleanedUpRoots(upRoots, downRoots2, nodeId),
+    );
+    const downRoots3 = Vector.of(op.parentId, op.childId).foldLeft(
+      downRoots2,
+      (downRoots, nodeId) => Tree.cleanedDownRoots(downRoots, nodeId),
+    );
 
-      return this.copy({
-        upRoots: upRoots4,
-      });
-    }
-
-    if (streamId.type === "down" && streamId.nodeId.equals(op.parentId)) {
-      const {downRoots: downRoots1} = Tree.getOrCreateDownNodeForNodeId(
-        this.upRoots,
-        this.downRoots,
-        op.parentId,
-      );
-      const {downRoots: downRoots2, node: downChild} =
-        Tree.getOrCreateDownNodeForNodeId(this.upRoots, downRoots1, op.childId);
-
-      const downRoots3 = mapValuesStable(downRoots2, (root) =>
-        root.doOp({
-          child: Option.of(downChild),
-          parent: Option.none(),
-          ...op,
-        }),
-      );
-      if (downRoots3 === this.downRoots) return this;
-
-      // Remove anything that used to be a root but is now included elsewhere in
-      // the tree.
-      const downRoots4 = Vector.of(op.parentId, op.childId).foldLeft(
-        downRoots3,
-        (downRoots, nodeId) => Tree.cleanedDownRoots(downRoots, nodeId),
-      );
-
-      return this.copy({
-        downRoots: downRoots4,
-      });
-    }
-
-    return this;
+    return this.copy({
+      upRoots: upRoots3,
+      downRoots: downRoots3,
+    });
   }
 
   assertRootsConsistent(): void {
@@ -498,11 +509,8 @@ export class DownNode extends ObjectValue<{
 
     const upNode1 = this.upNode.doOp(op);
 
-    const childShouldBeOurs = op.child
-      .get()
-      .upNode.parents.get(op.edgeId)
-      .map((edge) => edge.parent.nodeId === this.upNode.nodeId)
-      .getOrElse(false);
+    const childShouldBeOurs =
+      op.parentId.equals(this.upNode.nodeId) && op.parent.isSome();
     const childIsOurs = this.children.get(op.childId).isSome();
     const children1 = match({
       op,
@@ -514,20 +522,17 @@ export class DownNode extends ObjectValue<{
       .with(
         {childIsOurs: false, childShouldBeOurs: true},
         ({op, id, children}) => {
-          if (op.child === undefined)
-            throw new AssertFailed("child must be defined");
-          return children.put(id, op.child.getOrThrow());
+          return children.put(op.childId, op.child.getOrThrow());
         },
       )
       .with({childIsOurs: true, childShouldBeOurs: false}, ({op, children}) =>
         children.remove(op.childId),
       )
-      .otherwise(({children}) =>
-        mapValuesStable(children, (child) => child.doOp(op)),
-      );
+      .otherwise(({children}) => children);
+    const children2 = mapValuesStable(children1, (child) => child.doOp(op));
 
     if (upNode1 == this.upNode && children1 === this.children) return this;
-    return this.copy({upNode: upNode1, children: children1});
+    return this.copy({upNode: upNode1, children: children2});
   }
 
   @MemoizeInstance

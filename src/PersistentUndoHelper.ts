@@ -1,5 +1,5 @@
 import {DoOp, OpBase} from "./ControlledOpSet";
-import {WithEquality} from "prelude-ts";
+import {HashSet, WithEquality} from "prelude-ts";
 
 // If you use ControlledOpSet with a value that is entirely readonly/persistent
 // then this will keep prior values around and relieve you of writing undoOp
@@ -13,12 +13,12 @@ export type PersistentAppliedOp<Value, Op extends OpBase> = Readonly<{
 export function persistentDoOpFactory<
   Value,
   Op extends OpBase,
-  DeviceId extends WithEquality,
+  StreamId extends WithEquality,
 >(
-  doOp: (value: Value, op: Op, deviceId: DeviceId) => Value,
-): DoOp<Value, PersistentAppliedOp<Value, Op>, DeviceId> {
-  return (value, op, deviceId) => ({
-    value: doOp(value, op, deviceId),
+  doOp: (value: Value, op: Op, streamIds: HashSet<StreamId>) => Value,
+): DoOp<Value, PersistentAppliedOp<Value, Op>, StreamId> {
+  return (value, op, streamIds) => ({
+    value: doOp(value, op, streamIds),
     appliedOp: {op, undoInfo: value},
   });
 }

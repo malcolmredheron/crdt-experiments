@@ -26,8 +26,14 @@ describe("ControlledOpSet", () => {
 
     const clock = new CountingClock();
     const cos = ControlledOpSet.create<Value, AppliedOp, StreamId>(
-      persistentDoOpFactory((value, op, streamId) => {
-        return value.append(`${streamId}.${op.token}`);
+      persistentDoOpFactory((value, op, streamIds) => {
+        return value.append(
+          `${streamIds
+            .toArray()
+            .map((x) => "" + x)
+            .sort()
+            .join("/")}.${op.token}`,
+        );
       }),
       persistentUndoOp,
       (value) => HashMap.of([streamA, "open"], [streamB, "open"]),
@@ -51,6 +57,18 @@ describe("ControlledOpSet", () => {
       expectPreludeEqual(cos1.value, Vector.of("a.a0"));
       expectIdentical(
         ControlledOpSet.headsEqual(cos1.heads, HashMap.of([streamA, opA0])),
+        true,
+      );
+    });
+
+    it("update handles same op in multiple streams", () => {
+      const cos1 = cos.update(HashMap.of([streamA, opA0], [streamB, opA1]));
+      expectPreludeEqual(cos1.value, Vector.of("a/b.a0", "b.a1"));
+      expectIdentical(
+        ControlledOpSet.headsEqual(
+          cos1.heads,
+          HashMap.of([streamA, opA0], [streamB, opA1]),
+        ),
         true,
       );
     });
