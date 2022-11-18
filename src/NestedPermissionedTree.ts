@@ -70,10 +70,11 @@ type SetEdge = {
   type: "set edge";
 
   edgeId: EdgeId;
+  childId: NodeId;
 
   parentId: NodeId;
-  childId: NodeId;
   rank: Rank;
+
   // This indicates the final op that we'll accept for any streams that get
   // removed by this op.
   streams: HashMap<StreamId, OpList<AppliedOp>>;
@@ -88,8 +89,8 @@ type SetEdgeInternal = SetEdge & {
 
 type TreeProps = {
   readonly rootNodeId: NodeId;
-  downRoots: HashMap<NodeId, DownNode>;
   upRoots: HashMap<NodeId, UpNode>;
+  downRoots: HashMap<NodeId, DownNode>;
 };
 
 class Tree extends ObjectValue<TreeProps>() {
@@ -372,7 +373,7 @@ export class UpNode extends ObjectValue<{
       if (parent1 === edge.parent) return edge;
       return edge.copy({parent: parent1});
     });
-    if (this.nodeId === op.childId) {
+    if (this.nodeId.equals(op.childId)) {
       const this1 = this.copy({
         parents: parents1.put(
           op.edgeId,
@@ -505,12 +506,12 @@ export class DownNode extends ObjectValue<{
   children: HashMap<NodeId, DownNode>;
 }>() {
   doOp(op: InternalOp): this {
-    if (op.child.isNone()) return this;
-
     const upNode1 = this.upNode.doOp(op);
 
     const childShouldBeOurs =
-      op.parentId.equals(this.upNode.nodeId) && op.parent.isSome();
+      op.child.isSome() &&
+      op.parentId.equals(this.upNode.nodeId) &&
+      op.parent.isSome();
     const childIsOurs = this.children.get(op.childId).isSome();
     const children1 = match({
       op,
