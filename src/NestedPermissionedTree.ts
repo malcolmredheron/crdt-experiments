@@ -24,6 +24,7 @@ export function createPermissionedTree(
   deviceId: DeviceId,
 ): NestedPermissionedTree {
   const rootNodeId = new NodeId({creator: deviceId, rest: undefined});
+  const rootNodeKey = new NodeKey({nodeId: rootNodeId, type: "down"});
   return ControlledOpSet.create<Tree, AppliedOp, StreamId>(
     persistentDoOpFactory((value, op, streamIds) => {
       return value.doOp(op, streamIds);
@@ -31,9 +32,9 @@ export function createPermissionedTree(
     persistentUndoOp,
     (value) => value.desiredHeads(),
     new Tree({
-      rootNodeId: rootNodeId,
-      downRoots: HashMap.of([
-        rootNodeId,
+      rootNodeKey,
+      roots: HashMap.of([
+        rootNodeKey,
         new DownNode({
           upNode: new UpNode({
             nodeId: rootNodeId,
@@ -44,7 +45,6 @@ export function createPermissionedTree(
           children: HashMap.of(),
         }),
       ]),
-      upRoots: HashMap.of(),
     }),
   );
 }
@@ -89,9 +89,8 @@ type SetEdgeInternal = SetEdge & {
 };
 
 type TreeProps = {
-  readonly rootNodeId: NodeId;
-  upRoots: HashMap<NodeId, UpNode>;
-  downRoots: HashMap<NodeId, DownNode>;
+  readonly rootNodeKey: NodeKey;
+  roots: HashMap<NodeKey, Node>;
 };
 
 class Tree extends ObjectValue<TreeProps>() {
@@ -110,23 +109,20 @@ class Tree extends ObjectValue<TreeProps>() {
         streamId.type === "down" && streamId.nodeId.equals(op.parentId),
     );
 
-    const {upRoots: upRoots1, upParent} = match({up})
+    const {roots: roots1, upParent} = match({up})
       .with({up: true}, () => {
-        const {upRoots: upRoots1, node: upParent} =
-          Tree.getOrCreateUpNodeForNodeId(
-            this.upRoots,
-            this.downRoots,
-            op.parentId,
-          );
-        const {upRoots: upRoots2} = Tree.getOrCreateUpNodeForNodeId(
-          upRoots1,
-          this.downRoots,
+        const {roots: roots1, node: upParent} = Tree.getOrCreateUpNodeForNodeId(
+          this.roots,
+          op.parentId,
+        );
+        const {roots: roots2} = Tree.getOrCreateUpNodeForNodeId(
+          roots1,
           op.childId,
         );
-        return {upRoots: upRoots2, upParent: Option.some(upParent)};
+        return {roots: roots2, upParent: Option.some(upParent)};
       })
       .with({up: false}, () => ({
-        upRoots: this.upRoots,
+        roots: this.roots,
         upParent: Option.none<UpNode>(),
       }))
       .exhaustive();
@@ -142,19 +138,18 @@ class Tree extends ObjectValue<TreeProps>() {
       return this;
     }
 
-    const {downRoots: downRoots1, downChild} = match({down})
+    const {roots: roots2, downChild} = match({down})
       .with({down: true}, () => {
-        const {downRoots: downRoots1} = Tree.getOrCreateDownNodeForNodeId(
-          upRoots1,
-          this.downRoots,
+        const {roots: roots2} = Tree.getOrCreateDownNodeForNodeId(
+          roots1,
           op.parentId,
         );
-        const {downRoots: downRoots2, node: downChild} =
-          Tree.getOrCreateDownNodeForNodeId(upRoots1, downRoots1, op.childId);
-        return {downRoots: downRoots2, downChild: Option.some(downChild)};
+        const {roots: roots3, node: downChild} =
+          Tree.getOrCreateDownNodeForNodeId(roots2, op.childId);
+        return {roots: roots3, downChild: Option.some(downChild)};
       })
       .with({down: false}, () => ({
-        downRoots: this.downRoots,
+        roots: roots1,
         downChild: Option.none<DownNode>(),
       }))
       .exhaustive();
@@ -164,94 +159,70 @@ class Tree extends ObjectValue<TreeProps>() {
       child: downChild,
       ...op,
     });
-    const upRoots2 = mapValuesStable(upRoots1, (root) => root.doOp(internalOp));
-    const downRoots2 = mapValuesStable(downRoots1, (root) =>
-      root.doOp(internalOp),
-    );
-    if (upRoots2 === this.upRoots && downRoots2 === this.downRoots) return this;
+    const roots3 = mapValuesStable(roots2, (root) => root.doOp(internalOp));
+    if (roots3 === this.roots) return this;
 
     // If the down child was removed, add it back as a root so that we don't
     // lose the streams that went into it.
-    const upRoots3 = upRoots2; // TODO: do the same for the up parent?
-    const downRoots3 = match({
-      originalDownChild: Tree.downNodeForNodeId(
-        this.upRoots,
-        this.downRoots,
-        op.childId,
-      ),
-      finalDownChild: Tree.downNodeForNodeId(upRoots2, downRoots2, op.childId),
+    // TODO: do the same for the up parent?
+    const roots4 = match({
+      originalDownChild: Tree.downNodeForNodeId(this.roots, op.childId),
+      finalDownChild: Tree.downNodeForNodeId(roots3, op.childId),
     })
       .with(
         {},
         ({originalDownChild, finalDownChild}) =>
           originalDownChild.isSome() && finalDownChild.isNone(),
         ({originalDownChild}) =>
-          downRoots2.put(
-            op.childId,
+          roots3.put(
+            new NodeKey({nodeId: op.childId, type: "down"}),
             originalDownChild.getOrThrow().doOp(internalOp),
           ),
       )
-      .with(P._, () => downRoots2)
+      .with(P._, () => roots3)
       .exhaustive();
 
     // Remove anything that used to be a root but is now included elsewhere in
     // the tree.
-    const upRoots4 = Vector.of(op.parentId, op.childId).foldLeft(
-      upRoots3,
-      (upRoots, nodeId) => Tree.cleanedUpRoots(upRoots, downRoots3, nodeId),
-    );
-    const downRoots4 = Vector.of(op.parentId, op.childId).foldLeft(
-      downRoots3,
-      (downRoots, nodeId) => Tree.cleanedDownRoots(upRoots3, downRoots, nodeId),
-    );
+    const roots5 = Vector.of(
+      new NodeKey({nodeId: op.parentId, type: "up"}),
+      new NodeKey({nodeId: op.childId, type: "up"}),
+      new NodeKey({nodeId: op.parentId, type: "down"}),
+      new NodeKey({nodeId: op.childId, type: "down"}),
+    ).foldLeft(roots4, (roots, nodeKey) => Tree.cleanedRoots(roots, nodeKey));
 
-    return this.copy({
-      upRoots: upRoots4,
-      downRoots: downRoots4,
-    });
+    return this.copy({roots: roots5});
   }
 
   assertRootsConsistent(): void {
     // All copies of the same object should be equal
     // All roots should be necessary, ie nowhere else in the tree
 
-    let roots = HashSet.of<DownNode | UpNode>();
-    let upNodes = HashMap.of<NodeId, UpNode>();
-    let downNodes = HashMap.of<NodeId, DownNode>();
-    const traverseUpNode = (node: UpNode, root: boolean): void => {
-      const existingNode = upNodes.get(node.nodeId);
+    let roots = HashSet.of<Node>();
+    let nodes = HashMap.of<NodeKey, Node>();
+    const traverseNode = (node: Node, root: boolean): void => {
+      const existingNode = nodes.get(node.nodeKey());
       if (roots.contains(node) || (existingNode.isSome() && root))
         throw new AssertFailed("Found our way to a root again");
       if (root) roots = roots.add(node);
       if (existingNode.isSome()) {
         expectPreludeEqual(node, existingNode.get());
       } else {
-        upNodes = upNodes.put(node.nodeId, node);
-        for (const edge of node.parents.valueIterable()) {
-          traverseUpNode(edge.parent, false);
+        nodes = nodes.put(node.nodeKey(), node);
+        if (node instanceof UpNode) {
+          for (const edge of node.parents.valueIterable()) {
+            traverseNode(edge.parent, false);
+          }
+        } else {
+          traverseNode(node.upNode, false);
+          for (const child of node.children.valueIterable()) {
+            traverseNode(child, false);
+          }
         }
       }
     };
-    const traverseDownNode = (node: DownNode, root: boolean): void => {
-      const existingNode = downNodes.get(node.upNode.nodeId);
-      if (roots.contains(node) || (existingNode.isSome() && root))
-        throw new AssertFailed("Found our way to a root again");
-      if (root) roots = roots.add(node);
-      if (existingNode.isSome()) {
-        expectPreludeEqual(node, existingNode.get());
-      } else {
-        downNodes = downNodes.put(node.upNode.nodeId, node);
-        traverseUpNode(node.upNode, false);
-        for (const child of node.children.valueIterable()) {
-          traverseDownNode(child, false);
-        }
-      }
-    };
-    for (const node of this.downRoots.valueIterable()) {
-      traverseDownNode(node, true);
-    }
-    for (const node of this.upRoots.valueIterable()) {
-      traverseUpNode(node, true);
+    for (const node of this.roots.valueIterable()) {
+      traverseNode(node, true);
     }
   }
 
@@ -260,117 +231,100 @@ class Tree extends ObjectValue<TreeProps>() {
     // We need to report desired heads based on all of the roots, otherwise we
     // won't have the ops to reconstruct subtrees that used to be in the main
     // tree but aren't now.
-    const nodeHeads = this.downRoots.foldLeft(
+    return this.roots.foldLeft(
       HashMap.of<StreamId, "open" | OpList<AppliedOp>>(),
       (result, [, node]) =>
         HashMap.ofIterable([...result, ...node.desiredHeads()]),
-    );
-    return this.upRoots.foldLeft(nodeHeads, (result, [, upRoot]) =>
-      HashMap.ofIterable([...result, ...upRoot.desiredHeadsForUpNode()]),
     );
   }
 
   root(): DownNode {
     return Tree.downNodeForNodeId(
-      this.upRoots,
-      this.downRoots,
-      this.rootNodeId,
+      this.roots,
+      this.rootNodeKey.nodeId,
     ).getOrThrow();
   }
 
   upNodeForNodeId(nodeId: NodeId): Option<UpNode> {
-    return Tree.upNodeForNodeId(this.upRoots, this.downRoots, nodeId);
+    return Tree.upNodeForNodeId(this.roots, nodeId);
   }
 
   static upNodeForNodeId(
-    upRoots: HashMap<NodeId, UpNode>,
-    downRoots: HashMap<NodeId, DownNode>,
+    roots: HashMap<NodeKey, Node>,
     nodeId: NodeId,
   ): Option<UpNode> {
     return this.nodeForNodeKey(
-      upRoots,
-      downRoots,
+      roots,
       new NodeKey({nodeId, type: "up"}),
     ) as Option<UpNode>;
   }
 
   static nodeForNodeKey(
-    upRoots: HashMap<NodeId, UpNode>,
-    downRoots: HashMap<NodeId, DownNode>,
+    roots: HashMap<NodeKey, Node>,
     nodeKey: NodeKey,
   ): Option<Node> {
-    const nodesResult = downRoots.foldLeft(
-      Option.none<Node>(),
-      (soFar, [key, root]) => soFar.orCall(() => root.nodeForNodeKey(nodeKey)),
-    );
-    if (nodesResult.isSome()) return nodesResult;
-    return upRoots.foldLeft(Option.none<Node>(), (soFar, [key, root]) =>
+    return roots.foldLeft(Option.none<Node>(), (soFar, [key, root]) =>
       soFar.orCall(() => root.nodeForNodeKey(nodeKey)),
     );
   }
 
   static getOrCreateUpNodeForNodeId(
-    upRoots: HashMap<NodeId, UpNode>,
-    downRoots: HashMap<NodeId, DownNode>,
+    roots: HashMap<NodeKey, Node>,
     nodeId: NodeId,
-  ): {node: UpNode; upRoots: HashMap<NodeId, UpNode>} {
-    const existing = this.upNodeForNodeId(upRoots, downRoots, nodeId);
-    if (existing.isSome()) return {node: existing.get(), upRoots};
+  ): {node: UpNode; roots: HashMap<NodeKey, Node>} {
+    const existing = this.upNodeForNodeId(roots, nodeId);
+    if (existing.isSome()) return {node: existing.get(), roots};
     const node = new UpNode({
       nodeId,
       parents: HashMap.of(),
       closedWriterDevicesForUpNode: HashMap.of(),
       closedWriterDevicesForDownNode: HashMap.of(),
     });
-    return {node, upRoots: upRoots.put(nodeId, node)};
+    return {node, roots: roots.put(new NodeKey({nodeId, type: "up"}), node)};
   }
 
-  static cleanedUpRoots(
-    upRoots: HashMap<NodeId, UpNode>,
-    downRoots: HashMap<NodeId, DownNode>,
-    nodeId: NodeId,
-  ): HashMap<NodeId, UpNode> {
-    const upRootsWithoutNode = upRoots.remove(nodeId);
-    if (this.upNodeForNodeId(upRootsWithoutNode, downRoots, nodeId).isSome())
-      return upRootsWithoutNode;
-    return upRoots;
+  static cleanedRoots(
+    roots: HashMap<NodeKey, Node>,
+    nodeKey: NodeKey,
+  ): HashMap<NodeKey, Node> {
+    const rootsWithoutNode = roots.remove(nodeKey);
+    if (this.nodeForNodeKey(rootsWithoutNode, nodeKey).isSome())
+      return rootsWithoutNode;
+    return roots;
   }
 
   downNodeForNodeId(nodeId: NodeId): Option<DownNode> {
-    return Tree.downNodeForNodeId(this.upRoots, this.downRoots, nodeId);
+    return Tree.downNodeForNodeId(this.roots, nodeId);
   }
 
   static downNodeForNodeId(
-    upRoots: HashMap<NodeId, UpNode>,
-    downRoots: HashMap<NodeId, DownNode>,
+    roots: HashMap<NodeKey, Node>,
     nodeId: NodeId,
   ): Option<DownNode> {
     return this.nodeForNodeKey(
-      upRoots,
-      downRoots,
+      roots,
       new NodeKey({nodeId, type: "down"}),
     ) as Option<DownNode>;
   }
 
   static getOrCreateDownNodeForNodeId(
-    upRoots: HashMap<NodeId, UpNode>,
-    downRoots: HashMap<NodeId, DownNode>,
+    roots: HashMap<NodeKey, Node>,
     nodeId: NodeId,
-  ): {node: DownNode; downRoots: HashMap<NodeId, DownNode>} {
-    const existing = this.downNodeForNodeId(upRoots, downRoots, nodeId);
-    if (existing.isSome()) return {node: existing.get(), downRoots};
-    const node = this.createDownNode(upRoots, downRoots, nodeId);
-    return {node, downRoots: downRoots.put(nodeId, node)};
+  ): {node: DownNode; roots: HashMap<NodeKey, Node>} {
+    const nodeKey = new NodeKey({nodeId, type: "down"});
+    const existing = this.downNodeForNodeId(roots, nodeId);
+    if (existing.isSome()) return {node: existing.get(), roots};
+    const node = this.createDownNode(roots, nodeId);
+    return {node, roots: roots.put(nodeKey, node)};
   }
 
   static createDownNode(
-    upRoots: HashMap<NodeId, UpNode>,
-    downRoots: HashMap<NodeId, DownNode>,
+    roots: HashMap<NodeKey, Node>,
     nodeId: NodeId,
   ): DownNode {
     return new DownNode({
       children: HashMap.of(),
-      upNode: this.upNodeForNodeId(upRoots, downRoots, nodeId).getOrCall(
+      upNode: this.upNodeForNodeId(roots, nodeId).getOrCall(
         () =>
           new UpNode({
             nodeId,
@@ -381,21 +335,11 @@ class Tree extends ObjectValue<TreeProps>() {
       ),
     });
   }
-
-  static cleanedDownRoots(
-    upRoots: HashMap<NodeId, UpNode>,
-    downRoots: HashMap<NodeId, DownNode>,
-    nodeId: NodeId,
-  ): HashMap<NodeId, DownNode> {
-    const downRootsWithoutNode = downRoots.remove(nodeId);
-    if (this.downNodeForNodeId(upRoots, downRootsWithoutNode, nodeId).isSome())
-      return downRootsWithoutNode;
-    return downRoots;
-  }
 }
 
-type Node = {};
-class NodeKey extends ObjectValue<{
+type Node = UpNode | DownNode;
+
+export class NodeKey extends ObjectValue<{
   nodeId: NodeId;
   type: NodeType;
 }>() {}
@@ -492,8 +436,12 @@ export class UpNode extends ObjectValue<{
     return this.copy({parents: parents1});
   }
 
+  nodeKey(): NodeKey {
+    return new NodeKey({nodeId: this.nodeId, type: "up"});
+  }
+
   @MemoizeInstance
-  desiredHeadsForUpNode(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
+  desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
     const ourHeads = this.desiredHeadsHelper(
       this.closedWriterDevicesForUpNode,
       "up",
@@ -501,7 +449,7 @@ export class UpNode extends ObjectValue<{
     // We also need the heads for the parents, since they help to select the ops
     // that define this object
     return this.parents.foldLeft(ourHeads, (heads, [, {parent}]) =>
-      HashMap.ofIterable([...heads, ...parent.desiredHeadsForUpNode()]),
+      HashMap.ofIterable([...heads, ...parent.desiredHeads()]),
     );
   }
 
@@ -591,10 +539,14 @@ export class DownNode extends ObjectValue<{
     return this.copy({upNode: upNode1, children: children2});
   }
 
+  nodeKey(): NodeKey {
+    return new NodeKey({nodeId: this.upNode.nodeId, type: "down"});
+  }
+
   @MemoizeInstance
   desiredHeads(): HashMap<StreamId, "open" | OpList<AppliedOp>> {
     const ourDesiredHeads = this.upNode
-      .desiredHeadsForUpNode()
+      .desiredHeads()
       .mergeWith(this.upNode.desiredHeadsForDownNode(), (left, right) => {
         throw new AssertFailed("Nothing should be in both maps");
       });

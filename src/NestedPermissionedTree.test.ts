@@ -4,12 +4,21 @@ import {
   DeviceId,
   EdgeId,
   NodeId,
+  NodeKey,
   Rank,
   StreamId,
 } from "./NestedPermissionedTree";
 import {expectIdentical, expectPreludeEqual} from "./helper/Shared.testing";
 import {HashMap, HashSet} from "prelude-ts";
 import {CountingClock} from "./helper/Clock.testing";
+
+function upKey(nodeId: NodeId): NodeKey {
+  return new NodeKey({nodeId, type: "up"});
+}
+
+function downKey(nodeId: NodeId): NodeKey {
+  return new NodeKey({nodeId, type: "down"});
+}
 
 describe("NestedPermissionedTree", () => {
   const clock = new CountingClock();
@@ -32,11 +41,19 @@ describe("NestedPermissionedTree", () => {
       tree.desiredHeads(tree.value),
       HashMap.of(
         [
-          new StreamId({deviceId, nodeId: tree.value.rootNodeId, type: "up"}),
+          new StreamId({
+            deviceId,
+            nodeId: tree.value.rootNodeKey.nodeId,
+            type: "up",
+          }),
           "open" as const,
         ],
         [
-          new StreamId({deviceId, nodeId: tree.value.rootNodeId, type: "down"}),
+          new StreamId({
+            deviceId,
+            nodeId: tree.value.rootNodeKey.nodeId,
+            type: "down",
+          }),
           "open" as const,
         ],
       ),
@@ -48,10 +65,9 @@ describe("NestedPermissionedTree", () => {
       op,
       HashSet.of(new StreamId({deviceId, nodeId: childId, type: "up"})),
     );
-    expectPreludeEqual(tree1.value.upRoots.keySet(), HashSet.of(childId));
     expectPreludeEqual(
-      tree1.value.downRoots.keySet(),
-      HashSet.of(tree1.value.rootNodeId),
+      tree1.value.roots.keySet(),
+      HashSet.of(upKey(childId), tree1.value.rootNodeKey),
     );
     const edge = tree1.value
       .upNodeForNodeId(childId)
@@ -70,10 +86,9 @@ describe("NestedPermissionedTree", () => {
     // The down edge should not have been created because the up-child does not
     // list the parent, which is because we didn't provide the op in the right
     // up stream.
-    expectPreludeEqual(tree1.value.upRoots.keySet(), HashSet.of());
     expectPreludeEqual(
-      tree1.value.downRoots.keySet(),
-      HashSet.of(tree1.value.rootNodeId, parentId, childId),
+      tree1.value.roots.keySet(),
+      HashSet.of(tree1.value.rootNodeKey, downKey(parentId), downKey(childId)),
     );
     expectIdentical(
       tree1.value.downNodeForNodeId(parentId).getOrThrow().children.isEmpty(),
@@ -90,10 +105,9 @@ describe("NestedPermissionedTree", () => {
       ),
     );
 
-    expectPreludeEqual(tree1.value.upRoots.keySet(), HashSet.of());
     expectPreludeEqual(
-      tree1.value.downRoots.keySet(),
-      HashSet.of(tree1.value.rootNodeId, parentId),
+      tree1.value.roots.keySet(),
+      HashSet.of(tree1.value.rootNodeKey, downKey(parentId)),
     );
 
     const edge = tree1.value
@@ -104,8 +118,8 @@ describe("NestedPermissionedTree", () => {
     expectPreludeEqual(edge.parent.nodeId, parentId);
 
     expectIdentical(
-      tree1.value.downRoots
-        .get(parentId)
+      tree1.value
+        .downNodeForNodeId(parentId)
         .getOrThrow()
         .children.get(childId)
         .isSome(),
@@ -136,10 +150,9 @@ describe("NestedPermissionedTree", () => {
       HashSet.of(new StreamId({deviceId, nodeId: childId, type: "up"})),
     );
 
-    expectPreludeEqual(tree2.value.upRoots.keySet(), HashSet.of());
     expectPreludeEqual(
-      tree2.value.downRoots.keySet(),
-      HashSet.of(tree2.value.rootNodeId, parentId, childId),
+      tree2.value.roots.keySet(),
+      HashSet.of(tree1.value.rootNodeKey, downKey(parentId), downKey(childId)),
     );
 
     const edge = tree2.value
@@ -150,7 +163,7 @@ describe("NestedPermissionedTree", () => {
     expectPreludeEqual(edge.parent.nodeId, junkId);
 
     expectIdentical(
-      tree2.value.downRoots.get(parentId).getOrThrow().children.isEmpty(),
+      tree2.value.downNodeForNodeId(parentId).getOrThrow().children.isEmpty(),
       true,
     );
   });
