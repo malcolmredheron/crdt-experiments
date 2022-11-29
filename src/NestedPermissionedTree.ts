@@ -50,10 +50,11 @@ export function createPermissionedTree(
 }
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
+type NodeType = "up" | "down";
 export class StreamId extends ObjectValue<{
   deviceId: DeviceId;
   nodeId: NodeId;
-  type: "up" | "down";
+  type: NodeType;
 }>() {}
 export class NodeId extends ObjectValue<{
   creator: DeviceId;
@@ -132,7 +133,10 @@ class Tree extends ObjectValue<TreeProps>() {
 
     if (
       upParent.isSome() &&
-      upParent.get().upNodeForNodeId(op.childId).isSome()
+      upParent
+        .get()
+        .nodeForNodeKey(new NodeKey({nodeId: op.childId, type: "up"}))
+        .isSome()
     ) {
       // Avoid creating a cycle.
       return this;
@@ -170,8 +174,12 @@ class Tree extends ObjectValue<TreeProps>() {
     // lose the streams that went into it.
     const upRoots3 = upRoots2; // TODO: do the same for the up parent?
     const downRoots3 = match({
-      originalDownChild: Tree.downNodeForNodeId(this.downRoots, op.childId),
-      finalDownChild: Tree.downNodeForNodeId(downRoots2, op.childId),
+      originalDownChild: Tree.downNodeForNodeId(
+        this.upRoots,
+        this.downRoots,
+        op.childId,
+      ),
+      finalDownChild: Tree.downNodeForNodeId(upRoots2, downRoots2, op.childId),
     })
       .with(
         {},
@@ -194,7 +202,7 @@ class Tree extends ObjectValue<TreeProps>() {
     );
     const downRoots4 = Vector.of(op.parentId, op.childId).foldLeft(
       downRoots3,
-      (downRoots, nodeId) => Tree.cleanedDownRoots(downRoots, nodeId),
+      (downRoots, nodeId) => Tree.cleanedDownRoots(upRoots3, downRoots, nodeId),
     );
 
     return this.copy({
@@ -263,7 +271,11 @@ class Tree extends ObjectValue<TreeProps>() {
   }
 
   root(): DownNode {
-    return Tree.downNodeForNodeId(this.downRoots, this.rootNodeId).getOrThrow();
+    return Tree.downNodeForNodeId(
+      this.upRoots,
+      this.downRoots,
+      this.rootNodeId,
+    ).getOrThrow();
   }
 
   upNodeForNodeId(nodeId: NodeId): Option<UpNode> {
@@ -275,13 +287,25 @@ class Tree extends ObjectValue<TreeProps>() {
     downRoots: HashMap<NodeId, DownNode>,
     nodeId: NodeId,
   ): Option<UpNode> {
+    return this.nodeForNodeKey(
+      upRoots,
+      downRoots,
+      new NodeKey({nodeId, type: "up"}),
+    ) as Option<UpNode>;
+  }
+
+  static nodeForNodeKey(
+    upRoots: HashMap<NodeId, UpNode>,
+    downRoots: HashMap<NodeId, DownNode>,
+    nodeKey: NodeKey,
+  ): Option<Node> {
     const nodesResult = downRoots.foldLeft(
-      Option.none<UpNode>(),
-      (soFar, [key, root]) => soFar.orCall(() => root.upNodeForNodeId(nodeId)),
+      Option.none<Node>(),
+      (soFar, [key, root]) => soFar.orCall(() => root.nodeForNodeKey(nodeKey)),
     );
     if (nodesResult.isSome()) return nodesResult;
-    return upRoots.foldLeft(Option.none<UpNode>(), (soFar, [key, root]) =>
-      soFar.orCall(() => root.upNodeForNodeId(nodeId)),
+    return upRoots.foldLeft(Option.none<Node>(), (soFar, [key, root]) =>
+      soFar.orCall(() => root.nodeForNodeKey(nodeKey)),
     );
   }
 
@@ -313,16 +337,19 @@ class Tree extends ObjectValue<TreeProps>() {
   }
 
   downNodeForNodeId(nodeId: NodeId): Option<DownNode> {
-    return Tree.downNodeForNodeId(this.downRoots, nodeId);
+    return Tree.downNodeForNodeId(this.upRoots, this.downRoots, nodeId);
   }
 
   static downNodeForNodeId(
+    upRoots: HashMap<NodeId, UpNode>,
     downRoots: HashMap<NodeId, DownNode>,
     nodeId: NodeId,
   ): Option<DownNode> {
-    return downRoots.foldLeft(Option.none<DownNode>(), (soFar, [key, root]) =>
-      soFar.orCall(() => root.downNodeForNodeId(nodeId)),
-    );
+    return this.nodeForNodeKey(
+      upRoots,
+      downRoots,
+      new NodeKey({nodeId, type: "down"}),
+    ) as Option<DownNode>;
   }
 
   static getOrCreateDownNodeForNodeId(
@@ -330,7 +357,7 @@ class Tree extends ObjectValue<TreeProps>() {
     downRoots: HashMap<NodeId, DownNode>,
     nodeId: NodeId,
   ): {node: DownNode; downRoots: HashMap<NodeId, DownNode>} {
-    const existing = this.downNodeForNodeId(downRoots, nodeId);
+    const existing = this.downNodeForNodeId(upRoots, downRoots, nodeId);
     if (existing.isSome()) return {node: existing.get(), downRoots};
     const node = this.createDownNode(upRoots, downRoots, nodeId);
     return {node, downRoots: downRoots.put(nodeId, node)};
@@ -356,15 +383,22 @@ class Tree extends ObjectValue<TreeProps>() {
   }
 
   static cleanedDownRoots(
+    upRoots: HashMap<NodeId, UpNode>,
     downRoots: HashMap<NodeId, DownNode>,
     nodeId: NodeId,
   ): HashMap<NodeId, DownNode> {
     const downRootsWithoutNode = downRoots.remove(nodeId);
-    if (this.downNodeForNodeId(downRootsWithoutNode, nodeId).isSome())
+    if (this.downNodeForNodeId(upRoots, downRootsWithoutNode, nodeId).isSome())
       return downRootsWithoutNode;
     return downRoots;
   }
 }
+
+type Node = {};
+class NodeKey extends ObjectValue<{
+  nodeId: NodeId;
+  type: NodeType;
+}>() {}
 
 export class Edge extends ObjectValue<{
   parent: UpNode;
@@ -512,10 +546,11 @@ export class UpNode extends ObjectValue<{
     );
   }
 
-  upNodeForNodeId(nodeId: NodeId): Option<UpNode> {
-    if (nodeId.equals(this.nodeId)) return Option.of(this);
-    return this.parents.foldLeft(Option.none<UpNode>(), (soFar, [key, edge]) =>
-      soFar.orCall(() => edge.parent.upNodeForNodeId(nodeId)),
+  nodeForNodeKey(nodeKey: NodeKey): Option<Node> {
+    if (nodeKey.nodeId.equals(this.nodeId) && nodeKey.type === "up")
+      return Option.of(this);
+    return this.parents.foldLeft(Option.none(), (soFar, [key, edge]) =>
+      soFar.orCall(() => edge.parent.nodeForNodeKey(nodeKey)),
     );
   }
 }
@@ -568,22 +603,13 @@ export class DownNode extends ObjectValue<{
     );
   }
 
-  downNodeForNodeId(nodeId: NodeId): Option<DownNode> {
-    if (nodeId.equals(this.upNode.nodeId)) return Option.of(this);
-    return this.children.foldLeft(
-      Option.none<DownNode>(),
-      (soFar, [key, child]) =>
-        soFar.orCall(() => child.downNodeForNodeId(nodeId)),
-    );
-  }
-
-  upNodeForNodeId(nodeId: NodeId): Option<UpNode> {
-    const upNodeResult = this.upNode.upNodeForNodeId(nodeId);
+  nodeForNodeKey(nodeKey: NodeKey): Option<Node> {
+    if (nodeKey.nodeId.equals(this.upNode.nodeId) && nodeKey.type === "down")
+      return Option.of(this);
+    const upNodeResult = this.upNode.nodeForNodeKey(nodeKey);
     if (upNodeResult.isSome()) return upNodeResult;
-    return this.children.foldLeft(
-      Option.none<UpNode>(),
-      (soFar, [key, child]) =>
-        soFar.orCall(() => child.upNodeForNodeId(nodeId)),
+    return this.children.foldLeft(Option.none(), (soFar, [key, child]) =>
+      soFar.orCall(() => child.nodeForNodeKey(nodeKey)),
     );
   }
 }
