@@ -59,7 +59,6 @@ describe("NestedPermissionedTree", () => {
       .parents.get(EdgeId.create("edge"))
       .getOrThrow();
     expectPreludeEqual(edge.parent.nodeId, parentId);
-    expectIdentical(tree1.value.upRoots.get(parentId).isNone(), true);
   });
 
   it("does not create DownNodes for a down-streamed operation without a matching up-streamed operation", () => {
@@ -77,11 +76,7 @@ describe("NestedPermissionedTree", () => {
       HashSet.of(tree1.value.rootNodeId, parentId, childId),
     );
     expectIdentical(
-      tree1.value
-        .downNodeForNodeId(parentId)
-        .getOrThrow()
-        .children.get(childId)
-        .isNone(),
+      tree1.value.downNodeForNodeId(parentId).getOrThrow().children.isEmpty(),
       true,
     );
   });
@@ -107,7 +102,6 @@ describe("NestedPermissionedTree", () => {
       .parents.get(EdgeId.create("edge"))
       .getOrThrow();
     expectPreludeEqual(edge.parent.nodeId, parentId);
-    expectIdentical(tree1.value.upRoots.get(parentId).isNone(), true);
 
     expectIdentical(
       tree1.value.downRoots
@@ -115,6 +109,48 @@ describe("NestedPermissionedTree", () => {
         .getOrThrow()
         .children.get(childId)
         .isSome(),
+      true,
+    );
+  });
+
+  it("removes a child if its UpNode gets a new parent", () => {
+    const junkId = new NodeId({creator: deviceId, rest: "junk"});
+
+    const tree1 = tree.updateWithOneOp(
+      op,
+      HashSet.of(
+        new StreamId({deviceId, nodeId: parentId, type: "down"}),
+        new StreamId({deviceId, nodeId: childId, type: "up"}),
+      ),
+    );
+    const tree2 = tree1.updateWithOneOp(
+      {
+        timestamp: clock.now(),
+        type: "set edge",
+        edgeId: EdgeId.create("edge"),
+        parentId: junkId,
+        childId: childId,
+        rank: Rank.create(0),
+        streams: HashMap.of(),
+      },
+      HashSet.of(new StreamId({deviceId, nodeId: childId, type: "up"})),
+    );
+
+    expectPreludeEqual(tree2.value.upRoots.keySet(), HashSet.of());
+    expectPreludeEqual(
+      tree2.value.downRoots.keySet(),
+      HashSet.of(tree2.value.rootNodeId, parentId, childId),
+    );
+
+    const edge = tree2.value
+      .upNodeForNodeId(childId)
+      .getOrThrow()
+      .parents.get(EdgeId.create("edge"))
+      .getOrThrow();
+    expectPreludeEqual(edge.parent.nodeId, junkId);
+
+    expectIdentical(
+      tree2.value.downRoots.get(parentId).getOrThrow().children.isEmpty(),
       true,
     );
   });

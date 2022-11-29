@@ -14,7 +14,7 @@ import {asType, mapValuesStable} from "./helper/Collection";
 
 // This really shouldn't be here, but ...
 import {expectPreludeEqual} from "./helper/Shared.testing";
-import {match} from "ts-pattern";
+import {match, P} from "ts-pattern";
 
 export type NestedPermissionedTree = ControlledOpSet<Tree, AppliedOp, StreamId>;
 
@@ -166,20 +166,40 @@ class Tree extends ObjectValue<TreeProps>() {
     );
     if (upRoots2 === this.upRoots && downRoots2 === this.downRoots) return this;
 
+    // If the down child was removed, add it back as a root so that we don't
+    // lose the streams that went into it.
+    const upRoots3 = upRoots2; // TODO: do the same for the up parent?
+    const downRoots3 = match({
+      originalDownChild: Tree.downNodeForNodeId(this.downRoots, op.childId),
+      finalDownChild: Tree.downNodeForNodeId(downRoots2, op.childId),
+    })
+      .with(
+        {},
+        ({originalDownChild, finalDownChild}) =>
+          originalDownChild.isSome() && finalDownChild.isNone(),
+        ({originalDownChild}) =>
+          downRoots2.put(
+            op.childId,
+            originalDownChild.getOrThrow().doOp(internalOp),
+          ),
+      )
+      .with(P._, () => downRoots2)
+      .exhaustive();
+
     // Remove anything that used to be a root but is now included elsewhere in
     // the tree.
-    const upRoots3 = Vector.of(op.parentId, op.childId).foldLeft(
-      upRoots2,
-      (upRoots, nodeId) => Tree.cleanedUpRoots(upRoots, downRoots2, nodeId),
+    const upRoots4 = Vector.of(op.parentId, op.childId).foldLeft(
+      upRoots3,
+      (upRoots, nodeId) => Tree.cleanedUpRoots(upRoots, downRoots3, nodeId),
     );
-    const downRoots3 = Vector.of(op.parentId, op.childId).foldLeft(
-      downRoots2,
+    const downRoots4 = Vector.of(op.parentId, op.childId).foldLeft(
+      downRoots3,
       (downRoots, nodeId) => Tree.cleanedDownRoots(downRoots, nodeId),
     );
 
     return this.copy({
-      upRoots: upRoots3,
-      downRoots: downRoots3,
+      upRoots: upRoots4,
+      downRoots: downRoots4,
     });
   }
 
@@ -191,10 +211,10 @@ class Tree extends ObjectValue<TreeProps>() {
     let upNodes = HashMap.of<NodeId, UpNode>();
     let downNodes = HashMap.of<NodeId, DownNode>();
     const traverseUpNode = (node: UpNode, root: boolean): void => {
-      if (roots.contains(node))
+      const existingNode = upNodes.get(node.nodeId);
+      if (roots.contains(node) || (existingNode.isSome() && root))
         throw new AssertFailed("Found our way to a root again");
       if (root) roots = roots.add(node);
-      const existingNode = upNodes.get(node.nodeId);
       if (existingNode.isSome()) {
         expectPreludeEqual(node, existingNode.get());
       } else {
@@ -205,10 +225,10 @@ class Tree extends ObjectValue<TreeProps>() {
       }
     };
     const traverseDownNode = (node: DownNode, root: boolean): void => {
-      if (roots.contains(node))
+      const existingNode = downNodes.get(node.upNode.nodeId);
+      if (roots.contains(node) || (existingNode.isSome() && root))
         throw new AssertFailed("Found our way to a root again");
       if (root) roots = roots.add(node);
-      const existingNode = downNodes.get(node.upNode.nodeId);
       if (existingNode.isSome()) {
         expectPreludeEqual(node, existingNode.get());
       } else {
