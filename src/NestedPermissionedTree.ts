@@ -114,76 +114,55 @@ class Tree extends ObjectValue<TreeProps>() {
         streamId.type === "down" && streamId.nodeId.equals(op.parentId),
     );
 
-    const {roots: roots1, upParent} = match({up})
-      .with({up: true}, () => {
-        const {roots: roots1, node: upParent} = Tree.getOrCreateNodeForNodeKey(
-          this.roots,
-          upParentKey,
-        );
-        const {roots: roots2} = Tree.getOrCreateNodeForNodeKey(
-          roots1,
-          upChildKey,
-        );
-        return {roots: roots2, upParent: Option.some(upParent)};
-      })
-      .with({up: false}, () => ({
-        roots: this.roots,
-        upParent: Option.none<Node>(),
-      }))
-      .exhaustive();
+    const roots1 = Vector.of(
+      ...(up ? [upParentKey, upChildKey] : []),
+      ...(down ? [downParentKey, downChildKey] : []),
+    ).foldLeft(
+      this.roots,
+      (roots, key) => Tree.getOrCreateNodeForNodeKey(roots, key).roots,
+    );
 
-    const {roots: roots2, downChild} = match({down})
-      .with({down: true}, () => {
-        const {roots: roots2} = Tree.getOrCreateNodeForNodeKey(
-          roots1,
-          downParentKey,
-        );
-        const {roots: roots3, node: downChild} = Tree.getOrCreateNodeForNodeKey(
-          roots2,
-          downChildKey,
-        );
-        return {roots: roots3, downChild: Option.some(downChild)};
-      })
-      .with({down: false}, () => ({
-        roots: roots1,
-        downChild: Option.none<Node>(),
-      }))
-      .exhaustive();
-
+    // Avoid creating a cycle.
+    const upParent = up
+      ? Tree.nodeForNodeKey(roots1, upParentKey)
+      : Option.none<Node>();
+    const downChild = down
+      ? Tree.nodeForNodeKey(roots1, downChildKey)
+      : Option.none<Node>();
     if (
       upParent.isSome() &&
       upParent.get().nodeForNodeKey(upChildKey).isSome()
     ) {
-      // Avoid creating a cycle.
       return this;
     }
 
+    // Apply the op.
     const internalOp = asType<InternalOp>({
       parent: upParent as Option<UpNode>,
       child: downChild as Option<DownNode>,
       ...op,
     });
-    const roots3 = mapValuesStable(roots2, (root) => root.doOp(internalOp));
-    if (roots3 === this.roots) return this;
+    const roots2 = mapValuesStable(roots1, (root) => root.doOp(internalOp));
+    if (roots2 === this.roots) return this;
 
     // If the down child was removed, add it back as a root so that we don't
     // lose the streams that went into it.
     // TODO: do the same for the up parent?
     const roots4 = match({
       originalDownChild: Tree.nodeForNodeKey(this.roots, downChildKey),
-      finalDownChild: Tree.nodeForNodeKey(roots3, downChildKey),
+      finalDownChild: Tree.nodeForNodeKey(roots2, downChildKey),
     })
       .with(
         {},
         ({originalDownChild, finalDownChild}) =>
           originalDownChild.isSome() && finalDownChild.isNone(),
         ({originalDownChild}) =>
-          roots3.put(
-            new NodeKey({nodeId: op.childId, type: "down"}),
+          roots2.put(
+            downChildKey,
             originalDownChild.getOrThrow().doOp(internalOp),
           ),
       )
-      .with(P._, () => roots3)
+      .with(P._, () => roots2)
       .exhaustive();
 
     // Remove anything that used to be a root but is now included elsewhere in
