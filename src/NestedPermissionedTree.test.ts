@@ -2,14 +2,17 @@ import {
   AppliedOp,
   createPermissionedTree,
   DeviceId,
+  DownNode,
   EdgeId,
+  NestedPermissionedTree,
   NodeId,
   NodeKey,
   Rank,
   StreamId,
+  UpNode,
 } from "./NestedPermissionedTree";
 import {expectIdentical, expectPreludeEqual} from "./helper/Shared.testing";
-import {HashMap, HashSet} from "prelude-ts";
+import {HashMap, HashSet, Option} from "prelude-ts";
 import {CountingClock} from "./helper/Clock.testing";
 
 function upKey(nodeId: NodeId): NodeKey {
@@ -18,6 +21,24 @@ function upKey(nodeId: NodeId): NodeKey {
 
 function downKey(nodeId: NodeId): NodeKey {
   return new NodeKey({nodeId, type: "down"});
+}
+
+function upNodeForNodeId(
+  tree: NestedPermissionedTree,
+  nodeId: NodeId,
+): Option<UpNode> {
+  return tree.value.nodeForNodeKey(
+    new NodeKey({nodeId, type: "up"}),
+  ) as Option<UpNode>;
+}
+
+function downNodeForNodeId(
+  tree: NestedPermissionedTree,
+  nodeId: NodeId,
+): Option<DownNode> {
+  return tree.value.nodeForNodeKey(
+    new NodeKey({nodeId, type: "down"}),
+  ) as Option<DownNode>;
 }
 
 describe("NestedPermissionedTree", () => {
@@ -69,8 +90,7 @@ describe("NestedPermissionedTree", () => {
       tree1.value.roots.keySet(),
       HashSet.of(upKey(childId), tree1.value.rootNodeKey),
     );
-    const edge = tree1.value
-      .upNodeForNodeId(childId)
+    const edge = upNodeForNodeId(tree1, childId)
       .getOrThrow()
       .parents.get(EdgeId.create("edge"))
       .getOrThrow();
@@ -91,7 +111,7 @@ describe("NestedPermissionedTree", () => {
       HashSet.of(tree1.value.rootNodeKey, downKey(parentId), downKey(childId)),
     );
     expectIdentical(
-      tree1.value.downNodeForNodeId(parentId).getOrThrow().children.isEmpty(),
+      downNodeForNodeId(tree1, parentId).getOrThrow().children.isEmpty(),
       true,
     );
   });
@@ -110,16 +130,14 @@ describe("NestedPermissionedTree", () => {
       HashSet.of(tree1.value.rootNodeKey, downKey(parentId)),
     );
 
-    const edge = tree1.value
-      .upNodeForNodeId(childId)
+    const edge = upNodeForNodeId(tree1, childId)
       .getOrThrow()
       .parents.get(EdgeId.create("edge"))
       .getOrThrow();
     expectPreludeEqual(edge.parent.nodeId, parentId);
 
     expectIdentical(
-      tree1.value
-        .downNodeForNodeId(parentId)
+      downNodeForNodeId(tree1, parentId)
         .getOrThrow()
         .children.get(childId)
         .isSome(),
@@ -155,15 +173,14 @@ describe("NestedPermissionedTree", () => {
       HashSet.of(tree1.value.rootNodeKey, downKey(parentId), downKey(childId)),
     );
 
-    const edge = tree2.value
-      .upNodeForNodeId(childId)
+    const edge = upNodeForNodeId(tree2, childId)
       .getOrThrow()
       .parents.get(EdgeId.create("edge"))
       .getOrThrow();
     expectPreludeEqual(edge.parent.nodeId, junkId);
 
     expectIdentical(
-      tree2.value.downNodeForNodeId(parentId).getOrThrow().children.isEmpty(),
+      downNodeForNodeId(tree2, parentId).getOrThrow().children.isEmpty(),
       true,
     );
   });

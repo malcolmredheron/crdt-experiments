@@ -100,6 +100,11 @@ class Tree extends ObjectValue<TreeProps>() {
   }
 
   doOp(op: AppliedOp["op"], streamIds: HashSet<StreamId>): this {
+    const upParentKey = new NodeKey({nodeId: op.parentId, type: "up"});
+    const upChildKey = new NodeKey({nodeId: op.childId, type: "up"});
+    const downParentKey = new NodeKey({nodeId: op.parentId, type: "down"});
+    const downChildKey = new NodeKey({nodeId: op.childId, type: "down"});
+
     const up = streamIds.anyMatch(
       (streamId) =>
         streamId.type === "up" && streamId.nodeId.equals(op.childId),
@@ -111,52 +116,51 @@ class Tree extends ObjectValue<TreeProps>() {
 
     const {roots: roots1, upParent} = match({up})
       .with({up: true}, () => {
-        const {roots: roots1, node: upParent} = Tree.getOrCreateUpNodeForNodeId(
+        const {roots: roots1, node: upParent} = Tree.getOrCreateNodeForNodeKey(
           this.roots,
-          op.parentId,
+          upParentKey,
         );
-        const {roots: roots2} = Tree.getOrCreateUpNodeForNodeId(
+        const {roots: roots2} = Tree.getOrCreateNodeForNodeKey(
           roots1,
-          op.childId,
+          upChildKey,
         );
         return {roots: roots2, upParent: Option.some(upParent)};
       })
       .with({up: false}, () => ({
         roots: this.roots,
-        upParent: Option.none<UpNode>(),
+        upParent: Option.none<Node>(),
+      }))
+      .exhaustive();
+
+    const {roots: roots2, downChild} = match({down})
+      .with({down: true}, () => {
+        const {roots: roots2} = Tree.getOrCreateNodeForNodeKey(
+          roots1,
+          downParentKey,
+        );
+        const {roots: roots3, node: downChild} = Tree.getOrCreateNodeForNodeKey(
+          roots2,
+          downChildKey,
+        );
+        return {roots: roots3, downChild: Option.some(downChild)};
+      })
+      .with({down: false}, () => ({
+        roots: roots1,
+        downChild: Option.none<Node>(),
       }))
       .exhaustive();
 
     if (
       upParent.isSome() &&
-      upParent
-        .get()
-        .nodeForNodeKey(new NodeKey({nodeId: op.childId, type: "up"}))
-        .isSome()
+      upParent.get().nodeForNodeKey(upChildKey).isSome()
     ) {
       // Avoid creating a cycle.
       return this;
     }
 
-    const {roots: roots2, downChild} = match({down})
-      .with({down: true}, () => {
-        const {roots: roots2} = Tree.getOrCreateDownNodeForNodeId(
-          roots1,
-          op.parentId,
-        );
-        const {roots: roots3, node: downChild} =
-          Tree.getOrCreateDownNodeForNodeId(roots2, op.childId);
-        return {roots: roots3, downChild: Option.some(downChild)};
-      })
-      .with({down: false}, () => ({
-        roots: roots1,
-        downChild: Option.none<DownNode>(),
-      }))
-      .exhaustive();
-
     const internalOp = asType<InternalOp>({
-      parent: upParent,
-      child: downChild,
+      parent: upParent as Option<UpNode>,
+      child: downChild as Option<DownNode>,
       ...op,
     });
     const roots3 = mapValuesStable(roots2, (root) => root.doOp(internalOp));
@@ -166,8 +170,8 @@ class Tree extends ObjectValue<TreeProps>() {
     // lose the streams that went into it.
     // TODO: do the same for the up parent?
     const roots4 = match({
-      originalDownChild: Tree.downNodeForNodeId(this.roots, op.childId),
-      finalDownChild: Tree.downNodeForNodeId(roots3, op.childId),
+      originalDownChild: Tree.nodeForNodeKey(this.roots, downChildKey),
+      finalDownChild: Tree.nodeForNodeKey(roots3, downChildKey),
     })
       .with(
         {},
@@ -185,10 +189,10 @@ class Tree extends ObjectValue<TreeProps>() {
     // Remove anything that used to be a root but is now included elsewhere in
     // the tree.
     const roots5 = Vector.of(
-      new NodeKey({nodeId: op.parentId, type: "up"}),
-      new NodeKey({nodeId: op.childId, type: "up"}),
-      new NodeKey({nodeId: op.parentId, type: "down"}),
-      new NodeKey({nodeId: op.childId, type: "down"}),
+      upParentKey,
+      upChildKey,
+      downParentKey,
+      downChildKey,
     ).foldLeft(roots4, (roots, nodeKey) => Tree.cleanedRoots(roots, nodeKey));
 
     return this.copy({roots: roots5});
@@ -239,24 +243,13 @@ class Tree extends ObjectValue<TreeProps>() {
   }
 
   root(): DownNode {
-    return Tree.downNodeForNodeId(
-      this.roots,
-      this.rootNodeKey.nodeId,
+    return (
+      Tree.nodeForNodeKey(this.roots, this.rootNodeKey) as Option<DownNode>
     ).getOrThrow();
   }
 
-  upNodeForNodeId(nodeId: NodeId): Option<UpNode> {
-    return Tree.upNodeForNodeId(this.roots, nodeId);
-  }
-
-  static upNodeForNodeId(
-    roots: HashMap<NodeKey, Node>,
-    nodeId: NodeId,
-  ): Option<UpNode> {
-    return this.nodeForNodeKey(
-      roots,
-      new NodeKey({nodeId, type: "up"}),
-    ) as Option<UpNode>;
+  nodeForNodeKey(nodeKey: NodeKey): Option<Node> {
+    return Tree.nodeForNodeKey(this.roots, nodeKey);
   }
 
   static nodeForNodeKey(
@@ -268,19 +261,33 @@ class Tree extends ObjectValue<TreeProps>() {
     );
   }
 
-  static getOrCreateUpNodeForNodeId(
+  static getOrCreateNodeForNodeKey(
     roots: HashMap<NodeKey, Node>,
-    nodeId: NodeId,
-  ): {node: UpNode; roots: HashMap<NodeKey, Node>} {
-    const existing = this.upNodeForNodeId(roots, nodeId);
+    nodeKey: NodeKey,
+  ): {node: Node; roots: HashMap<NodeKey, Node>} {
+    const existing = this.nodeForNodeKey(roots, nodeKey);
     if (existing.isSome()) return {node: existing.get(), roots};
-    const node = new UpNode({
-      nodeId,
-      parents: HashMap.of(),
-      closedWriterDevicesForUpNode: HashMap.of(),
-      closedWriterDevicesForDownNode: HashMap.of(),
-    });
-    return {node, roots: roots.put(new NodeKey({nodeId, type: "up"}), node)};
+    if (nodeKey.type === "up") {
+      const node = new UpNode({
+        nodeId: nodeKey.nodeId,
+        parents: HashMap.of(),
+        closedWriterDevicesForUpNode: HashMap.of(),
+        closedWriterDevicesForDownNode: HashMap.of(),
+      });
+      return {node, roots: roots.put(nodeKey, node)};
+    } else {
+      // We can ignore the updated roots from this because we are linking the
+      // up node into the down node.
+      const {node: upNode} = this.getOrCreateNodeForNodeKey(
+        roots,
+        nodeKey.copy({type: "up"}),
+      );
+      const node = new DownNode({
+        upNode: upNode as UpNode,
+        children: HashMap.of(),
+      });
+      return {node, roots: roots.put(nodeKey, node)};
+    }
   }
 
   static cleanedRoots(
@@ -291,49 +298,6 @@ class Tree extends ObjectValue<TreeProps>() {
     if (this.nodeForNodeKey(rootsWithoutNode, nodeKey).isSome())
       return rootsWithoutNode;
     return roots;
-  }
-
-  downNodeForNodeId(nodeId: NodeId): Option<DownNode> {
-    return Tree.downNodeForNodeId(this.roots, nodeId);
-  }
-
-  static downNodeForNodeId(
-    roots: HashMap<NodeKey, Node>,
-    nodeId: NodeId,
-  ): Option<DownNode> {
-    return this.nodeForNodeKey(
-      roots,
-      new NodeKey({nodeId, type: "down"}),
-    ) as Option<DownNode>;
-  }
-
-  static getOrCreateDownNodeForNodeId(
-    roots: HashMap<NodeKey, Node>,
-    nodeId: NodeId,
-  ): {node: DownNode; roots: HashMap<NodeKey, Node>} {
-    const nodeKey = new NodeKey({nodeId, type: "down"});
-    const existing = this.downNodeForNodeId(roots, nodeId);
-    if (existing.isSome()) return {node: existing.get(), roots};
-    const node = this.createDownNode(roots, nodeId);
-    return {node, roots: roots.put(nodeKey, node)};
-  }
-
-  static createDownNode(
-    roots: HashMap<NodeKey, Node>,
-    nodeId: NodeId,
-  ): DownNode {
-    return new DownNode({
-      children: HashMap.of(),
-      upNode: this.upNodeForNodeId(roots, nodeId).getOrCall(
-        () =>
-          new UpNode({
-            nodeId,
-            parents: HashMap.of(),
-            closedWriterDevicesForUpNode: HashMap.of(),
-            closedWriterDevicesForDownNode: HashMap.of(),
-          }),
-      ),
-    });
   }
 }
 
