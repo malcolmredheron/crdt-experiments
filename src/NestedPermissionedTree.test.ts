@@ -145,7 +145,7 @@ describe("NestedPermissionedTree", () => {
     );
   });
 
-  it("removes a child if its UpNode gets a new parent", () => {
+  it("removes a child from a DownNode if the child gets a new parent", () => {
     const junkId = new NodeId({creator: deviceId, rest: "junk"});
 
     const tree1 = tree.updateWithOneOp(
@@ -179,10 +179,44 @@ describe("NestedPermissionedTree", () => {
       .getOrThrow();
     expectPreludeEqual(edge.parent.nodeId, junkId);
 
+    // The child should be removed from the parent's list of children.
     expectIdentical(
       downNodeForNodeId(tree2, parentId).getOrThrow().children.isEmpty(),
       true,
     );
+  });
+
+  it("retains an old parent when the child gets a new parent", () => {
+    const junkId = new NodeId({creator: deviceId, rest: "junk"});
+
+    const tree1 = tree.updateWithOneOp(
+      op,
+      HashSet.of(new StreamId({deviceId, nodeId: childId, type: "up"})),
+    );
+    const tree2 = tree1.updateWithOneOp(
+      {
+        timestamp: clock.now(),
+        type: "set edge",
+        edgeId: EdgeId.create("edge"),
+        parentId: junkId,
+        childId: childId,
+        rank: Rank.create(0),
+        streams: HashMap.of(),
+      },
+      HashSet.of(new StreamId({deviceId, nodeId: childId, type: "up"})),
+    );
+
+    // upParent should have been retained as a root.
+    expectPreludeEqual(
+      tree2.value.roots.keySet(),
+      HashSet.of(tree1.value.rootNodeKey, upKey(parentId), upKey(childId)),
+    );
+
+    const edge = upNodeForNodeId(tree2, childId)
+      .getOrThrow()
+      .parents.get(EdgeId.create("edge"))
+      .getOrThrow();
+    expectPreludeEqual(edge.parent.nodeId, junkId);
   });
 });
 

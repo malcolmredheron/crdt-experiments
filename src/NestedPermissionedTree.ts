@@ -145,36 +145,39 @@ class Tree extends ObjectValue<TreeProps>() {
     const roots2 = mapValuesStable(roots1, (root) => root.doOp(internalOp));
     if (roots2 === this.roots) return this;
 
-    // If the down child was removed, add it back as a root so that we don't
-    // lose the streams that went into it.
-    // TODO: do the same for the up parent?
-    const roots4 = match({
-      originalDownChild: Tree.nodeForNodeKey(this.roots, downChildKey),
-      finalDownChild: Tree.nodeForNodeKey(roots2, downChildKey),
-    })
-      .with(
-        {},
-        ({originalDownChild, finalDownChild}) =>
-          originalDownChild.isSome() && finalDownChild.isNone(),
-        ({originalDownChild}) =>
-          roots2.put(
-            downChildKey,
-            originalDownChild.getOrThrow().doOp(internalOp),
-          ),
-      )
-      .with(P._, () => roots2)
-      .exhaustive();
+    // If the down child or the original up parent was removed, add it back as
+    // a root so that we don't lose the streams that went into it.
+    const roots3 = Vector.of(
+      ...[downChildKey],
+      ...Tree.nodeForNodeKey(this.roots, upChildKey)
+        .flatMap((node) => (node as UpNode).parents.get(op.edgeId))
+        .map((edge) => [edge.parent.nodeKey()])
+        .getOrElse([]),
+    ).foldLeft(roots2, (roots, key) =>
+      match({
+        original: Tree.nodeForNodeKey(this.roots, key),
+        final: Tree.nodeForNodeKey(roots, key),
+      })
+        .with(
+          {},
+          ({original, final}) => original.isSome() && final.isNone(),
+          ({original}) =>
+            roots.put(key, original.getOrThrow().doOp(internalOp)),
+        )
+        .with(P._, () => roots)
+        .exhaustive(),
+    );
 
     // Remove anything that used to be a root but is now included elsewhere in
     // the tree.
-    const roots5 = Vector.of(
+    const roots4 = Vector.of(
       upParentKey,
       upChildKey,
       downParentKey,
       downChildKey,
-    ).foldLeft(roots4, (roots, nodeKey) => Tree.cleanedRoots(roots, nodeKey));
+    ).foldLeft(roots3, (roots, nodeKey) => Tree.cleanedRoots(roots, nodeKey));
 
-    return this.copy({roots: roots5});
+    return this.copy({roots: roots4});
   }
 
   assertRootsConsistent(): void {
