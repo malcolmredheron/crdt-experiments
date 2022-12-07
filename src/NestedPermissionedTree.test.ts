@@ -47,6 +47,16 @@ describe("NestedPermissionedTree", () => {
   const tree = createPermissionedTree(deviceId);
   const parentId = new NodeId({creator: deviceId, rest: "parent"});
   const childId = new NodeId({creator: deviceId, rest: "child"});
+  const rootUpStreamId = new StreamId({
+    deviceId,
+    nodeId: tree.value.rootNodeKey.nodeId,
+    type: "up",
+  });
+  const rootDownStreamId = new StreamId({
+    deviceId,
+    nodeId: tree.value.rootNodeKey.nodeId,
+    type: "down",
+  });
   const op: AppliedOp["op"] = {
     timestamp: clock.now(),
     type: "set edge",
@@ -57,31 +67,17 @@ describe("NestedPermissionedTree", () => {
     streams: HashMap.of(),
   };
 
-  it("has desired heads for the root node", () => {
+  it("initial state", () => {
     expectPreludeEqual(
       tree.desiredHeads(tree.value),
       HashMap.of(
-        [
-          new StreamId({
-            deviceId,
-            nodeId: tree.value.rootNodeKey.nodeId,
-            type: "up",
-          }),
-          "open" as const,
-        ],
-        [
-          new StreamId({
-            deviceId,
-            nodeId: tree.value.rootNodeKey.nodeId,
-            type: "down",
-          }),
-          "open" as const,
-        ],
+        [rootUpStreamId, "open" as const],
+        [rootDownStreamId, "open" as const],
       ),
     );
   });
 
-  it("creates UpNodes and edges for an up-streamed operation", () => {
+  it("up-streamed op", () => {
     const tree1 = tree.updateWithOneOp(
       op,
       HashSet.of(new StreamId({deviceId, nodeId: childId, type: "up"})),
@@ -90,33 +86,76 @@ describe("NestedPermissionedTree", () => {
       tree1.value.roots.keySet(),
       HashSet.of(upKey(childId), tree1.value.rootNodeKey),
     );
+
+    // The up edge exists.
     const edge = upNodeForNodeId(tree1, childId)
       .getOrThrow()
       .parents.get(EdgeId.create("edge"))
       .getOrThrow();
     expectPreludeEqual(edge.parent.nodeId, parentId);
+
+    expectPreludeEqual(
+      tree1.desiredHeads(tree1.value),
+      HashMap.of(
+        [rootUpStreamId, "open" as const],
+        [rootDownStreamId, "open" as const],
+        [
+          new StreamId({deviceId, nodeId: childId, type: "up"}),
+          "open" as const,
+        ],
+        [
+          new StreamId({deviceId, nodeId: parentId, type: "up"}),
+          "open" as const,
+        ],
+      ),
+    );
   });
 
-  it("does not create DownNodes for a down-streamed operation without a matching up-streamed operation", () => {
+  it("down-streamed op", () => {
     const tree1 = tree.updateWithOneOp(
       op,
       HashSet.of(new StreamId({deviceId, nodeId: parentId, type: "down"})),
     );
 
-    // The down edge should not have been created because the up-child does not
-    // list the parent, which is because we didn't provide the op in the right
-    // up stream.
     expectPreludeEqual(
       tree1.value.roots.keySet(),
       HashSet.of(tree1.value.rootNodeKey, downKey(parentId), downKey(childId)),
     );
+
+    // The down edge should not have been created because the up-child does not
+    // list the parent, which is because we didn't provide the op in the right
+    // up stream.
     expectIdentical(
       downNodeForNodeId(tree1, parentId).getOrThrow().children.isEmpty(),
       true,
     );
+
+    expectPreludeEqual(
+      tree1.desiredHeads(tree1.value),
+      HashMap.of(
+        [rootUpStreamId, "open" as const],
+        [rootDownStreamId, "open" as const],
+        [
+          new StreamId({deviceId, nodeId: childId, type: "up"}),
+          "open" as const,
+        ],
+        [
+          new StreamId({deviceId, nodeId: childId, type: "down"}),
+          "open" as const,
+        ],
+        [
+          new StreamId({deviceId, nodeId: parentId, type: "up"}),
+          "open" as const,
+        ],
+        [
+          new StreamId({deviceId, nodeId: parentId, type: "down"}),
+          "open" as const,
+        ],
+      ),
+    );
   });
 
-  it("creates up and down nodes and edges when the op is in both streams", () => {
+  it("up-streamed and down-streamed op", () => {
     const tree1 = tree.updateWithOneOp(
       op,
       HashSet.of(
@@ -143,47 +182,130 @@ describe("NestedPermissionedTree", () => {
         .isSome(),
       true,
     );
-  });
 
-  it("removes a child from a DownNode if the child gets a new parent", () => {
-    const junkId = new NodeId({creator: deviceId, rest: "junk"});
-
-    const tree1 = tree.updateWithOneOp(
-      op,
-      HashSet.of(
-        new StreamId({deviceId, nodeId: parentId, type: "down"}),
-        new StreamId({deviceId, nodeId: childId, type: "up"}),
+    expectPreludeEqual(
+      tree1.desiredHeads(tree1.value),
+      HashMap.of(
+        [rootUpStreamId, "open" as const],
+        [rootDownStreamId, "open" as const],
+        [
+          new StreamId({deviceId, nodeId: childId, type: "up"}),
+          "open" as const,
+        ],
+        [
+          new StreamId({deviceId, nodeId: childId, type: "down"}),
+          "open" as const,
+        ],
+        [
+          new StreamId({deviceId, nodeId: parentId, type: "up"}),
+          "open" as const,
+        ],
+        [
+          new StreamId({deviceId, nodeId: parentId, type: "down"}),
+          "open" as const,
+        ],
       ),
     );
-    const tree2 = tree1.updateWithOneOp(
-      {
-        timestamp: clock.now(),
-        type: "set edge",
-        edgeId: EdgeId.create("edge"),
-        parentId: junkId,
-        childId: childId,
-        rank: Rank.create(0),
-        streams: HashMap.of(),
-      },
-      HashSet.of(new StreamId({deviceId, nodeId: childId, type: "up"})),
-    );
+  });
+
+  it("move a child to a new parent without closed streams", () => {
+    const otherDeviceId = DeviceId.create("other device");
+    const newParentId = new NodeId({creator: otherDeviceId, rest: "junk"});
+    const grandChildId = new NodeId({creator: deviceId, rest: "grandchild"});
+
+    const tree2 = tree
+      .updateWithOneOp(
+        op,
+        HashSet.of(
+          new StreamId({deviceId, nodeId: parentId, type: "down"}),
+          new StreamId({deviceId, nodeId: childId, type: "up"}),
+        ),
+      )
+      .updateWithOneOp(
+        {
+          timestamp: clock.now(),
+          type: "set edge",
+          edgeId: EdgeId.create("edge"),
+          parentId: childId,
+          childId: grandChildId,
+          rank: Rank.create(0),
+          streams: HashMap.of(),
+        },
+        HashSet.of(
+          new StreamId({deviceId, nodeId: childId, type: "down"}),
+          new StreamId({deviceId, nodeId: grandChildId, type: "up"}),
+        ),
+      )
+      .updateWithOneOp(
+        {
+          timestamp: clock.now(),
+          type: "set edge",
+          edgeId: EdgeId.create("edge"),
+          parentId: newParentId,
+          childId: childId,
+          rank: Rank.create(0),
+          streams: HashMap.of(),
+        },
+        HashSet.of(new StreamId({deviceId, nodeId: childId, type: "up"})),
+      );
 
     expectPreludeEqual(
       tree2.value.roots.keySet(),
-      HashSet.of(tree1.value.rootNodeKey, downKey(parentId), downKey(childId)),
+      HashSet.of(tree2.value.rootNodeKey, downKey(parentId), downKey(childId)),
     );
 
     const edge = upNodeForNodeId(tree2, childId)
       .getOrThrow()
       .parents.get(EdgeId.create("edge"))
       .getOrThrow();
-    expectPreludeEqual(edge.parent.nodeId, junkId);
+    // The child should list the new parent.
+    expectPreludeEqual(edge.parent.nodeId, newParentId);
 
     // The child should be removed from the parent's list of children.
     expectIdentical(
       downNodeForNodeId(tree2, parentId).getOrThrow().children.isEmpty(),
       true,
     );
+
+    // expectPreludeEqual(
+    //   tree2.desiredHeads(tree2.value),
+    //   HashMap.of(
+    //     [rootUpStreamId, "open" as const],
+    //     [rootDownStreamId, "open" as const],
+    //     [
+    //       new StreamId({deviceId: otherDeviceId, nodeId: childId, type: "up"}),
+    //       "open" as const,
+    //     ],
+    //     [
+    //       new StreamId({
+    //         deviceId: otherDeviceId,
+    //         nodeId: childId,
+    //         type: "down",
+    //       }),
+    //       "open" as const,
+    //     ],
+    //     [
+    //       new StreamId({deviceId: otherDeviceId, nodeId: parentId, type: "up"}),
+    //       "open" as const,
+    //     ],
+    //     [
+    //       new StreamId({
+    //         deviceId: otherDeviceId,
+    //         nodeId: parentId,
+    //         type: "down",
+    //       }),
+    //       "open" as const,
+    //     ],
+    //     [
+    //       new StreamId({
+    //         deviceId: otherDeviceId,
+    //         nodeId: newParentId,
+    //         type: "up",
+    //       }),
+    //       "open" as const,
+    //     ],
+    //   ),
+    // );
   });
 
   it("retains an old parent when the child gets a new parent", () => {
