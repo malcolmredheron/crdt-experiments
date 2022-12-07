@@ -154,13 +154,11 @@ describe("NestedPermissionedTree", () => {
   });
 
   it("up-streamed and down-streamed op", () => {
+    const op = setEdge(rootId, childId);
     const tree1 = tree.update(
       HashMap.of(
-        [new StreamId(rootDownStreamId), opsList(setEdge(rootId, childId))],
-        [
-          new StreamId({deviceId, nodeId: childId, type: "up"}),
-          opsList(setEdge(rootId, childId)),
-        ],
+        [new StreamId(rootDownStreamId), opsList(op)],
+        [new StreamId({deviceId, nodeId: childId, type: "up"}), opsList(op)],
       ),
     );
 
