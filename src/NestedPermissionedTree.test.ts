@@ -14,6 +14,7 @@ import {
 import {expectIdentical, expectPreludeEqual} from "./helper/Shared.testing";
 import {ConsLinkedList, HashMap, HashSet, LinkedList, Option} from "prelude-ts";
 import {CountingClock} from "./helper/Clock.testing";
+import {OpList} from "./ControlledOpSet";
 
 function opsList(...ops: AppliedOp["op"][]): ConsLinkedList<AppliedOp["op"]> {
   return LinkedList.ofIterable(ops).reverse() as ConsLinkedList<
@@ -50,15 +51,22 @@ function downNodeForNodeId(
 describe("NestedPermissionedTree", () => {
   const clock = new CountingClock();
 
-  function setEdge(parentId: NodeId, childId: NodeId): AppliedOp["op"] {
+  function setEdge(
+    parentId: NodeId,
+    childId: NodeId,
+    extras?: {
+      edgeId?: EdgeId;
+      streams?: HashMap<StreamId, OpList<AppliedOp>>;
+    },
+  ): AppliedOp["op"] {
     return {
       timestamp: clock.now(),
       type: "set edge",
-      edgeId: EdgeId.create("edge"),
+      edgeId: extras?.edgeId || EdgeId.create("edge"),
       parentId,
       childId,
       rank: Rank.create(0),
-      streams: HashMap.of(),
+      streams: extras?.streams || HashMap.of(),
     };
   }
 
@@ -198,53 +206,90 @@ describe("NestedPermissionedTree", () => {
     );
   });
 
-  it("move a child to a new parent without closed streams", () => {
+  it("move a child to a parent with a different creator", () => {
+    const otherDeviceId = DeviceId.create("other device");
+    const newParentId = new NodeId({
+      creator: otherDeviceId,
+      rest: "other parent",
+    });
+    const op = setEdge(newParentId, rootId);
+
+    // This is a bit naughty: would be better to use .update() but that checks
+    // that the actual heads match the desired heads when we are done, which
+    // requires that we move the node into a parent where deviceId can still
+    // write to it. Since we want to test the case where deviceId can't write to
+    // the node, we'd need to create a somewhat complicated sharing setup.
+    const tree1 = tree.updateWithOneOp(op, HashSet.of(rootUpStreamId));
+
+    expectPreludeEqual(
+      tree1.value.roots.keySet(),
+      HashSet.of(tree1.value.rootNodeKey),
+    );
+
+    const edge = upNodeForNodeId(tree1, rootId)
+      .getOrThrow()
+      .parents.get(EdgeId.create("edge"))
+      .getOrThrow();
+    expectPreludeEqual(edge.parent.nodeId, newParentId);
+
+    // Since op doesn't list any contributions and deviceId can't write to the
+    // root after the move (the default "edge" is gone, and only otherDeviceId
+    // can write to the new parent), deviceId's stream gets closed with no
+    // contributions -- ie, removed.
+    expectPreludeEqual(
+      tree1.desiredHeads(tree1.value),
+      HashMap.of<StreamId, "open" | OpList<AppliedOp>>(
+        [
+          new StreamId({
+            deviceId: otherDeviceId,
+            nodeId: newParentId,
+            type: "up",
+          }),
+          "open",
+        ],
+        [
+          new StreamId({
+            deviceId: otherDeviceId,
+            nodeId: rootId,
+            type: "up",
+          }),
+          "open",
+        ],
+        [
+          new StreamId({
+            deviceId: otherDeviceId,
+            nodeId: rootId,
+            type: "down",
+          }),
+          "open",
+        ],
+      ),
+    );
+  });
+
+  it("move a child to a new parent", () => {
     const otherDeviceId = DeviceId.create("other device");
     const newParentId = new NodeId({creator: otherDeviceId, rest: "junk"});
-    const grandChildId = new NodeId({creator: deviceId, rest: "grandchild"});
 
-    const tree2 = tree
+    const tree1 = tree
       .updateWithOneOp(
-        setEdge(parentId, childId),
+        setEdge(parentId, rootId),
         HashSet.of(
           new StreamId({deviceId, nodeId: parentId, type: "down"}),
-          new StreamId({deviceId, nodeId: childId, type: "up"}),
+          new StreamId({deviceId, nodeId: rootId, type: "up"}),
         ),
       )
       .updateWithOneOp(
-        {
-          timestamp: clock.now(),
-          type: "set edge",
-          edgeId: EdgeId.create("edge"),
-          parentId: childId,
-          childId: grandChildId,
-          rank: Rank.create(0),
-          streams: HashMap.of(),
-        },
-        HashSet.of(
-          new StreamId({deviceId, nodeId: childId, type: "down"}),
-          new StreamId({deviceId, nodeId: grandChildId, type: "up"}),
-        ),
-      )
-      .updateWithOneOp(
-        {
-          timestamp: clock.now(),
-          type: "set edge",
-          edgeId: EdgeId.create("edge"),
-          parentId: newParentId,
-          childId: childId,
-          rank: Rank.create(0),
-          streams: HashMap.of(),
-        },
-        HashSet.of(new StreamId({deviceId, nodeId: childId, type: "up"})),
+        setEdge(newParentId, rootId),
+        HashSet.of(new StreamId({deviceId, nodeId: rootId, type: "up"})),
       );
 
     expectPreludeEqual(
-      tree2.value.roots.keySet(),
-      HashSet.of(tree2.value.rootNodeKey, downKey(parentId), downKey(childId)),
+      tree1.value.roots.keySet(),
+      HashSet.of(tree1.value.rootNodeKey, downKey(parentId)),
     );
 
-    const edge = upNodeForNodeId(tree2, childId)
+    const edge = upNodeForNodeId(tree1, rootId)
       .getOrThrow()
       .parents.get(EdgeId.create("edge"))
       .getOrThrow();
@@ -253,49 +298,47 @@ describe("NestedPermissionedTree", () => {
 
     // The child should be removed from the parent's list of children.
     expectIdentical(
-      downNodeForNodeId(tree2, parentId).getOrThrow().children.isEmpty(),
+      downNodeForNodeId(tree1, parentId).getOrThrow().children.isEmpty(),
       true,
     );
 
-    // expectPreludeEqual(
-    //   tree2.desiredHeads(tree2.value),
-    //   HashMap.of(
-    //     [rootUpStreamId, "open" as const],
-    //     [rootDownStreamId, "open" as const],
-    //     [
-    //       new StreamId({deviceId: otherDeviceId, nodeId: childId, type: "up"}),
-    //       "open" as const,
-    //     ],
-    //     [
-    //       new StreamId({
-    //         deviceId: otherDeviceId,
-    //         nodeId: childId,
-    //         type: "down",
-    //       }),
-    //       "open" as const,
-    //     ],
-    //     [
-    //       new StreamId({deviceId: otherDeviceId, nodeId: parentId, type: "up"}),
-    //       "open" as const,
-    //     ],
-    //     [
-    //       new StreamId({
-    //         deviceId: otherDeviceId,
-    //         nodeId: parentId,
-    //         type: "down",
-    //       }),
-    //       "open" as const,
-    //     ],
-    //     [
-    //       new StreamId({
-    //         deviceId: otherDeviceId,
-    //         nodeId: newParentId,
-    //         type: "up",
-    //       }),
-    //       "open" as const,
-    //     ],
-    //   ),
-    // );
+    expectPreludeEqual(
+      tree1.desiredHeads(tree1.value),
+      HashMap.of(
+        [
+          new StreamId({deviceId: otherDeviceId, nodeId: rootId, type: "up"}),
+          "open" as const,
+        ],
+        [
+          new StreamId({
+            deviceId: otherDeviceId,
+            nodeId: rootId,
+            type: "down",
+          }),
+          "open" as const,
+        ],
+        [
+          new StreamId({deviceId, nodeId: parentId, type: "up"}),
+          "open" as const,
+        ],
+        [
+          new StreamId({
+            deviceId,
+            nodeId: parentId,
+            type: "down",
+          }),
+          "open" as const,
+        ],
+        [
+          new StreamId({
+            deviceId: otherDeviceId,
+            nodeId: newParentId,
+            type: "up",
+          }),
+          "open" as const,
+        ],
+      ),
+    );
   });
 
   it("retains an old parent when the child gets a new parent", () => {

@@ -433,10 +433,10 @@ export class UpNode extends ObjectValue<{
   }
 
   private openWriterDevices(): HashSet<DeviceId> {
-    return this.parents.foldLeft(
-      HashSet.of(this.nodeId.creator),
-      (devices, [, edge]) =>
-        HashSet.ofIterable([...devices, ...edge.parent.openWriterDevices()]),
+    // A node with no parents is writeable by the creator.
+    if (this.parents.isEmpty()) return HashSet.of(this.nodeId.creator);
+    return this.parents.foldLeft(HashSet.of(), (devices, [, edge]) =>
+      HashSet.ofIterable([...devices, ...edge.parent.openWriterDevices()]),
     );
   }
 
