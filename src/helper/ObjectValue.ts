@@ -1,4 +1,4 @@
-import {areEqual, fieldsHashCode} from "prelude-ts";
+import {areEqual, fieldsHashCode, HashSet} from "prelude-ts";
 import {scalarComparison} from "./Collection";
 import {WritableProps} from "./TypeMapping";
 import {MemoizeInstance} from "./Memoize";
@@ -36,6 +36,10 @@ class ObjectValueBase<Props extends {}> {
     Object.assign(this, props);
   }
 
+  // Add fields to this if a subclass has fields that can't be compared using
+  // standard equality. (And override .equals() in that case!)
+  excludeFromEquals = HashSet.of<string>();
+
   copy(
     // this: {constructor: {new (props: Props): ObjectValueBase<Props>}},
     diffs: Partial<WritableProps<Props>>,
@@ -57,7 +61,7 @@ class ObjectValueBase<Props extends {}> {
     return `${this.constructor.name} ${Math.random()}`;
   }
 
-  private orderedFieldValues(): ReadonlyArray<unknown> {
+  private orderedFieldValues(): ReadonlyArray<[string, unknown]> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const constructor = (this as any).__proto__.constructor;
     let sortedPropertyNames: ReadonlyArray<string> =
@@ -69,7 +73,7 @@ class ObjectValueBase<Props extends {}> {
     }
 
     // @ts-ignore Allow indexing by property name.
-    return sortedPropertyNames.map((name) => this[name]);
+    return sortedPropertyNames.map((name) => [name, this[name]]);
   }
 
   // ---------------------------------------------------------------------------
@@ -83,8 +87,9 @@ class ObjectValueBase<Props extends {}> {
       const ourFields = this.orderedFieldValues();
       const otherFields = (other as this).orderedFieldValues();
       for (let i = 0; i < ourFields.length; i++) {
-        const ours = ourFields[i];
-        const other = otherFields[i];
+        if (this.excludeFromEquals.contains(ourFields[i][0])) continue;
+        const ours = ourFields[i][1];
+        const other = otherFields[i][1];
         if ((ours === undefined) !== (other === undefined)) return false;
         if (ours === other) continue;
         if (!areEqual(ours, other)) return false;
@@ -96,7 +101,9 @@ class ObjectValueBase<Props extends {}> {
   }
 
   hashCode(): number {
-    return fieldsHashCode(...this.orderedFieldValues());
+    return fieldsHashCode(
+      ...this.orderedFieldValues().map((tuple) => tuple[1]),
+    );
   }
 }
 

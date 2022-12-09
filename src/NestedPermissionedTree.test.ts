@@ -12,14 +12,12 @@ import {
   UpNode,
 } from "./NestedPermissionedTree";
 import {expectIdentical, expectPreludeEqual} from "./helper/Shared.testing";
-import {ConsLinkedList, HashMap, HashSet, LinkedList, Option} from "prelude-ts";
+import {HashMap, HashSet, LinkedList, Option} from "prelude-ts";
 import {CountingClock} from "./helper/Clock.testing";
-import {OpList} from "./ControlledOpSet";
+import {ControlledOpSet, OpList} from "./ControlledOpSet";
 
-function opsList(...ops: AppliedOp["op"][]): ConsLinkedList<AppliedOp["op"]> {
-  return LinkedList.ofIterable(ops).reverse() as ConsLinkedList<
-    AppliedOp["op"]
-  >;
+function opsList(...ops: AppliedOp["op"][]): OpList<AppliedOp> {
+  return LinkedList.ofIterable(ops).reverse() as OpList<AppliedOp>;
 }
 
 function upKey(nodeId: NodeId): NodeKey {
@@ -96,9 +94,8 @@ describe("NestedPermissionedTree", () => {
   });
 
   it("up-streamed op", () => {
-    const tree1 = tree.update(
-      HashMap.of([rootUpStreamId, opsList(setEdge(parentId, rootId))]),
-    );
+    const ops = opsList(setEdge(parentId, rootId));
+    const tree1 = tree.update(HashMap.of([rootUpStreamId, ops]));
     expectPreludeEqual(
       tree1.value.roots.keySet(),
       HashSet.of(tree1.value.rootNodeKey),
@@ -111,6 +108,13 @@ describe("NestedPermissionedTree", () => {
       .getOrThrow();
     expectPreludeEqual(edge.parent.nodeId, parentId);
 
+    expectIdentical(
+      ControlledOpSet.headsEqual(
+        tree1.value.root().upNode.heads,
+        HashMap.of([rootUpStreamId, ops]),
+      ),
+      true,
+    );
     expectPreludeEqual(
       tree1.desiredHeads(tree1.value),
       HashMap.of(

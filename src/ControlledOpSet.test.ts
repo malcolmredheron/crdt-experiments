@@ -26,9 +26,10 @@ describe("ControlledOpSet", () => {
 
     const clock = new CountingClock();
     const cos = ControlledOpSet.create<Value, AppliedOp, StreamId>(
-      persistentDoOpFactory((value, op, streamIds) => {
+      persistentDoOpFactory((value, op, opHeads) => {
         return value.append(
-          `${streamIds
+          `${opHeads
+            .keySet()
             .toArray()
             .map((x) => "" + x)
             .sort()

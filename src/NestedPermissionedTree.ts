@@ -26,8 +26,8 @@ export function createPermissionedTree(
   const rootNodeId = new NodeId({creator: deviceId, rest: undefined});
   const rootNodeKey = new NodeKey({nodeId: rootNodeId, type: "down"});
   return ControlledOpSet.create<Tree, AppliedOp, StreamId>(
-    persistentDoOpFactory((value, op, streamIds) => {
-      return value.doOp(op, streamIds);
+    persistentDoOpFactory((value, op, opHeads) => {
+      return value.doOp(op, opHeads);
     }),
     persistentUndoOp,
     (value) => value.desiredHeads(),
@@ -41,6 +41,7 @@ export function createPermissionedTree(
             parents: HashMap.of(),
             closedWriterDevicesForUpNode: HashMap.of(),
             closedWriterDevicesForDownNode: HashMap.of(),
+            heads: HashMap.of(),
           }),
           children: HashMap.of(),
         }),
@@ -84,6 +85,7 @@ type SetEdge = {
 type InternalOp = SetEdgeInternal;
 
 type SetEdgeInternal = SetEdge & {
+  // original: SetEdge;
   parent: Option<UpNode>;
   child: Option<DownNode>;
 };
@@ -99,17 +101,20 @@ class Tree extends ObjectValue<TreeProps>() {
     this.assertRootsConsistent();
   }
 
-  doOp(op: AppliedOp["op"], streamIds: HashSet<StreamId>): this {
+  doOp(
+    op: AppliedOp["op"],
+    opHeads: HashMap<StreamId, OpList<AppliedOp>>,
+  ): this {
     const upParentKey = new NodeKey({nodeId: op.parentId, type: "up"});
     const upChildKey = new NodeKey({nodeId: op.childId, type: "up"});
     const downParentKey = new NodeKey({nodeId: op.parentId, type: "down"});
     const downChildKey = new NodeKey({nodeId: op.childId, type: "down"});
 
-    const up = streamIds.anyMatch(
+    const up = opHeads.anyMatch(
       (streamId) =>
         streamId.type === "up" && streamId.nodeId.equals(op.childId),
     );
-    const down = streamIds.anyMatch(
+    const down = opHeads.anyMatch(
       (streamId) =>
         streamId.type === "down" && streamId.nodeId.equals(op.parentId),
     );
@@ -138,11 +143,14 @@ class Tree extends ObjectValue<TreeProps>() {
 
     // Apply the op.
     const internalOp = asType<InternalOp>({
+      // original: op,
       parent: upParent as Option<UpNode>,
       child: downChild as Option<DownNode>,
       ...op,
     });
-    const roots2 = mapValuesStable(roots1, (root) => root.doOp(internalOp));
+    const roots2 = mapValuesStable(roots1, (root) =>
+      root.doOp(internalOp, opHeads),
+    );
     if (roots2 === this.roots) return this;
 
     // If the down child or the original up parent was removed, add it back as
@@ -162,7 +170,7 @@ class Tree extends ObjectValue<TreeProps>() {
           {},
           ({original, final}) => original.isSome() && final.isNone(),
           ({original}) =>
-            roots.put(key, original.getOrThrow().doOp(internalOp)),
+            roots.put(key, original.getOrThrow().doOp(internalOp, opHeads)),
         )
         .with(P._, () => roots)
         .exhaustive(),
@@ -255,6 +263,7 @@ class Tree extends ObjectValue<TreeProps>() {
         parents: HashMap.of(),
         closedWriterDevicesForUpNode: HashMap.of(),
         closedWriterDevicesForDownNode: HashMap.of(),
+        heads: HashMap.of(),
       });
       return {node, roots: roots.put(nodeKey, node)};
     } else {
@@ -300,6 +309,7 @@ export class UpNode extends ObjectValue<{
   parents: HashMap<EdgeId, Edge>;
   closedWriterDevicesForUpNode: HashMap<DeviceId, OpList<AppliedOp>>;
   closedWriterDevicesForDownNode: HashMap<DeviceId, OpList<AppliedOp>>;
+  heads: HashMap<StreamId, OpList<AppliedOp>>;
 }>() {
   static create(nodeId: NodeId): UpNode {
     return new UpNode({
@@ -307,13 +317,17 @@ export class UpNode extends ObjectValue<{
       parents: HashMap.of(),
       closedWriterDevicesForUpNode: HashMap.of(),
       closedWriterDevicesForDownNode: HashMap.of(),
+      heads: HashMap.of(),
     });
   }
 
-  doOp(op: SetEdgeInternal): this {
+  doOp(
+    op: SetEdgeInternal,
+    opHeads: HashMap<StreamId, OpList<AppliedOp>>,
+  ): this {
     if (op.parent.isNone()) return this;
     const parents1 = mapValuesStable(this.parents, (edge) => {
-      const parent1 = edge.parent.doOp(op);
+      const parent1 = edge.parent.doOp(op, opHeads);
       if (parent1 === edge.parent) return edge;
       return edge.copy({parent: parent1});
     });
@@ -323,6 +337,11 @@ export class UpNode extends ObjectValue<{
           op.edgeId,
           new Edge({parent: op.parent.get(), rank: op.rank}),
         ),
+        heads: opHeads.foldLeft(this.heads, (heads, [streamId, opHead]) => {
+          if (!streamId.nodeId.equals(this.nodeId) || streamId.type !== "up")
+            return heads;
+          return heads.put(streamId, opHead);
+        }),
       });
 
       const newlyAddedWriterDevices = this1
@@ -447,6 +466,16 @@ export class UpNode extends ObjectValue<{
       soFar.orCall(() => edge.parent.nodeForNodeKey(nodeKey)),
     );
   }
+
+  // #CantCompareHeads
+  excludeFromEquals = HashSet.of("heads");
+  equals(other: unknown): boolean {
+    if (!super.equals(other)) return false;
+    // The cast is safe because super.equals() returned true.
+    if (!ControlledOpSet.headsEqual(this.heads, (other as UpNode).heads))
+      return false;
+    return true;
+  }
 }
 
 export class DownNode extends ObjectValue<{
@@ -454,8 +483,8 @@ export class DownNode extends ObjectValue<{
   // TODO: the key should be node id + edge id
   children: HashMap<NodeId, DownNode>;
 }>() {
-  doOp(op: InternalOp): this {
-    const upNode1 = this.upNode.doOp(op);
+  doOp(op: InternalOp, opHeads: HashMap<StreamId, OpList<AppliedOp>>): this {
+    const upNode1 = this.upNode.doOp(op, opHeads);
 
     const childShouldBeOurs =
       op.child.isSome() &&
@@ -479,7 +508,9 @@ export class DownNode extends ObjectValue<{
         children.remove(op.childId),
       )
       .otherwise(({children}) => children);
-    const children2 = mapValuesStable(children1, (child) => child.doOp(op));
+    const children2 = mapValuesStable(children1, (child) =>
+      child.doOp(op, opHeads),
+    );
 
     if (upNode1 == this.upNode && children1 === this.children) return this;
     return this.copy({upNode: upNode1, children: children2});
