@@ -15,6 +15,7 @@ import {asType, mapValuesStable} from "./helper/Collection";
 // This really shouldn't be here, but ...
 import {expectPreludeEqual} from "./helper/Shared.testing";
 import {match, P} from "ts-pattern";
+import {headsEqual} from "./StreamHeads";
 
 export type NestedPermissionedTree = ControlledOpSet<Tree, AppliedOp, StreamId>;
 
@@ -472,8 +473,7 @@ export class UpNode extends ObjectValue<{
   equals(other: unknown): boolean {
     if (!super.equals(other)) return false;
     // The cast is safe because super.equals() returned true.
-    if (!ControlledOpSet.headsEqual(this.heads, (other as UpNode).heads))
-      return false;
+    if (!headsEqual(this.heads, (other as UpNode).heads)) return false;
     return true;
   }
 }

@@ -14,7 +14,8 @@ import {
 import {expectIdentical, expectPreludeEqual} from "./helper/Shared.testing";
 import {HashMap, HashSet, LinkedList, Option} from "prelude-ts";
 import {CountingClock} from "./helper/Clock.testing";
-import {ControlledOpSet, OpList} from "./ControlledOpSet";
+import {OpList} from "./ControlledOpSet";
+import {headsEqual} from "./StreamHeads";
 
 function opsList(...ops: AppliedOp["op"][]): OpList<AppliedOp> {
   return LinkedList.ofIterable(ops).reverse() as OpList<AppliedOp>;
@@ -109,7 +110,7 @@ describe("NestedPermissionedTree", () => {
     expectPreludeEqual(edge.parent.nodeId, parentId);
 
     expectIdentical(
-      ControlledOpSet.headsEqual(
+      headsEqual(
         tree1.value.root().upNode.heads,
         HashMap.of([rootUpStreamId, ops]),
       ),

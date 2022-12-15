@@ -1,15 +1,18 @@
 import {Timestamp} from "./helper/Timestamp";
-import {asType, throwError} from "./helper/Collection";
 import {AssertFailed} from "./helper/Assert";
 import {
   ConsLinkedList,
   HashMap,
   HashSet,
   LinkedList,
-  Option,
   WithEquality,
 } from "prelude-ts";
 import {Seq} from "prelude-ts/dist/src/Seq";
+import {
+  concreteHeadsForAbstractHeads,
+  headsEqual,
+  undoHeadsOnce,
+} from "./StreamHeads";
 
 export type OpBase = {timestamp: Timestamp};
 type AppliedOpBase = Readonly<{
@@ -84,16 +87,11 @@ export class ControlledOpSet<
     remoteHeads: HashMap<StreamId, OpList<AppliedOp>>,
   ): ControlledOpSet<Value, AppliedOp, StreamId> {
     const abstractDesiredHeads = this.desiredHeads(this.value);
-    const desiredHeads = abstractDesiredHeads.flatMap((streamId, openOrOp) =>
-      openOrOp === "open"
-        ? asType<Option<[StreamId, OpList<AppliedOp>][]>>(
-            remoteHeads
-              .get(streamId)
-              .map((remoteHead) => [[streamId, remoteHead]]),
-          ).getOrElse([])
-        : [[streamId, openOrOp]],
+    const desiredHeads = concreteHeadsForAbstractHeads(
+      remoteHeads,
+      abstractDesiredHeads,
     );
-    if (ControlledOpSet.headsEqual(desiredHeads, this.heads)) return this;
+    if (headsEqual(desiredHeads, this.heads)) return this;
 
     const {value, appliedOps, ops} = ControlledOpSet.commonStateAndDesiredOps(
       this.undoOp,
@@ -184,9 +182,9 @@ export class ControlledOpSet<
       }>
     >();
 
-    while (!ControlledOpSet.headsEqual(desiredHeads, actualHeads)) {
-      const desired = ControlledOpSet.undoHeadsOnce(desiredHeads);
-      const actual = ControlledOpSet.undoHeadsOnce(actualHeads);
+    while (!headsEqual(desiredHeads, actualHeads)) {
+      const desired = undoHeadsOnce(desiredHeads);
+      const actual = undoHeadsOnce(actualHeads);
 
       if (
         desired.isSome() &&
@@ -234,81 +232,6 @@ export class ControlledOpSet<
       appliedOps,
       ops,
     };
-  }
-
-  // ##CantCompareHeads
-  //
-  // We can't compare head maps because ops are simple JS structures. Also, we
-  // don't want to walk the entire list -- because ops are unique, we can just
-  // compare the identity of the head ops.
-  static headsEqual<
-    AppliedOp extends AppliedOpBase,
-    StreamId extends WithEquality,
-  >(
-    left: HashMap<StreamId, OpList<AppliedOp>>,
-    right: HashMap<StreamId, OpList<AppliedOp>>,
-  ): boolean {
-    if (left.length() !== right.length()) return false;
-    for (const [streamId, leftHead] of left) {
-      const rightHead = right.get(streamId);
-      if (leftHead !== rightHead.getOrUndefined()) return false;
-    }
-    return true;
-  }
-
-  private static undoHeadsOnce<
-    AppliedOp extends AppliedOpBase,
-    StreamId extends WithEquality,
-  >(
-    heads: HashMap<StreamId, OpList<AppliedOp>>,
-  ): Option<{
-    op: AppliedOp["op"];
-    opHeads: HashMap<StreamId, OpList<AppliedOp>>;
-    remainingHeads: HashMap<StreamId, OpList<AppliedOp>>;
-  }> {
-    if (heads.isEmpty()) return Option.none();
-
-    const newestStreamAndOpList = heads.foldLeft<
-      Option<{
-        op: AppliedOp["op"];
-        opHeads: HashMap<StreamId, OpList<AppliedOp>>;
-      }>
-    >(Option.none(), (winner, current) => {
-      return winner.isNone()
-        ? Option.some({
-            op: current[1].head().get(),
-            opHeads: HashMap.of(current),
-          })
-        : winner.get().op.timestamp > current[1].head().get().timestamp
-        ? winner
-        : winner.get().op === current[1].head().get()
-        ? Option.some({
-            op: winner.get().op,
-            opHeads: winner.get().opHeads.put(current[0], current[1]),
-          })
-        : winner.get().op.timestamp === current[1].head().get().timestamp
-        ? throwError("If ops have the same timestamp, they must be identical")
-        : Option.some({
-            op: current[1].head().get(),
-            opHeads: HashMap.of(current),
-          });
-    });
-    if (newestStreamAndOpList.isNone()) return Option.none();
-    const {op, opHeads} = newestStreamAndOpList.get();
-    const remainingHeads1 = opHeads.foldLeft(
-      heads,
-      (heads, [streamId, head]) => {
-        const head1 = head.tail().getOrElse(LinkedList.of());
-        return LinkedList.isNotEmpty(head1)
-          ? heads.put(streamId, head1)
-          : heads.remove(streamId);
-      },
-    );
-    return Option.some({
-      op,
-      opHeads,
-      remainingHeads: remainingHeads1,
-    });
   }
 
   private static doOnce<

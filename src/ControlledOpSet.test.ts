@@ -10,6 +10,7 @@ import {
 } from "./PersistentUndoHelper";
 import {HashMap, LinkedList, Vector} from "prelude-ts";
 import {TypedValue} from "./helper/TypedValue";
+import {headsEqual} from "./StreamHeads";
 
 describe("ControlledOpSet", () => {
   class StreamId extends TypedValue<"StreamId", string> {}
@@ -57,7 +58,7 @@ describe("ControlledOpSet", () => {
       const cos1 = cos.update(HashMap.of([streamA, opA0]));
       expectPreludeEqual(cos1.value, Vector.of("a.a0"));
       expectIdentical(
-        ControlledOpSet.headsEqual(cos1.heads, HashMap.of([streamA, opA0])),
+        headsEqual(cos1.heads, HashMap.of([streamA, opA0])),
         true,
       );
     });
@@ -66,10 +67,7 @@ describe("ControlledOpSet", () => {
       const cos1 = cos.update(HashMap.of([streamA, opA0], [streamB, opA1]));
       expectPreludeEqual(cos1.value, Vector.of("a/b.a0", "b.a1"));
       expectIdentical(
-        ControlledOpSet.headsEqual(
-          cos1.heads,
-          HashMap.of([streamA, opA0], [streamB, opA1]),
-        ),
+        headsEqual(cos1.heads, HashMap.of([streamA, opA0], [streamB, opA1])),
         true,
       );
     });
@@ -78,7 +76,7 @@ describe("ControlledOpSet", () => {
       const cos1 = cos.update(HashMap.of([streamA, opA1]));
       expectPreludeEqual(cos1.value, Vector.of("a.a0", "a.a1"));
       expectIdentical(
-        ControlledOpSet.headsEqual(cos1.heads, HashMap.of([streamA, opA1])),
+        headsEqual(cos1.heads, HashMap.of([streamA, opA1])),
         true,
       );
     });
@@ -95,7 +93,7 @@ describe("ControlledOpSet", () => {
       const cos2 = cos1.update(HashMap.of([streamA, opA0]));
       expectPreludeEqual(cos2.value, Vector.of("a.a0"));
       expectIdentical(
-        ControlledOpSet.headsEqual(cos2.heads, HashMap.of([streamA, opA0])),
+        headsEqual(cos2.heads, HashMap.of([streamA, opA0])),
         true,
       );
     });
@@ -249,10 +247,7 @@ describe("ControlledOpSet", () => {
       const cos1 = cos.update(HashMap.of([streamA, opA1], [streamB, opB0]));
       expectPreludeEqual(cos1.value.tokens, Vector.of("a0", "a1"));
       expectIdentical(
-        ControlledOpSet.headsEqual(
-          cos1.heads,
-          HashMap.of([streamA, opA1], [streamB, opB0]),
-        ),
+        headsEqual(cos1.heads, HashMap.of([streamA, opA1], [streamB, opB0])),
         true,
       );
     });
@@ -266,10 +261,7 @@ describe("ControlledOpSet", () => {
       // a1 was excluded because b0 closed that stream.
       expectPreludeEqual(cos2.value.tokens, Vector.of("a0"));
       expectIdentical(
-        ControlledOpSet.headsEqual(
-          cos2.heads,
-          HashMap.of([streamA, opA0], [streamB, opB1]),
-        ),
+        headsEqual(cos2.heads, HashMap.of([streamA, opA0], [streamB, opB1])),
         true,
       );
     });
@@ -282,10 +274,7 @@ describe("ControlledOpSet", () => {
       const cos2 = cos.update(HashMap.of([streamA, opA1], [streamB, opB2]));
       expectPreludeEqual(cos2.value.tokens, Vector.of("a0", "a1"));
       expectIdentical(
-        ControlledOpSet.headsEqual(
-          cos2.heads,
-          HashMap.of([streamA, opA1], [streamB, opB2]),
-        ),
+        headsEqual(cos2.heads, HashMap.of([streamA, opA1], [streamB, opB2])),
         true,
       );
     });
@@ -298,10 +287,7 @@ describe("ControlledOpSet", () => {
       // Even a2, which came after b1, which closed stream A, is gone.
       expectPreludeEqual(cos2.value.tokens, Vector.of("a0"));
       expectIdentical(
-        ControlledOpSet.headsEqual(
-          cos2.heads,
-          HashMap.of([streamA, opA0], [streamB, opB1]),
-        ),
+        headsEqual(cos2.heads, HashMap.of([streamA, opA0], [streamB, opB1])),
         true,
       );
     });
@@ -316,10 +302,7 @@ describe("ControlledOpSet", () => {
 
       expectPreludeEqual(cos2.value.tokens, Vector.of("b0Alternate"));
       expectIdentical(
-        ControlledOpSet.headsEqual(
-          cos2.heads,
-          HashMap.of([streamB, opB0Alternate]),
-        ),
+        headsEqual(cos2.heads, HashMap.of([streamB, opB0Alternate])),
         true,
       );
     });
