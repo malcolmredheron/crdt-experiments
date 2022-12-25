@@ -19,6 +19,32 @@ import {Clock} from "./helper/Clock";
 import {headsEqual} from "./StreamHeads";
 
 describe("Tree", () => {
+  let clock: Clock;
+  beforeEach(() => (clock = new CountingClock()));
+
+  function opsList(...ops: Op[]): OpList {
+    return LinkedList.ofIterable(ops).reverse() as OpList;
+  }
+
+  function setEdge(
+    parentId: NodeId,
+    childId: NodeId,
+    extras?: {
+      edgeId?: EdgeId;
+      streams?: HashMap<StreamId, OpList>;
+    },
+  ): SetEdge {
+    return {
+      timestamp: clock.now(),
+      type: "set edge",
+      edgeId: extras?.edgeId || EdgeId.create("edge"),
+      parentId,
+      childId,
+      rank: Rank.create(0),
+      contributingHeads: extras?.streams || HashMap.of(),
+    };
+  }
+
   const deviceId = DeviceId.create("device");
   const rootId = new NodeId({creator: deviceId, rest: undefined});
   const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
@@ -27,8 +53,9 @@ describe("Tree", () => {
     it("writeable by creator when no parents", () => {
       const tree = new UpTree({
         nodeId: rootId,
-        parents: HashMap.of(),
         heads: HashMap.of(),
+        closedStreams: HashMap.of(),
+        parents: HashMap.of(),
       });
       expectPreludeEqual(
         tree.desiredHeads(),
@@ -49,6 +76,8 @@ describe("Tree", () => {
       });
       const tree = new UpTree({
         nodeId: rootId,
+        closedStreams: HashMap.of(),
+        heads: HashMap.of(),
         parents: HashMap.of([
           edgeId,
           new Edge({
@@ -56,59 +85,56 @@ describe("Tree", () => {
             parent: new UpTree({
               nodeId: parentId,
               heads: HashMap.of(),
+              closedStreams: HashMap.of(),
               parents: HashMap.of(),
             }),
           }),
         ]),
-        heads: HashMap.of(),
       });
       expectPreludeEqual(
         tree.desiredHeads(),
-        HashMap.of(
-          [
-            new StreamId({deviceId: otherDeviceId, nodeId: rootId, type: "up"}),
-            "open" as const,
-          ],
-          // [
-          //   new StreamId({
-          //     deviceId: otherDeviceId,
-          //     nodeId: parentId,
-          //     type: "up",
-          //   }),
-          //   "open" as const,
-          // ],
+        HashMap.of([
+          new StreamId({deviceId: otherDeviceId, nodeId: rootId, type: "up"}),
+          "open" as const,
+        ]),
+      );
+    });
+
+    it("includes closed streams", () => {
+      const otherDeviceId = DeviceId.create("other device");
+      const parentId = new NodeId({
+        creator: otherDeviceId,
+        rest: "parent",
+      });
+      const otherDeviceOps = opsList(setEdge(parentId, rootId));
+      const otherStreamId = new StreamId({
+        nodeId: rootId,
+        deviceId: otherDeviceId,
+        type: "up",
+      });
+      const tree = new UpTree({
+        nodeId: rootId,
+        heads: HashMap.of(),
+        closedStreams: HashMap.of([otherStreamId, otherDeviceOps]),
+        parents: HashMap.of(),
+      });
+      expectIdentical(
+        headsEqual(
+          tree.desiredHeads(),
+          HashMap.of<StreamId, "open" | OpList>(
+            [
+              new StreamId({deviceId: deviceId, nodeId: rootId, type: "up"}),
+              "open" as const,
+            ],
+            [otherStreamId, otherDeviceOps],
+          ),
         ),
+        true,
       );
     });
   });
 
   describe("buildUpTree", () => {
-    let clock: Clock;
-    beforeEach(() => (clock = new CountingClock()));
-
-    function opsList(...ops: Op[]): OpList {
-      return LinkedList.ofIterable(ops).reverse() as OpList;
-    }
-
-    function setEdge(
-      parentId: NodeId,
-      childId: NodeId,
-      extras?: {
-        edgeId?: EdgeId;
-        streams?: HashMap<StreamId, OpList>;
-      },
-    ): SetEdge {
-      return {
-        timestamp: clock.now(),
-        type: "set edge",
-        edgeId: extras?.edgeId || EdgeId.create("edge"),
-        parentId,
-        childId,
-        rank: Rank.create(0),
-        streams: extras?.streams || HashMap.of(),
-      };
-    }
-
     it("initial tree", () => {
       const tree = buildUpTree(HashMap.of(), Timestamp.create(0), rootId);
       expectPreludeEqual(tree.nodeId, rootId);
@@ -208,6 +234,62 @@ describe("Tree", () => {
           EdgeId.create("parent"),
           EdgeId.create("A"),
           EdgeId.create("B"),
+        ),
+      );
+    });
+
+    it("closes streams for removed writers", () => {
+      const otherDeviceId = DeviceId.create("other device");
+      const parentId = new NodeId({creator: deviceId, rest: "parent"});
+      const parentAId = new NodeId({creator: otherDeviceId, rest: "parent a"});
+      const parentBId = new NodeId({creator: deviceId, rest: "parent b"});
+      const parentCId = new NodeId({creator: deviceId, rest: "parent c"});
+      const otherRootStreamId = new StreamId({
+        nodeId: rootId,
+        deviceId: otherDeviceId,
+        type: "up",
+      });
+      const otherRootOps = opsList(
+        setEdge(parentCId, rootId, {
+          edgeId: EdgeId.create("from contributions"),
+        }),
+      );
+      const deviceRootStreamId = new StreamId({
+        nodeId: rootId,
+        deviceId: deviceId,
+        type: "up",
+      });
+      const deviceRootEarlyOps = opsList(
+        // So that deviceId can continue to write to the root even after
+        // parents are added.
+        setEdge(parentId, rootId, {edgeId: EdgeId.create("permanent")}),
+        // Add otherDeviceId as a writer.
+        setEdge(parentAId, rootId),
+      );
+      const universe = HashMap.of([
+        deviceRootStreamId,
+        deviceRootEarlyOps.prepend(
+          // Remove otherDeviceId as a writer.
+          setEdge(parentBId, rootId, {
+            streams: HashMap.of([otherRootStreamId, otherRootOps]),
+          }),
+        ),
+      ]);
+      const tree = buildUpTree(universe, maxTimestamp, rootId);
+      // Only the stream for the removed writer gets closed.
+      expectIdentical(
+        headsEqual(
+          tree.closedStreams,
+          HashMap.of([otherRootStreamId, otherRootOps]),
+        ),
+        true,
+      );
+      expectPreludeEqual(
+        tree.parents.keySet(),
+        HashSet.of(
+          EdgeId.create("permanent"),
+          EdgeId.create("edge"),
+          EdgeId.create("from contributions"),
         ),
       );
     });

@@ -7,6 +7,7 @@ import {
   headsEqual,
   undoHeadsOnce,
 } from "./StreamHeads";
+import {throwError} from "./helper/Collection";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 type NodeType = "up" | "down";
@@ -38,7 +39,7 @@ export type SetEdge = {
 
   // This indicates the final op that we'll accept for any streams that get
   // removed by this op.
-  streams: ConcreteHeads;
+  contributingHeads: ConcreteHeads;
 };
 
 export function buildUpTree(
@@ -46,7 +47,12 @@ export function buildUpTree(
   until: Timestamp,
   nodeId: NodeId,
 ): UpTree {
-  const tree = new UpTree({nodeId, heads: HashMap.of(), parents: HashMap.of()});
+  const tree = new UpTree({
+    nodeId,
+    heads: HashMap.of(),
+    closedStreams: HashMap.of(),
+    parents: HashMap.of(),
+  });
   const concreteHeads = concreteHeadsForAbstractHeads(
     universe,
     tree.desiredHeads(),
@@ -60,7 +66,12 @@ function buildUpTreeHelper(
   until: Timestamp,
   nodeId: NodeId,
 ): UpTree {
-  const tree = new UpTree({nodeId, heads: HashMap.of(), parents: HashMap.of()});
+  const tree = new UpTree({
+    nodeId,
+    heads: HashMap.of(),
+    closedStreams: HashMap.of(),
+    parents: HashMap.of(),
+  });
   let ops = LinkedList.of<{op: Op; opHeads: ConcreteHeads}>();
   let remainingHeads = concreteHeads;
   while (true) {
@@ -97,6 +108,8 @@ export class Edge extends ObjectValue<{
 export class UpTree extends ObjectValue<{
   readonly nodeId: NodeId;
   heads: ConcreteHeads;
+  closedStreams: ConcreteHeads;
+
   parents: HashMap<EdgeId, Edge>;
 }>() {
   update(
@@ -119,14 +132,44 @@ export class UpTree extends ObjectValue<{
         }),
       )
       .getOrElse(this);
-    const parents1 = this1.parents.mapValues((edge) =>
-      edge.copy({parent: build(edge.parent.nodeId, until)}),
-    );
-    return this1.copy({parents: parents1});
+    const this2 = this1.copy({
+      parents: this1.parents.mapValues((edge) =>
+        edge.copy({parent: build(edge.parent.nodeId, until)}),
+      ),
+    });
+    const this3 = opInfo
+      .map(({opHeads, op}) => {
+        const addedWriterDeviceIds = this2
+          .openWriterDevices()
+          .removeAll(this.openWriterDevices());
+        const closedStreams1 = this2.closedStreams.filterKeys((streamId) =>
+          addedWriterDeviceIds.contains(streamId.deviceId),
+        );
+
+        const removedWriterDeviceIds = this.openWriterDevices().removeAll(
+          this2.openWriterDevices(),
+        );
+        const closedStreams2 = closedStreams1.mergeWith(
+          removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
+            const streamId = new StreamId({
+              deviceId: removedWriterId,
+              nodeId: this.nodeId,
+              type: "up",
+            });
+            return op.contributingHeads
+              .get(streamId)
+              .map((ops) => [streamId, ops]);
+          }),
+          (ops0, ops1) => throwError("Should not have stream-id collision"),
+        );
+        return this2.copy({closedStreams: closedStreams2});
+      })
+      .getOrElse(this2);
+    return this3;
   }
 
   desiredHeads(): AbstractHeads {
-    const ourHeads = HashMap.ofIterable<StreamId, "open" | OpList>(
+    const openStreams = HashMap.ofIterable<StreamId, "open" | OpList>(
       this.openWriterDevices()
         .toVector()
         .map((deviceId) => [
@@ -138,12 +181,16 @@ export class UpTree extends ObjectValue<{
           "open",
         ]),
     );
+    const ourStreams = HashMap.ofIterable([
+      ...openStreams,
+      ...this.closedStreams,
+    ]);
     // We also need the heads for the parents, since they help to select the ops
     // that define this object
-    // return this.parents.foldLeft(ourHeads, (heads, [, {parent}]) =>
+    // return this.parents.foldLeft(openStreams, (heads, [, {parent}]) =>
     //   HashMap.ofIterable([...heads, ...parent.desiredHeads()]),
     // );
-    return ourHeads;
+    return ourStreams;
   }
 
   private openWriterDevices(): HashSet<DeviceId> {

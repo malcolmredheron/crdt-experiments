@@ -17,8 +17,8 @@ export function headsEqual<
   Op extends {timestamp: Timestamp},
   StreamId extends WithEquality,
 >(
-  left: HashMap<StreamId, ConsLinkedList<Op>>,
-  right: HashMap<StreamId, ConsLinkedList<Op>>,
+  left: HashMap<StreamId, "open" | ConsLinkedList<Op>>,
+  right: HashMap<StreamId, "open" | ConsLinkedList<Op>>,
 ): boolean {
   if (left.length() !== right.length()) return false;
   for (const [streamId, leftHead] of left) {
