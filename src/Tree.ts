@@ -98,7 +98,7 @@ function nextIterator(
               tree.parents
                 .get(edgeId)
                 .map((edge) => edge.copy({parent}))
-                .getOrCall(() => new Edge({parent, rank: op.rank})),
+                .getOrThrow(),
             ),
           }),
       })),
