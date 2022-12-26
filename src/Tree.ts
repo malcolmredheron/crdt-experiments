@@ -83,7 +83,6 @@ function nextIterator(
   );
   const nextSelfOpInfo = nextOp(concreteHeads, after).map((info) => ({
     ...info,
-    op: info.op,
     timestamp: info.op.timestamp,
     handle: (): {
       tree: UpTree;
@@ -116,14 +115,7 @@ function nextIterator(
       })),
     );
 
-  const nextOpInfoOption = Vector.ofIterable<{
-    timestamp: Timestamp;
-    op: Op;
-    handle: () => {
-      tree: UpTree;
-      parentIterators: HashMap<EdgeId, InitialPersistentIterator<UpTree>>;
-    };
-  }>([
+  const nextOpInfoOption = Vector.ofIterable([
     ...nextParentOpInfos,
     ...nextSelfOpInfo.map((info) => [info]).getOrElse([]),
   ]).reduce((left, right) => (left.timestamp < right.timestamp ? left : right));
@@ -199,46 +191,6 @@ export function advanceIteratorUntil<T>(
     iterator = next.get();
   }
 }
-
-// function buildUpTreeHelper(
-//   universe: ConcreteHeads,
-//   concreteHeads: ConcreteHeads,
-//   until: Timestamp,
-//   nodeId: NodeId,
-// ): UpTree {
-//   const tree = new UpTree({
-//     nodeId,
-//     heads: HashMap.of(),
-//     closedStreams: HashMap.of(),
-//     parents: HashMap.of(),
-//   });
-//   let ops = LinkedList.of<{op: Op; opHeads: ConcreteHeads}>();
-//   let remainingHeads = concreteHeads;
-//   while (true) {
-//     const result = undoHeadsOnce(remainingHeads);
-//     if (result.isSome()) {
-//       const {op, opHeads} = result.get();
-//       if (op.timestamp <= until) ops = ops.prepend({op, opHeads});
-//       remainingHeads = result.get().remainingHeads;
-//     } else break;
-//   }
-//
-//   const build = (nodeId: NodeId, until: Timestamp): UpTree =>
-//     buildUpTree(universe, until, nodeId);
-//   const tree1 = ops.foldLeft(tree, (tree, {op, opHeads}) =>
-//     tree.update(build, op.timestamp, Option.of({op, opHeads})),
-//   );
-//   // Give the tree a chance to update its children with anything that comes
-//   // after the last op that applies to the root node.
-//   const tree2 = tree1.update(build, until, Option.none());
-//
-//   const concreteHeads1 = concreteHeadsForAbstractHeads(
-//     universe,
-//     tree2.desiredHeads(),
-//   );
-//   if (headsEqual(concreteHeads, concreteHeads1)) return tree2;
-//   else return buildUpTreeHelper(universe, concreteHeads1, until, nodeId);
-// }
 
 export class Edge extends ObjectValue<{
   parent: UpTree;
