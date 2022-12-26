@@ -1,5 +1,5 @@
 import {
-  advanceIteratorUntil,
+  advanceIteratorToAfter,
   buildUpTree,
   DeviceId,
   Edge,
@@ -148,7 +148,7 @@ describe("Tree", () => {
         new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
         opsList(op),
       ]);
-      const tree = advanceIteratorUntil(
+      const tree = advanceIteratorToAfter(
         buildUpTree(universe, rootId),
         maxTimestamp,
       ).value;
@@ -164,7 +164,7 @@ describe("Tree", () => {
         opsList(op),
       ]);
       expectIdentical(op.timestamp, Timestamp.create(0));
-      const tree = advanceIteratorUntil(
+      const tree = advanceIteratorToAfter(
         buildUpTree(universe, rootId),
         Timestamp.create(-1),
       ).value;
@@ -187,7 +187,7 @@ describe("Tree", () => {
           opsList(setEdge(parentId, rootId)),
         ],
       );
-      const tree = advanceIteratorUntil(
+      const tree = advanceIteratorToAfter(
         buildUpTree(universe, rootId),
         maxTimestamp,
       ).value;
@@ -220,7 +220,7 @@ describe("Tree", () => {
           opsList(setEdge(grandparentId, parentId)),
         ],
       );
-      const tree = advanceIteratorUntil(
+      const tree = advanceIteratorToAfter(
         buildUpTree(universe, rootId),
         maxTimestamp,
       ).value;
@@ -263,7 +263,7 @@ describe("Tree", () => {
           ),
         ],
       );
-      const tree = advanceIteratorUntil(
+      const tree = advanceIteratorToAfter(
         buildUpTree(universe, rootId),
         maxTimestamp,
       ).value;
@@ -321,7 +321,7 @@ describe("Tree", () => {
           }),
         ),
       ]);
-      const tree = advanceIteratorUntil(
+      const tree = advanceIteratorToAfter(
         buildUpTree(universe, rootId),
         maxTimestamp,
       ).value;
