@@ -151,7 +151,7 @@ describe("Tree", () => {
       const tree = advanceIteratorUntil(
         buildUpTree(universe, rootId),
         maxTimestamp,
-      );
+      ).value;
       const parent = tree.parents.single().getOrThrow()[1].parent;
       expectPreludeEqual(parent.nodeId, parentId);
     });
@@ -167,7 +167,7 @@ describe("Tree", () => {
       const tree = advanceIteratorUntil(
         buildUpTree(universe, rootId),
         Timestamp.create(-1),
-      );
+      ).value;
       expectPreludeEqual(tree.parents, HashMap.of());
     });
 
@@ -190,7 +190,7 @@ describe("Tree", () => {
       const tree = advanceIteratorUntil(
         buildUpTree(universe, rootId),
         maxTimestamp,
-      );
+      ).value;
       expectIdentical(
         headsEqual(
           tree.heads,
@@ -223,7 +223,7 @@ describe("Tree", () => {
       const tree = advanceIteratorUntil(
         buildUpTree(universe, rootId),
         maxTimestamp,
-      );
+      ).value;
       expectIdentical(
         headsEqual(
           tree.heads,
@@ -263,7 +263,10 @@ describe("Tree", () => {
           ),
         ],
       );
-      const tree = buildUpTree(universe, maxTimestamp, rootId);
+      const tree = advanceIteratorUntil(
+        buildUpTree(universe, rootId),
+        maxTimestamp,
+      ).value;
       expectIdentical(
         headsEqual(
           tree.heads,
@@ -318,7 +321,10 @@ describe("Tree", () => {
           }),
         ),
       ]);
-      const tree = buildUpTree(universe, maxTimestamp, rootId);
+      const tree = advanceIteratorUntil(
+        buildUpTree(universe, rootId),
+        maxTimestamp,
+      ).value;
       // Only the stream for the removed writer gets closed.
       expectIdentical(
         headsEqual(

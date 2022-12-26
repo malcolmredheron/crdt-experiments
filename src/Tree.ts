@@ -1,7 +1,7 @@
 import {ObjectValue} from "./helper/ObjectValue";
 import {TypedValue} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
-import {ConsLinkedList, HashMap, HashSet, Option} from "prelude-ts";
+import {ConsLinkedList, HashMap, HashSet, Option, Vector} from "prelude-ts";
 import {concreteHeadsForAbstractHeads, undoHeadsOnce} from "./StreamHeads";
 import {throwError} from "./helper/Collection";
 
@@ -62,36 +62,98 @@ export function buildUpTree(
   return {
     value,
     next: () =>
-      nextIterator(universe, value, Timestamp.create(Number.MIN_SAFE_INTEGER)),
+      nextIterator(
+        universe,
+        value,
+        HashMap.of(),
+        Timestamp.create(Number.MIN_SAFE_INTEGER),
+      ),
   };
 }
 
 function nextIterator(
   universe: ConcreteHeads,
   tree: UpTree,
+  parentIterators: HashMap<EdgeId, InitialPersistentIterator<UpTree>>,
   after: Timestamp,
 ): Option<PersistentIterator<UpTree>> {
   const concreteHeads = concreteHeadsForAbstractHeads(
     universe,
     tree.desiredHeads(),
   );
-  const nextOpInfo = nextOp(concreteHeads, after);
-  if (nextOpInfo.isNone()) return Option.none();
-  const {op, opHeads} = nextOpInfo.get();
-  const tree1 = advanceUpTree(universe, tree, op, opHeads);
+  const nextSelfOpInfo = nextOp(concreteHeads, after).map((info) => ({
+    ...info,
+    op: info.op,
+    timestamp: info.op.timestamp,
+    handle: (): {
+      tree: UpTree;
+      parentIterators: HashMap<EdgeId, InitialPersistentIterator<UpTree>>;
+    } => advanceUpTree(universe, tree, parentIterators, info.op, info.opHeads),
+  }));
+
+  const nextParentOpInfos = parentIterators
+    .toVector()
+    .mapOption(([edgeId, iterator]) =>
+      iterator.next().map(({op, value: parent, next}) => ({
+        op,
+        value: parent,
+        timestamp: op.timestamp,
+        handle: (): {
+          tree: UpTree;
+          parentIterators: HashMap<EdgeId, InitialPersistentIterator<UpTree>>;
+        } => ({
+          tree: tree.copy({
+            parents: tree.parents.put(
+              edgeId,
+              tree.parents
+                .get(edgeId)
+                .map((edge) => edge.copy({parent}))
+                .getOrCall(() => new Edge({parent, rank: op.rank})),
+            ),
+          }),
+          parentIterators: parentIterators.put(edgeId, {value: parent, next}),
+        }),
+      })),
+    );
+
+  const nextOpInfoOption = Vector.ofIterable<{
+    timestamp: Timestamp;
+    op: Op;
+    handle: () => {
+      tree: UpTree;
+      parentIterators: HashMap<EdgeId, InitialPersistentIterator<UpTree>>;
+    };
+  }>([
+    ...nextParentOpInfos,
+    ...nextSelfOpInfo.map((info) => [info]).getOrElse([]),
+  ]).reduce((left, right) => (left.timestamp < right.timestamp ? left : right));
+
+  if (nextOpInfoOption.isNone()) return Option.none();
+  const nextOpInfo = nextOpInfoOption.get();
+  const {tree: tree1, parentIterators: parentIterators1} = nextOpInfo.handle();
   return Option.some({
     value: tree1,
-    op,
-    next: () => nextIterator(universe, tree1, op.timestamp),
+    op: nextOpInfo.op,
+    next: () =>
+      nextIterator(universe, tree1, parentIterators1, nextOpInfo.timestamp),
   });
 }
 
 function advanceUpTree(
   universe: ConcreteHeads,
   tree: UpTree,
+  parentIterators: HashMap<EdgeId, InitialPersistentIterator<UpTree>>,
   op: Op,
   opHeads: ConcreteHeads,
-): UpTree {
+): {
+  tree: UpTree;
+  parentIterators: HashMap<EdgeId, InitialPersistentIterator<UpTree>>;
+} {
+  const parentIterator = parentIterators
+    .get(op.edgeId)
+    .getOrCall(() =>
+      advanceIteratorUntil(buildUpTree(universe, op.parentId), op.timestamp),
+    );
   const tree1 = tree.copy({
     heads: opHeads.foldLeft(tree.heads, (heads, [streamId, opHead]) => {
       if (!streamId.nodeId.equals(tree.nodeId) || streamId.type !== "up")
@@ -101,15 +163,13 @@ function advanceUpTree(
     parents: tree.parents.put(
       op.edgeId,
       new Edge({
-        parent: advanceIteratorUntil(
-          buildUpTree(universe, op.parentId),
-          op.timestamp,
-        ),
+        parent: parentIterator.value,
         rank: op.rank,
       }),
     ),
   });
-  return tree1;
+  const parentIterators1 = parentIterators.put(op.edgeId, parentIterator);
+  return {tree: tree1, parentIterators: parentIterators1};
 }
 
 function nextOp(
@@ -131,11 +191,11 @@ function nextOp(
 export function advanceIteratorUntil<T>(
   iterator: InitialPersistentIterator<T>,
   until: Timestamp,
-): T {
+): InitialPersistentIterator<T> {
   while (true) {
     const next = iterator.next();
-    if (next.isNone()) return iterator.value;
-    if (next.get().op.timestamp > until) return iterator.value;
+    if (next.isNone()) return iterator;
+    if (next.get().op.timestamp > until) return iterator;
     iterator = next.get();
   }
 }
