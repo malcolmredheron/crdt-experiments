@@ -1,4 +1,5 @@
 import {
+  advanceIteratorUntil,
   buildUpTree,
   DeviceId,
   Edge,
@@ -136,7 +137,7 @@ describe("Tree", () => {
 
   describe("buildUpTree", () => {
     it("initial tree", () => {
-      const tree = buildUpTree(HashMap.of(), Timestamp.create(0), rootId);
+      const tree = buildUpTree(HashMap.of(), rootId).value;
       expectPreludeEqual(tree.nodeId, rootId);
     });
 
@@ -147,7 +148,10 @@ describe("Tree", () => {
         new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
         opsList(op),
       ]);
-      const tree = buildUpTree(universe, maxTimestamp, rootId);
+      const tree = advanceIteratorUntil(
+        buildUpTree(universe, rootId),
+        maxTimestamp,
+      );
       const parent = tree.parents.single().getOrThrow()[1].parent;
       expectPreludeEqual(parent.nodeId, parentId);
     });
@@ -160,8 +164,44 @@ describe("Tree", () => {
         opsList(op),
       ]);
       expectIdentical(op.timestamp, Timestamp.create(0));
-      const tree = buildUpTree(universe, Timestamp.create(-1), rootId);
+      const tree = advanceIteratorUntil(
+        buildUpTree(universe, rootId),
+        Timestamp.create(-1),
+      );
       expectPreludeEqual(tree.parents, HashMap.of());
+    });
+
+    it("applies one op, adds a parent and updates it with an earlier op", () => {
+      const parentId = new NodeId({creator: deviceId, rest: "parent"});
+      const grandparentId = new NodeId({
+        creator: deviceId,
+        rest: "grandparent",
+      });
+      const universe = HashMap.of(
+        [
+          new StreamId({nodeId: parentId, deviceId: deviceId, type: "up"}),
+          opsList(setEdge(grandparentId, parentId)),
+        ],
+        [
+          new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
+          opsList(setEdge(parentId, rootId)),
+        ],
+      );
+      const tree = advanceIteratorUntil(
+        buildUpTree(universe, rootId),
+        maxTimestamp,
+      );
+      expectIdentical(
+        headsEqual(
+          tree.heads,
+          universe.filterKeys((streamId) => streamId.nodeId.equals(rootId)),
+        ),
+        true,
+      );
+      const parent = tree.parents.single().getOrThrow()[1].parent;
+      expectPreludeEqual(parent.nodeId, parentId);
+      const grandparent = parent.parents.single().getOrThrow()[1].parent;
+      expectPreludeEqual(grandparent.nodeId, grandparentId);
     });
 
     it("applies one op, adds a parent and updates it with a later op", () => {
@@ -180,7 +220,10 @@ describe("Tree", () => {
           opsList(setEdge(grandparentId, parentId)),
         ],
       );
-      const tree = buildUpTree(universe, maxTimestamp, rootId);
+      const tree = advanceIteratorUntil(
+        buildUpTree(universe, rootId),
+        maxTimestamp,
+      );
       expectIdentical(
         headsEqual(
           tree.heads,

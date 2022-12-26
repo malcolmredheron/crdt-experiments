@@ -1,12 +1,8 @@
 import {ObjectValue} from "./helper/ObjectValue";
 import {TypedValue} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
-import {ConsLinkedList, HashMap, HashSet, LinkedList, Option} from "prelude-ts";
-import {
-  concreteHeadsForAbstractHeads,
-  headsEqual,
-  undoHeadsOnce,
-} from "./StreamHeads";
+import {ConsLinkedList, HashMap, HashSet, Option} from "prelude-ts";
+import {concreteHeadsForAbstractHeads, undoHeadsOnce} from "./StreamHeads";
 import {throwError} from "./helper/Collection";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
@@ -42,63 +38,147 @@ export type SetEdge = {
   contributingHeads: ConcreteHeads;
 };
 
+interface InitialPersistentIterator<T> {
+  value: T;
+  next(): Option<PersistentIterator<T>>;
+}
+
+interface PersistentIterator<T> {
+  value: T;
+  op: Op;
+  next(): Option<PersistentIterator<T>>;
+}
+
 export function buildUpTree(
   universe: ConcreteHeads,
-  until: Timestamp,
   nodeId: NodeId,
-): UpTree {
-  const tree = new UpTree({
+): InitialPersistentIterator<UpTree> {
+  const value = new UpTree({
     nodeId,
     heads: HashMap.of(),
     closedStreams: HashMap.of(),
     parents: HashMap.of(),
   });
+  return {
+    value,
+    next: () =>
+      nextIterator(universe, value, Timestamp.create(Number.MIN_SAFE_INTEGER)),
+  };
+}
+
+function nextIterator(
+  universe: ConcreteHeads,
+  tree: UpTree,
+  after: Timestamp,
+): Option<PersistentIterator<UpTree>> {
   const concreteHeads = concreteHeadsForAbstractHeads(
     universe,
     tree.desiredHeads(),
   );
-  return buildUpTreeHelper(universe, concreteHeads, until, nodeId);
+  const nextOpInfo = nextOp(concreteHeads, after);
+  if (nextOpInfo.isNone()) return Option.none();
+  const {op, opHeads} = nextOpInfo.get();
+  const tree1 = advanceUpTree(universe, tree, op, opHeads);
+  return Option.some({
+    value: tree1,
+    op,
+    next: () => nextIterator(universe, tree1, op.timestamp),
+  });
 }
 
-function buildUpTreeHelper(
+function advanceUpTree(
   universe: ConcreteHeads,
-  concreteHeads: ConcreteHeads,
-  until: Timestamp,
-  nodeId: NodeId,
+  tree: UpTree,
+  op: Op,
+  opHeads: ConcreteHeads,
 ): UpTree {
-  const tree = new UpTree({
-    nodeId,
-    heads: HashMap.of(),
-    closedStreams: HashMap.of(),
-    parents: HashMap.of(),
+  const tree1 = tree.copy({
+    heads: opHeads.foldLeft(tree.heads, (heads, [streamId, opHead]) => {
+      if (!streamId.nodeId.equals(tree.nodeId) || streamId.type !== "up")
+        return heads;
+      return heads.put(streamId, opHead);
+    }),
+    parents: tree.parents.put(
+      op.edgeId,
+      new Edge({
+        parent: advanceIteratorUntil(
+          buildUpTree(universe, op.parentId),
+          op.timestamp,
+        ),
+        rank: op.rank,
+      }),
+    ),
   });
-  let ops = LinkedList.of<{op: Op; opHeads: ConcreteHeads}>();
+  return tree1;
+}
+
+function nextOp(
+  concreteHeads: ConcreteHeads,
+  after: Timestamp,
+): Option<{op: Op; opHeads: ConcreteHeads}> {
+  let next: Option<{op: Op; opHeads: ConcreteHeads}> = Option.none();
   let remainingHeads = concreteHeads;
   while (true) {
     const result = undoHeadsOnce(remainingHeads);
-    if (result.isSome()) {
-      const {op, opHeads} = result.get();
-      if (op.timestamp <= until) ops = ops.prepend({op, opHeads});
-      remainingHeads = result.get().remainingHeads;
-    } else break;
+    if (result.isNone()) return next;
+    const {op, opHeads} = result.get();
+    if (op.timestamp <= after) return next;
+    next = Option.of({op, opHeads});
+    remainingHeads = result.get().remainingHeads;
   }
-
-  const build = (nodeId: NodeId, until: Timestamp): UpTree =>
-    buildUpTree(universe, until, nodeId);
-  const tree1 = ops.foldLeft(tree, (tree, {op, opHeads}) =>
-    tree.update(build, op.timestamp, Option.of({op, opHeads})),
-  );
-  // Give the tree a chance to update its children with anything that comes
-  // after the last op that applies to the root node.
-  const tree2 = tree1.update(build, until, Option.none());
-
-  const concreteHeads1 = concreteHeadsForAbstractHeads(
-    universe,
-    tree2.desiredHeads(),
-  );
-  if (headsEqual(concreteHeads, concreteHeads1)) return tree2;
-  else return buildUpTreeHelper(universe, concreteHeads1, until, nodeId);
 }
+
+export function advanceIteratorUntil<T>(
+  iterator: InitialPersistentIterator<T>,
+  until: Timestamp,
+): T {
+  while (true) {
+    const next = iterator.next();
+    if (next.isNone()) return iterator.value;
+    if (next.get().op.timestamp > until) return iterator.value;
+    iterator = next.get();
+  }
+}
+
+// function buildUpTreeHelper(
+//   universe: ConcreteHeads,
+//   concreteHeads: ConcreteHeads,
+//   until: Timestamp,
+//   nodeId: NodeId,
+// ): UpTree {
+//   const tree = new UpTree({
+//     nodeId,
+//     heads: HashMap.of(),
+//     closedStreams: HashMap.of(),
+//     parents: HashMap.of(),
+//   });
+//   let ops = LinkedList.of<{op: Op; opHeads: ConcreteHeads}>();
+//   let remainingHeads = concreteHeads;
+//   while (true) {
+//     const result = undoHeadsOnce(remainingHeads);
+//     if (result.isSome()) {
+//       const {op, opHeads} = result.get();
+//       if (op.timestamp <= until) ops = ops.prepend({op, opHeads});
+//       remainingHeads = result.get().remainingHeads;
+//     } else break;
+//   }
+//
+//   const build = (nodeId: NodeId, until: Timestamp): UpTree =>
+//     buildUpTree(universe, until, nodeId);
+//   const tree1 = ops.foldLeft(tree, (tree, {op, opHeads}) =>
+//     tree.update(build, op.timestamp, Option.of({op, opHeads})),
+//   );
+//   // Give the tree a chance to update its children with anything that comes
+//   // after the last op that applies to the root node.
+//   const tree2 = tree1.update(build, until, Option.none());
+//
+//   const concreteHeads1 = concreteHeadsForAbstractHeads(
+//     universe,
+//     tree2.desiredHeads(),
+//   );
+//   if (headsEqual(concreteHeads, concreteHeads1)) return tree2;
+//   else return buildUpTreeHelper(universe, concreteHeads1, until, nodeId);
+// }
 
 export class Edge extends ObjectValue<{
   parent: UpTree;
