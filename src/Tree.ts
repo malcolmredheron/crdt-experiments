@@ -143,7 +143,29 @@ function advanceUpTree(
       }),
     ),
   });
-  return tree1;
+
+  const addedWriterDeviceIds = tree1
+    .openWriterDevices()
+    .removeAll(tree.openWriterDevices());
+  const closedStreams1 = tree1.closedStreams.filterKeys((streamId) =>
+    addedWriterDeviceIds.contains(streamId.deviceId),
+  );
+
+  const removedWriterDeviceIds = tree
+    .openWriterDevices()
+    .removeAll(tree1.openWriterDevices());
+  const closedStreams2 = closedStreams1.mergeWith(
+    removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
+      const streamId = new StreamId({
+        deviceId: removedWriterId,
+        nodeId: tree.nodeId,
+        type: "up",
+      });
+      return op.contributingHeads.get(streamId).map((ops) => [streamId, ops]);
+    }),
+    (ops0, ops1) => throwError("Should not have stream-id collision"),
+  );
+  return tree1.copy({closedStreams: closedStreams2});
 }
 
 function nextOp(
