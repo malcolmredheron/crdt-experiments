@@ -3,7 +3,12 @@ import {TypedValue} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
 import {ConsLinkedList, HashMap, HashSet, Option, Vector} from "prelude-ts";
 import {concreteHeadsForAbstractHeads} from "./StreamHeads";
-import {mapValuesStable, throwError} from "./helper/Collection";
+import {
+  consTail,
+  mapMapOption,
+  mapValuesStable,
+  throwError,
+} from "./helper/Collection";
 import {match} from "ts-pattern";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
@@ -102,58 +107,36 @@ function nextIterator(
   if (opOption.isNone()) return Option.none();
   const op = opOption.get();
 
-  const changingForwardStreams = state.forwardStreams.filterValues(
-    (stream) => stream.head().get() === op,
+  const parentIterators1 = state.parentIterators.mapValues((i) =>
+    i
+      .next()
+      .map((next) => (next.op === op ? next.result : i))
+      .getOrElse(i),
   );
-
-  const changingParentIterators = state.parentIterators.flatMap(
-    (nodeId, iterator) =>
-      iterator
-        .next()
-        .flatMap((i) =>
-          i.op === op
-            ? Option.of<[NodeId, InitialPersistentIterator<UpTree>][]>([
-                [nodeId, i.result],
-              ])
-            : Option.none<[NodeId, InitialPersistentIterator<UpTree>][]>(),
-        )
-        .getOrElse([]),
-  );
-  const changingParentIterators1 = state.parentIterators.containsKey(
-    op.parentId,
-  )
-    ? changingParentIterators
-    : changingParentIterators.put(
+  const parentIterators2 = parentIterators1.containsKey(op.parentId)
+    ? parentIterators1
+    : parentIterators1.put(
         op.parentId,
         advanceIteratorUntil(buildUpTree(universe, op.parentId), op.timestamp),
       );
-  const parentIterators1 = changingParentIterators1.foldLeft(
-    state.parentIterators,
-    (parentIterators, [nodeId, iterator]) => {
-      return parentIterators.put(nodeId, iterator);
-    },
-  );
   const edges1 = mapValuesStable(state.tree.edges, (edge) =>
-    changingParentIterators1
+    parentIterators2
       .get(edge.parent.nodeId)
       .map((iterator) => edge.copy({parent: iterator.value}))
       .getOrElse(edge),
   );
 
-  const forwardStreams1 = changingForwardStreams.foldLeft(
+  const forwardStreams1 = mapMapOption(
     state.forwardStreams,
-    (forwardStreams, [streamId, forwardStream]) => {
-      // #Prelude tail should return Option<ConsLinkedList<T>>.
-      // #Prelude tail returns Some in all cases but is documented to return
-      // None when empty.
-      return (forwardStream.tail() as Option<ConsLinkedList<Op>>)
-        .flatMap((tail) =>
-          tail.isEmpty()
-            ? Option.none<ConcreteHeads>()
-            : Option.some(forwardStreams.put(streamId, tail)),
-        )
-        .getOrCall(() => forwardStreams.remove(streamId));
+    (streamId, forwardStream): Option<ConsLinkedList<Op>> => {
+      return forwardStream.head().get() === op
+        ? consTail(forwardStream)
+        : Option.of(forwardStream);
     },
+  );
+
+  const changingForwardStreams = state.forwardStreams.filterValues(
+    (stream) => stream.head().get() === op,
   );
   const tree1 = match({streamOps: !changingForwardStreams.isEmpty()})
     .with({streamOps: true}, () => {
@@ -161,12 +144,12 @@ function nextIterator(
         op.edgeId,
         new Edge({
           rank: op.rank,
-          parent: parentIterators1.get(op.parentId).getOrThrow().value,
+          parent: parentIterators2.get(op.parentId).getOrThrow().value,
         }),
       );
       return state.tree.copy({edges: edges2});
     })
-    .with({streamOps: false}, () => state.tree)
+    .with({streamOps: false}, () => state.tree.copy({edges: edges1}))
     .exhaustive();
   return Option.of({
     op,
@@ -178,8 +161,7 @@ function nextIterator(
           state.copy({
             tree: tree1,
             forwardStreams: forwardStreams1,
-            parentIterators: parentIterators1,
-            // parents: parents1,
+            parentIterators: parentIterators2,
           }),
         ),
     },
