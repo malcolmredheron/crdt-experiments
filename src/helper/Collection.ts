@@ -1,5 +1,5 @@
 import {AssertFailed} from "./Assert";
-import {HashMap} from "prelude-ts";
+import {ConsLinkedList, HashMap, Option, WithEquality} from "prelude-ts";
 
 export function asType<T>(value: T): T {
   return value;
@@ -62,4 +62,31 @@ export function mapValuesStable<K, V>(
     return v1;
   });
   return changed ? map1 : map;
+}
+
+// What ConsLinkedList#tail should be, fixing:
+// - #Prelude: tail should return Option<ConsLinkedList<T>>.
+// - #Prelude: tail returns Some in all cases but is documented to return
+//   None when empty.
+export function consTail<T>(
+  list: ConsLinkedList<T>,
+): Option<ConsLinkedList<T>> {
+  const tail = list.tail();
+  return tail.flatMap((tail) =>
+    tail.isEmpty()
+      ? Option.none<ConsLinkedList<T>>()
+      : Option.of(tail as ConsLinkedList<T>),
+  );
+}
+
+// #Prelude: Map should support mapOption
+export function mapMapOption<K extends WithEquality, V>(
+  map: HashMap<K, V>,
+  f: (key: K, value: V) => Option<V>,
+): HashMap<K, V> {
+  return map.flatMap((key, value) =>
+    f(key, value)
+      .map((value) => [[key, value]] as Iterable<[K, V]>)
+      .getOrElse([] as Iterable<[K, V]>),
+  );
 }
