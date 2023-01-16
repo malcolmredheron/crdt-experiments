@@ -46,9 +46,10 @@ class ObjectValueBase<Props extends {}> {
   ): this {
     const props: Props = {} as Props;
     Object.assign(props, this, diffs);
-    return new (this.constructor as {
+    const this1 = new (this.constructor as {
       new (props: Props): ObjectValueBase<Props>;
     })(props) as this;
+    return this1.equals(this) ? this : this1;
   }
 
   @MemoizeInstance

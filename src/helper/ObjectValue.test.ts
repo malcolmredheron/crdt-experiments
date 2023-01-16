@@ -41,6 +41,12 @@ describe("ObjectValue", () => {
     expectPreludeEqual(initedNames, Vector.of("agent smith", "agent orange"));
   });
 
+  it("copy() returns the original when unchanged", () => {
+    const name = new Name({first: "agent", last: "smith"});
+    expectIdentical(name.copy({}), name);
+    expectIdentical(name.copy({last: "smith"}), name);
+  });
+
   it("copy() returns the same type as the original", () => {
     const name: Name = new Name({first: "agent", last: "smith"});
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
