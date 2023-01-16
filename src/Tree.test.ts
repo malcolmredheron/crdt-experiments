@@ -1,5 +1,5 @@
 import {
-  advanceIteratorToAfter,
+  advanceIteratorUntil,
   buildUpTree,
   DeviceId,
   Edge,
@@ -56,7 +56,7 @@ describe("Tree", () => {
         nodeId: rootId,
         heads: HashMap.of(),
         closedStreams: HashMap.of(),
-        parents: HashMap.of(),
+        edges: HashMap.of(),
       });
       expectPreludeEqual(
         tree.desiredHeads(),
@@ -79,7 +79,7 @@ describe("Tree", () => {
         nodeId: rootId,
         closedStreams: HashMap.of(),
         heads: HashMap.of(),
-        parents: HashMap.of([
+        edges: HashMap.of([
           edgeId,
           new Edge({
             rank,
@@ -87,7 +87,7 @@ describe("Tree", () => {
               nodeId: parentId,
               heads: HashMap.of(),
               closedStreams: HashMap.of(),
-              parents: HashMap.of(),
+              edges: HashMap.of(),
             }),
           }),
         ]),
@@ -117,7 +117,7 @@ describe("Tree", () => {
         nodeId: rootId,
         heads: HashMap.of(),
         closedStreams: HashMap.of([otherStreamId, otherDeviceOps]),
-        parents: HashMap.of(),
+        edges: HashMap.of(),
       });
       expectIdentical(
         headsEqual(
@@ -148,11 +148,11 @@ describe("Tree", () => {
         new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
         opsList(op),
       ]);
-      const tree = advanceIteratorToAfter(
+      const tree = advanceIteratorUntil(
         buildUpTree(universe, rootId),
         maxTimestamp,
       ).value;
-      const parent = tree.parents.single().getOrThrow()[1].parent;
+      const parent = tree.edges.single().getOrThrow()[1].parent;
       expectPreludeEqual(parent.nodeId, parentId);
     });
 
@@ -164,11 +164,11 @@ describe("Tree", () => {
         opsList(op),
       ]);
       expectIdentical(op.timestamp, Timestamp.create(0));
-      const tree = advanceIteratorToAfter(
+      const tree = advanceIteratorUntil(
         buildUpTree(universe, rootId),
         Timestamp.create(-1),
       ).value;
-      expectPreludeEqual(tree.parents, HashMap.of());
+      expectPreludeEqual(tree.edges, HashMap.of());
     });
 
     it("applies one op, adds a parent and updates it with an earlier op", () => {
@@ -187,7 +187,7 @@ describe("Tree", () => {
           opsList(setEdge(parentId, rootId)),
         ],
       );
-      const tree = advanceIteratorToAfter(
+      const tree = advanceIteratorUntil(
         buildUpTree(universe, rootId),
         maxTimestamp,
       ).value;
@@ -198,9 +198,9 @@ describe("Tree", () => {
         ),
         true,
       );
-      const parent = tree.parents.single().getOrThrow()[1].parent;
+      const parent = tree.edges.single().getOrThrow()[1].parent;
       expectPreludeEqual(parent.nodeId, parentId);
-      const grandparent = parent.parents.single().getOrThrow()[1].parent;
+      const grandparent = parent.edges.single().getOrThrow()[1].parent;
       expectPreludeEqual(grandparent.nodeId, grandparentId);
     });
 
@@ -220,7 +220,7 @@ describe("Tree", () => {
           opsList(setEdge(grandparentId, parentId)),
         ],
       );
-      const tree = advanceIteratorToAfter(
+      const tree = advanceIteratorUntil(
         buildUpTree(universe, rootId),
         maxTimestamp,
       ).value;
@@ -231,9 +231,9 @@ describe("Tree", () => {
         ),
         true,
       );
-      const parent = tree.parents.single().getOrThrow()[1].parent;
+      const parent = tree.edges.single().getOrThrow()[1].parent;
       expectPreludeEqual(parent.nodeId, parentId);
-      const grandparent = parent.parents.single().getOrThrow()[1].parent;
+      const grandparent = parent.edges.single().getOrThrow()[1].parent;
       expectPreludeEqual(grandparent.nodeId, grandparentId);
     });
 
@@ -263,7 +263,7 @@ describe("Tree", () => {
           ),
         ],
       );
-      const tree = advanceIteratorToAfter(
+      const tree = advanceIteratorUntil(
         buildUpTree(universe, rootId),
         maxTimestamp,
       ).value;
@@ -275,7 +275,7 @@ describe("Tree", () => {
         true,
       );
       expectPreludeEqual(
-        tree.parents.keySet(),
+        tree.edges.keySet(),
         HashSet.of(
           EdgeId.create("parent"),
           EdgeId.create("A"),
@@ -321,7 +321,7 @@ describe("Tree", () => {
           }),
         ),
       ]);
-      const tree = advanceIteratorToAfter(
+      const tree = advanceIteratorUntil(
         buildUpTree(universe, rootId),
         maxTimestamp,
       ).value;
@@ -334,7 +334,7 @@ describe("Tree", () => {
         true,
       );
       expectPreludeEqual(
-        tree.parents.keySet(),
+        tree.edges.keySet(),
         HashSet.of(
           EdgeId.create("permanent"),
           EdgeId.create("edge"),
