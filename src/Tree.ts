@@ -65,11 +65,11 @@ interface PersistentIterator<T> {
   result: InitialPersistentIterator<T>;
 }
 
-class UpTreeIteratorState extends ObjectValue<{
-  tree: UpTree;
-  forwardStreams: HashMap<StreamId, ForwardStream>;
-  parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>;
-}>() {}
+type UpTreeIteratorState = {
+  readonly tree: UpTree;
+  readonly forwardStreams: HashMap<StreamId, ForwardStream>;
+  readonly parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>;
+};
 
 export function buildUpTree(
   universe: ConcreteHeads,
@@ -81,17 +81,17 @@ export function buildUpTree(
     closedStreams: HashMap.of(),
     edges: HashMap.of(),
   });
-  const state = new UpTreeIteratorState({
-    tree,
-    forwardStreams: concreteHeadsForAbstractHeads(
-      universe,
-      tree.desiredHeads(),
-    ).mapValues((stream) => forwardStreamForStream(stream)),
-    parentIterators: HashMap.of(),
-  });
   return {
     value: tree,
-    next: () => nextIterator(universe, state),
+    next: () =>
+      nextIterator(universe, {
+        tree,
+        forwardStreams: concreteHeadsForAbstractHeads(
+          universe,
+          tree.desiredHeads(),
+        ).mapValues((stream) => forwardStreamForStream(stream)),
+        parentIterators: HashMap.of(),
+      }),
   };
 }
 
@@ -174,14 +174,11 @@ function nextIterator(
     result: {
       value: tree1,
       next: () =>
-        nextIterator(
-          universe,
-          state.copy({
-            tree: tree1,
-            forwardStreams: forwardStreams1,
-            parentIterators: parentIterators2,
-          }),
-        ),
+        nextIterator(universe, {
+          tree: tree1,
+          forwardStreams: forwardStreams1,
+          parentIterators: parentIterators2,
+        }),
     },
   });
 }
