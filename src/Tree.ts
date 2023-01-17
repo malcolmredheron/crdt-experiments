@@ -1,7 +1,14 @@
 import {ObjectValue} from "./helper/ObjectValue";
 import {TypedValue} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
-import {ConsLinkedList, HashMap, HashSet, Option, Vector} from "prelude-ts";
+import {
+  ConsLinkedList,
+  HashMap,
+  HashSet,
+  LinkedList,
+  Option,
+  Vector,
+} from "prelude-ts";
 import {concreteHeadsForAbstractHeads} from "./StreamHeads";
 import {
   consTail,
@@ -25,9 +32,13 @@ export class NodeId extends ObjectValue<{
 export class EdgeId extends TypedValue<"EdgeId", string> {}
 export class Rank extends TypedValue<"EdgeId", number> {}
 export type Op = SetEdge;
-export type OpList = ConsLinkedList<Op>;
-export type AbstractHeads = HashMap<StreamId, "open" | ConsLinkedList<Op>>;
-export type ConcreteHeads = HashMap<StreamId, ConsLinkedList<Op>>;
+type OpStream = ConsLinkedList<Op>;
+export type OpList = OpStream;
+export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
+export type ConcreteHeads = HashMap<StreamId, OpStream>;
+// Each item in the list is the same as the previous one except with a new op
+// prepended.
+type ForwardStream = ConsLinkedList<OpList>;
 
 export type SetEdge = {
   timestamp: Timestamp;
@@ -56,7 +67,7 @@ interface PersistentIterator<T> {
 
 class UpTreeIteratorState extends ObjectValue<{
   tree: UpTree;
-  forwardStreams: ConcreteHeads;
+  forwardStreams: HashMap<StreamId, ForwardStream>;
   parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>;
 }>() {}
 
@@ -75,7 +86,7 @@ export function buildUpTree(
     forwardStreams: concreteHeadsForAbstractHeads(
       universe,
       tree.desiredHeads(),
-    ).mapValues((stream) => stream.reverse()),
+    ).mapValues((stream) => forwardStreamForStream(stream)),
     parentIterators: HashMap.of(),
   });
   return {
@@ -90,7 +101,7 @@ function nextIterator(
 ): Option<PersistentIterator<UpTree>> {
   const streamOps = state.forwardStreams
     .toVector()
-    .map(([, ops]) => ops.head().get());
+    .map(([, forwardStream]) => forwardStream.head().get().head().get());
   const parentOps = state.parentIterators
     .toVector()
     .mapOption(([, parentIterator]) => parentIterator.next().map((i) => i.op));
@@ -128,17 +139,21 @@ function nextIterator(
 
   const forwardStreams1 = mapMapOption(
     state.forwardStreams,
-    (streamId, forwardStream): Option<ConsLinkedList<Op>> => {
-      return forwardStream.head().get() === op
+    (streamId, forwardStream) => {
+      return forwardStream.head().get().head().get() === op
         ? consTail(forwardStream)
         : Option.of(forwardStream);
     },
   );
 
-  const changingForwardStreams = state.forwardStreams.filterValues(
-    (stream) => stream.head().get() === op,
+  const opHeads: ConcreteHeads = mapMapOption(
+    state.forwardStreams,
+    (streamId, forwardStream) => {
+      const stream = forwardStream.head().get();
+      return stream.head().get() === op ? Option.of(stream) : Option.none();
+    },
   );
-  const tree1 = match({streamOps: !changingForwardStreams.isEmpty()})
+  const tree1 = match({streamOps: !opHeads.isEmpty()})
     .with({streamOps: true}, () => {
       const edges2 = edges1.put(
         op.edgeId,
@@ -147,7 +162,10 @@ function nextIterator(
           parent: parentIterators2.get(op.parentId).getOrThrow().value,
         }),
       );
-      return state.tree.copy({edges: edges2});
+      return state.tree.copy({
+        edges: edges2,
+        heads: state.tree.heads.mergeWith(opHeads, (v0, v1) => v1),
+      });
     })
     .with({streamOps: false}, () => state.tree.copy({edges: edges1}))
     .exhaustive();
@@ -330,4 +348,10 @@ export class UpTree extends ObjectValue<{
       HashSet.ofIterable([...devices, ...edge.parent.openWriterDevices()]),
     );
   }
+}
+
+function forwardStreamForStream(stream: OpStream): ForwardStream {
+  return consTail(stream)
+    .map((tail) => forwardStreamForStream(tail).prepend(stream))
+    .getOrCall(() => LinkedList.of(stream));
 }
