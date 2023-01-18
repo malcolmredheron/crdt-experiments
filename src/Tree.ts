@@ -1,14 +1,7 @@
 import {ObjectValue} from "./helper/ObjectValue";
 import {TypedValue} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
-import {
-  ConsLinkedList,
-  HashMap,
-  HashSet,
-  LinkedList,
-  Option,
-  Vector,
-} from "prelude-ts";
+import {ConsLinkedList, HashMap, HashSet, Option, Vector} from "prelude-ts";
 import {concreteHeadsForAbstractHeads} from "./StreamHeads";
 import {
   consTail,
@@ -36,10 +29,6 @@ type OpStream = ConsLinkedList<Op>;
 export type OpList = OpStream;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
 export type ConcreteHeads = HashMap<StreamId, OpStream>;
-// Each item in the list is the same as the previous one except with a new op
-// prepended.
-type ForwardStream = ConsLinkedList<OpList>;
-
 export type SetEdge = {
   timestamp: Timestamp;
   type: "set edge";
@@ -67,7 +56,10 @@ interface PersistentIterator<T> {
 
 type UpTreeIteratorState = {
   readonly tree: UpTree;
-  readonly forwardStreams: HashMap<StreamId, ForwardStream>;
+  // Unlike parentIterators, we map to PersistentIterators here because we
+  // define a stream as containing an op, so we can't have a stream until after
+  // the first op.
+  readonly streamIterators: HashMap<StreamId, PersistentIterator<OpList>>;
   readonly parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>;
 };
 
@@ -86,10 +78,10 @@ export function buildUpTree(
     next: () =>
       nextIterator(universe, {
         tree,
-        forwardStreams: concreteHeadsForAbstractHeads(
+        streamIterators: concreteHeadsForAbstractHeads(
           universe,
           tree.desiredHeads(),
-        ).mapValues((stream) => forwardStreamForStream(stream)),
+        ).mapValues((stream) => streamIteratorForStream(stream)),
         parentIterators: HashMap.of(),
       }),
   };
@@ -99,12 +91,13 @@ function nextIterator(
   universe: ConcreteHeads,
   state: UpTreeIteratorState,
 ): Option<PersistentIterator<UpTree>> {
-  const streamOps = state.forwardStreams
-    .toVector()
-    .map(([, forwardStream]) => forwardStream.head().get().head().get());
-  const parentOps = state.parentIterators
-    .toVector()
-    .mapOption(([, parentIterator]) => parentIterator.next().map((i) => i.op));
+  const streamOps = state.streamIterators
+    .mapValues((streamIterator) => streamIterator.op)
+    .valueIterable();
+  const parentOps = mapMapOption(
+    state.parentIterators,
+    (streamId, parentIterator) => parentIterator.next().map((next) => next.op),
+  ).valueIterable();
   const opOption = Vector.ofIterable([...streamOps, ...parentOps]).reduce(
     (leftOp: Op, right: Op): Op =>
       leftOp.timestamp < right.timestamp
@@ -137,20 +130,21 @@ function nextIterator(
       .getOrElse(edge),
   );
 
-  const forwardStreams1 = mapMapOption(
-    state.forwardStreams,
-    (streamId, forwardStream) => {
-      return forwardStream.head().get().head().get() === op
-        ? consTail(forwardStream)
-        : Option.of(forwardStream);
+  const streamIterators1 = mapMapOption(
+    state.streamIterators,
+    (streamId, streamIterator) => {
+      return streamIterator.op === op
+        ? streamIterator.result.next()
+        : Option.of(streamIterator);
     },
   );
 
   const opHeads: ConcreteHeads = mapMapOption(
-    state.forwardStreams,
-    (streamId, forwardStream) => {
-      const stream = forwardStream.head().get();
-      return stream.head().get() === op ? Option.of(stream) : Option.none();
+    state.streamIterators,
+    (streamId, streamIterator) => {
+      return streamIterator.op === op
+        ? Option.of(streamIterator.result.value)
+        : Option.none();
     },
   );
   const tree1 = match({streamOps: !opHeads.isEmpty()})
@@ -176,7 +170,7 @@ function nextIterator(
       next: () =>
         nextIterator(universe, {
           tree: tree1,
-          forwardStreams: forwardStreams1,
+          streamIterators: streamIterators1,
           parentIterators: parentIterators2,
         }),
     },
@@ -347,8 +341,12 @@ export class UpTree extends ObjectValue<{
   }
 }
 
-function forwardStreamForStream(stream: OpStream): ForwardStream {
-  return consTail(stream)
-    .map((tail) => forwardStreamForStream(tail).prepend(stream))
-    .getOrCall(() => LinkedList.of(stream));
+function streamIteratorForStream(stream: OpStream): PersistentIterator<OpList> {
+  return {
+    op: stream.head().get(),
+    result: {
+      value: stream,
+      next: () => consTail(stream).map((tail) => streamIteratorForStream(tail)),
+    },
+  };
 }
