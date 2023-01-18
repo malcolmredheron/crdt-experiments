@@ -2,7 +2,7 @@ import {ObjectValue} from "./helper/ObjectValue";
 import {TypedValue} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
 import {ConsLinkedList, HashMap, HashSet, Option, Vector} from "prelude-ts";
-import {concreteHeadsForAbstractHeads} from "./StreamHeads";
+import {concreteHeadsForAbstractHeads, headsEqual} from "./StreamHeads";
 import {
   consTail,
   mapMapOption,
@@ -47,6 +47,7 @@ export type SetEdge = {
 interface InitialPersistentIterator<T> {
   value: T;
   next: () => Option<PersistentIterator<T>>;
+  needsReset: boolean;
 }
 
 interface PersistentIterator<T> {
@@ -84,6 +85,7 @@ export function buildUpTree(
         ).mapValues((stream) => streamIteratorForStream(stream)),
         parentIterators: HashMap.of(),
       }),
+    needsReset: false,
   };
 }
 
@@ -163,6 +165,13 @@ function nextIterator(
     })
     .with({streamOps: false}, () => state.tree.copy({edges: edges1}))
     .exhaustive();
+
+  const concreteHeads = concreteHeadsForAbstractHeads(
+    universe,
+    tree1.desiredHeads(),
+  );
+  const needsReset = !headsEqual(concreteHeads, opHeads);
+
   return Option.of({
     op,
     result: {
@@ -173,6 +182,7 @@ function nextIterator(
           streamIterators: streamIterators1,
           parentIterators: parentIterators2,
         }),
+      needsReset,
     },
   });
 }
@@ -233,10 +243,12 @@ export function advanceIteratorUntil<T>(
 ): InitialPersistentIterator<T> {
   while (true) {
     const next = iterator.next();
-    if (next.isNone()) return iterator;
-    if (next.get().op.timestamp > after) return iterator;
+    if (next.isNone()) break;
+    if (next.get().op.timestamp > after) break;
     iterator = next.get().result;
   }
+  // if (iterator.needsReset) throw new AssertFailed("Iterator needs to be reset");
+  return iterator;
 }
 
 export class Edge extends ObjectValue<{
@@ -347,6 +359,7 @@ function streamIteratorForStream(stream: OpStream): PersistentIterator<OpList> {
     result: {
       value: stream,
       next: () => consTail(stream).map((tail) => streamIteratorForStream(tail)),
+      needsReset: false,
     },
   };
 }
