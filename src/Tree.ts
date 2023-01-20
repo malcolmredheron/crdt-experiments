@@ -48,6 +48,7 @@ interface InitialPersistentIterator<T> {
   value: T;
   next: () => Option<PersistentIterator<T>>;
   needsReset: boolean;
+  reset: () => InitialPersistentIterator<T>;
 }
 
 interface PersistentIterator<T> {
@@ -68,25 +69,41 @@ export function buildUpTree(
   universe: ConcreteHeads,
   nodeId: NodeId,
 ): InitialPersistentIterator<UpTree> {
+  const streamIterators = concreteHeadsForAbstractHeads(
+    universe,
+    new UpTree({
+      nodeId,
+      heads: HashMap.of(),
+      closedStreams: HashMap.of(),
+      edges: HashMap.of(),
+    }).desiredHeads(),
+  ).mapValues((stream) => streamIteratorForStream(stream));
+  return buildUpTreeInternal(universe, nodeId, streamIterators);
+}
+
+function buildUpTreeInternal(
+  universe: ConcreteHeads,
+  nodeId: NodeId,
+  streamIterators: HashMap<StreamId, PersistentIterator<OpList>>,
+): InitialPersistentIterator<UpTree> {
   const tree = new UpTree({
     nodeId,
     heads: HashMap.of(),
     closedStreams: HashMap.of(),
     edges: HashMap.of(),
   });
-  return {
+  const iterator = {
     value: tree,
     next: () =>
       nextIterator(universe, {
         tree,
-        streamIterators: concreteHeadsForAbstractHeads(
-          universe,
-          tree.desiredHeads(),
-        ).mapValues((stream) => streamIteratorForStream(stream)),
+        streamIterators,
         parentIterators: HashMap.of(),
       }),
     needsReset: false,
+    reset: () => iterator,
   };
+  return iterator;
 }
 
 function nextIterator(
@@ -170,7 +187,7 @@ function nextIterator(
     universe,
     tree1.desiredHeads(),
   );
-  const needsReset = !headsEqual(concreteHeads, opHeads);
+  const needsReset = !headsEqual(concreteHeads, tree1.heads);
 
   return Option.of({
     op,
@@ -183,6 +200,16 @@ function nextIterator(
           parentIterators: parentIterators2,
         }),
       needsReset,
+      reset: () => {
+        return buildUpTreeInternal(
+          universe,
+          tree1.nodeId,
+          concreteHeadsForAbstractHeads(
+            universe,
+            tree1.desiredHeads(),
+          ).mapValues((stream) => streamIteratorForStream(stream)),
+        );
+      },
     },
   });
 }
@@ -242,13 +269,15 @@ export function advanceIteratorUntil<T>(
   after: Timestamp,
 ): InitialPersistentIterator<T> {
   while (true) {
-    const next = iterator.next();
-    if (next.isNone()) break;
-    if (next.get().op.timestamp > after) break;
-    iterator = next.get().result;
+    while (true) {
+      const next = iterator.next();
+      if (next.isNone()) break;
+      if (next.get().op.timestamp > after) break;
+      iterator = next.get().result;
+    }
+    if (!iterator.needsReset) return iterator;
+    iterator = iterator.reset();
   }
-  // if (iterator.needsReset) throw new AssertFailed("Iterator needs to be reset");
-  return iterator;
 }
 
 export class Edge extends ObjectValue<{
@@ -353,13 +382,23 @@ export class UpTree extends ObjectValue<{
   }
 }
 
-function streamIteratorForStream(stream: OpStream): PersistentIterator<OpList> {
-  return {
+function streamIteratorForStream(
+  stream: OpStream,
+  next: () => Option<PersistentIterator<OpStream>> = () => Option.none(),
+): PersistentIterator<OpList> {
+  const iterator: PersistentIterator<OpStream> = {
     op: stream.head().get(),
     result: {
       value: stream,
-      next: () => consTail(stream).map((tail) => streamIteratorForStream(tail)),
+      next: next,
       needsReset: false,
+      // Annoyingly, we don't have a way of resetting a stream iterator because
+      // we'd need to return an InitialPersistentIterator, which we can't do
+      // because the stream doesn't have a value until after the first op.
+      reset: () => throwError("Not implemented"),
     },
   };
+  return consTail(stream)
+    .map((tail) => streamIteratorForStream(tail, () => Option.of(iterator)))
+    .getOrElse(iterator);
 }
