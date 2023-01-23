@@ -84,21 +84,20 @@ class ObjectValueBase<Props extends {}> {
   // in the future.
 
   equals(other: unknown): boolean {
-    if (Object.getPrototypeOf(this) === Object.getPrototypeOf(other)) {
-      const ourFields = this.orderedFieldValues();
-      const otherFields = (other as this).orderedFieldValues();
-      for (let i = 0; i < ourFields.length; i++) {
-        if (this.excludeFromEquals.contains(ourFields[i][0])) continue;
-        const ours = ourFields[i][1];
-        const other = otherFields[i][1];
-        if ((ours === undefined) !== (other === undefined)) return false;
-        if (ours === other) continue;
-        if (!areEqual(ours, other)) return false;
-      }
-      return true;
-    } else {
+    if (Object.getPrototypeOf(this) !== Object.getPrototypeOf(other))
       return false;
+
+    const ourFields = this.orderedFieldValues();
+    const otherFields = (other as this).orderedFieldValues();
+    for (let i = 0; i < ourFields.length; i++) {
+      if (this.excludeFromEquals.contains(ourFields[i][0])) continue;
+      const ours = ourFields[i][1];
+      const other = otherFields[i][1];
+      if ((ours === undefined) !== (other === undefined)) return false;
+      if (ours === other) continue;
+      if (!areEqual(ours, other)) return false;
     }
+    return true;
   }
 
   hashCode(): number {
