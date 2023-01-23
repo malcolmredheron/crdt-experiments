@@ -148,16 +148,16 @@ function nextIterator(
       .getOrElse(i),
   );
   const parentIterators2 =
-    !op.childId.equals(state.tree.nodeId) ||
-    parentIterators1.containsKey(op.parentId)
-      ? parentIterators1
-      : parentIterators1.put(
+    op.childId.equals(state.tree.nodeId) &&
+    !parentIterators1.containsKey(op.parentId)
+      ? parentIterators1.put(
           op.parentId,
           advanceIteratorUntil(
             buildUpTree(universe, op.parentId),
             op.timestamp,
           ),
-        );
+        )
+      : parentIterators1;
   const edges1 = mapValuesStable(state.tree.edges, (edge) =>
     parentIterators2
       .get(edge.parent.nodeId)
@@ -393,11 +393,6 @@ export class UpTree extends ObjectValue<{
       ...openStreams,
       ...this.closedStreams,
     ]);
-    // We also need the heads for the parents, since they help to select the ops
-    // that define this object
-    // return this.parents.foldLeft(openStreams, (heads, [, {parent}]) =>
-    //   HashMap.ofIterable([...heads, ...parent.desiredHeads()]),
-    // );
     return ourStreams;
   }
 
