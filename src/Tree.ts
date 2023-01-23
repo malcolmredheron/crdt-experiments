@@ -1,15 +1,24 @@
 import {ObjectValue} from "./helper/ObjectValue";
 import {TypedValue} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
-import {ConsLinkedList, HashMap, HashSet, Option, Vector} from "prelude-ts";
+import {
+  ConsLinkedList,
+  HashMap,
+  HashSet,
+  LinkedList,
+  Option,
+  Vector,
+} from "prelude-ts";
 import {concreteHeadsForAbstractHeads, headsEqual} from "./StreamHeads";
 import {
+  asType,
   consTail,
   mapMapOption,
   mapValuesStable,
   throwError,
 } from "./helper/Collection";
 import {match} from "ts-pattern";
+import {AssertFailed} from "./helper/Assert";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 type NodeType = "up" | "down";
@@ -78,13 +87,14 @@ export function buildUpTree(
       edges: HashMap.of(),
     }).desiredHeads(),
   ).mapValues((stream) => streamIteratorForStream(stream));
-  return buildUpTreeInternal(universe, nodeId, streamIterators);
+  return buildUpTreeInternal(universe, nodeId, streamIterators, HashMap.of());
 }
 
 function buildUpTreeInternal(
   universe: ConcreteHeads,
   nodeId: NodeId,
   streamIterators: HashMap<StreamId, PersistentIterator<OpList>>,
+  parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>,
 ): InitialPersistentIterator<UpTree> {
   const tree = new UpTree({
     nodeId,
@@ -92,16 +102,17 @@ function buildUpTreeInternal(
     closedStreams: HashMap.of(),
     edges: HashMap.of(),
   });
+  const state = asType<UpTreeIteratorState>({
+    tree,
+    streamIterators,
+    parentIterators: parentIterators,
+  });
   const iterator = {
     value: tree,
-    next: () =>
-      nextIterator(universe, {
-        tree,
-        streamIterators,
-        parentIterators: HashMap.of(),
-      }),
+    next: () => nextIterator(universe, state),
     needsReset: false,
     reset: () => iterator,
+    _state: state,
   };
   return iterator;
 }
@@ -136,12 +147,17 @@ function nextIterator(
       .map((next) => (next.op === op ? next.result : i))
       .getOrElse(i),
   );
-  const parentIterators2 = parentIterators1.containsKey(op.parentId)
-    ? parentIterators1
-    : parentIterators1.put(
-        op.parentId,
-        advanceIteratorUntil(buildUpTree(universe, op.parentId), op.timestamp),
-      );
+  const parentIterators2 =
+    !op.childId.equals(state.tree.nodeId) ||
+    parentIterators1.containsKey(op.parentId)
+      ? parentIterators1
+      : parentIterators1.put(
+          op.parentId,
+          advanceIteratorUntil(
+            buildUpTree(universe, op.parentId),
+            op.timestamp,
+          ),
+        );
   const edges1 = mapValuesStable(state.tree.edges, (edge) =>
     parentIterators2
       .get(edge.parent.nodeId)
@@ -187,29 +203,36 @@ function nextIterator(
     universe,
     tree1.desiredHeads(),
   );
-  const needsReset = !headsEqual(concreteHeads, tree1.heads);
+  const headsNeedReset = !headsEqual(concreteHeads, tree1.heads);
+  const needsReset =
+    headsNeedReset ||
+    parentIterators2.anyMatch(
+      (nodeId, parentIterator) => parentIterator.needsReset,
+    );
 
+  const state1 = {
+    tree: tree1,
+    streamIterators: streamIterators1,
+    parentIterators: parentIterators2,
+  };
   return Option.of({
     op,
     result: {
       value: tree1,
-      next: () =>
-        nextIterator(universe, {
-          tree: tree1,
-          streamIterators: streamIterators1,
-          parentIterators: parentIterators2,
-        }),
+      next: () => nextIterator(universe, state1),
       needsReset,
       reset: () => {
         return buildUpTreeInternal(
           universe,
           tree1.nodeId,
-          concreteHeadsForAbstractHeads(
-            universe,
-            tree1.desiredHeads(),
-          ).mapValues((stream) => streamIteratorForStream(stream)),
+          concreteHeads.mapValues((stream) => streamIteratorForStream(stream)),
+          state1.parentIterators.mapValues((iterator) => iterator.reset()),
         );
       },
+      _state: state,
+      _state1: state1,
+      _headsNeedReset: headsNeedReset,
+      _concreteHeads: concreteHeads,
     },
   });
 }
@@ -268,7 +291,10 @@ export function advanceIteratorUntil<T>(
   iterator: InitialPersistentIterator<T>,
   after: Timestamp,
 ): InitialPersistentIterator<T> {
-  while (true) {
+  // `iterators` and the limit of 10 times through the loop are for debugging.
+  // We will have to find a more sophisticated way to handle this at some point.
+  let iterators = LinkedList.of(iterator);
+  for (let i = 0; i < 10; i++) {
     while (true) {
       const next = iterator.next();
       if (next.isNone()) break;
@@ -276,8 +302,10 @@ export function advanceIteratorUntil<T>(
       iterator = next.get().result;
     }
     if (!iterator.needsReset) return iterator;
+    iterators = iterators.prepend(iterator);
     iterator = iterator.reset();
   }
+  throw new AssertFailed("Iterator did not stabilize");
 }
 
 export class Edge extends ObjectValue<{

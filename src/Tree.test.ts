@@ -284,6 +284,65 @@ describe("Tree", () => {
       );
     });
 
+    // Doing all of this on a parent forces us to handle nested resets.
+    it("(to a parent) applies one op, adds a parent and updates the root with an earlier op from that parent", () => {
+      const otherDeviceId = DeviceId.create("other device");
+      const childId = new NodeId({creator: deviceId, rest: "child"});
+      const parentId = new NodeId({creator: deviceId, rest: "parent"});
+      const parentAId = new NodeId({creator: otherDeviceId, rest: "parent a"});
+      const parentBId = new NodeId({creator: otherDeviceId, rest: "parent b"});
+      const universe = HashMap.of(
+        [
+          new StreamId({
+            nodeId: childId,
+            deviceId: deviceId,
+            type: "up",
+          }),
+          opsList(setEdge(rootId, childId)),
+        ],
+        // This op is earlier than the second one, but isn't part of the
+        // original desired heads for the root.
+        [
+          new StreamId({
+            nodeId: rootId,
+            deviceId: otherDeviceId,
+            type: "up",
+          }),
+          opsList(setEdge(parentBId, rootId, {edgeId: EdgeId.create("B")})),
+        ],
+        [
+          new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
+          opsList(
+            // So that deviceId can continue to write to the root even after
+            // parents are added.
+            setEdge(parentId, rootId, {edgeId: EdgeId.create("parent")}),
+            setEdge(parentAId, rootId, {edgeId: EdgeId.create("A")}),
+          ),
+        ],
+      );
+      const iterator = advanceIteratorUntil(
+        buildUpTree(universe, childId),
+        maxTimestamp,
+      );
+      const tree = iterator.value;
+      const root = tree.edges.single().getOrThrow()[1].parent;
+      expectIdentical(
+        headsEqual(
+          root.heads,
+          universe.filterKeys((streamId) => streamId.nodeId.equals(rootId)),
+        ),
+        true,
+      );
+      expectPreludeEqual(
+        root.edges.keySet(),
+        HashSet.of(
+          EdgeId.create("parent"),
+          EdgeId.create("A"),
+          EdgeId.create("B"),
+        ),
+      );
+    });
+
     it("closes streams for removed writers", () => {
       const otherDeviceId = DeviceId.create("other device");
       const parentId = new NodeId({creator: deviceId, rest: "parent"});
