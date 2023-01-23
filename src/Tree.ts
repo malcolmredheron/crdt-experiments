@@ -199,11 +199,33 @@ function nextIterator(
     .with({streamOps: false}, () => state.tree.copy({edges: edges1}))
     .exhaustive();
 
+  const addedWriterDeviceIds = tree1
+    .openWriterDevices()
+    .removeAll(state.tree.openWriterDevices());
+  const closedStreams1 = tree1.closedStreams.filterKeys((streamId) =>
+    addedWriterDeviceIds.contains(streamId.deviceId),
+  );
+  const removedWriterDeviceIds = state.tree
+    .openWriterDevices()
+    .removeAll(tree1.openWriterDevices());
+  const closedStreams2 = closedStreams1.mergeWith(
+    removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
+      const streamId = new StreamId({
+        deviceId: removedWriterId,
+        nodeId: state.tree.nodeId,
+        type: "up",
+      });
+      return op.contributingHeads.get(streamId).map((ops) => [streamId, ops]);
+    }),
+    (ops0, ops1) => throwError("Should not have stream-id collision"),
+  );
+  const tree2 = tree1.copy({closedStreams: closedStreams2});
+
   const concreteHeads = concreteHeadsForAbstractHeads(
     universe,
-    tree1.desiredHeads(),
+    tree2.desiredHeads(),
   );
-  const headsNeedReset = !headsEqual(concreteHeads, tree1.heads);
+  const headsNeedReset = !headsEqual(concreteHeads, tree2.heads);
   const needsReset =
     headsNeedReset ||
     parentIterators2.anyMatch(
@@ -211,20 +233,20 @@ function nextIterator(
     );
 
   const state1 = {
-    tree: tree1,
+    tree: tree2,
     streamIterators: streamIterators1,
     parentIterators: parentIterators2,
   };
   return Option.of({
     op,
     result: {
-      value: tree1,
+      value: tree2,
       next: () => nextIterator(universe, state1),
       needsReset,
       reset: () => {
         return buildUpTreeInternal(
           universe,
-          tree1.nodeId,
+          tree2.nodeId,
           concreteHeads.mapValues((stream) => streamIteratorForStream(stream)),
           state1.parentIterators.mapValues((iterator) => iterator.reset()),
         );
@@ -396,11 +418,22 @@ export class UpTree extends ObjectValue<{
     return ourStreams;
   }
 
-  private openWriterDevices(): HashSet<DeviceId> {
+  public openWriterDevices(): HashSet<DeviceId> {
     // A node with no parents is writeable by the creator.
     if (this.edges.isEmpty()) return HashSet.of(this.nodeId.creator);
     return this.edges.foldLeft(HashSet.of(), (devices, [, edge]) =>
       HashSet.ofIterable([...devices, ...edge.parent.openWriterDevices()]),
+    );
+  }
+
+  excludeFromEquals = HashSet.of("closedStreams");
+  equals(other: unknown): boolean {
+    if (Object.getPrototypeOf(this) !== Object.getPrototypeOf(other))
+      return false;
+
+    return (
+      super.equals(other) &&
+      headsEqual(this.closedStreams, (other as this).closedStreams)
     );
   }
 }
