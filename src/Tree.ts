@@ -34,10 +34,10 @@ export class NodeId extends ObjectValue<{
 export class EdgeId extends TypedValue<"EdgeId", string> {}
 export class Rank extends TypedValue<"EdgeId", number> {}
 export type Op = SetEdge;
-type OpStream = ConsLinkedList<Op>;
-export type OpList = OpStream;
+export type OpStream = ConsLinkedList<Op>;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
 export type ConcreteHeads = HashMap<StreamId, OpStream>;
+
 export type SetEdge = {
   timestamp: Timestamp;
   type: "set edge";
@@ -70,7 +70,7 @@ type UpTreeIteratorState = {
   // Unlike parentIterators, we map to PersistentIterators here because we
   // define a stream as containing an op, so we can't have a stream until after
   // the first op.
-  readonly streamIterators: HashMap<StreamId, PersistentIterator<OpList>>;
+  readonly streamIterators: HashMap<StreamId, PersistentIterator<OpStream>>;
   readonly parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>;
 };
 
@@ -93,7 +93,7 @@ export function buildUpTree(
 function buildUpTreeInternal(
   universe: ConcreteHeads,
   nodeId: NodeId,
-  streamIterators: HashMap<StreamId, PersistentIterator<OpList>>,
+  streamIterators: HashMap<StreamId, PersistentIterator<OpStream>>,
   parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>,
 ): InitialPersistentIterator<UpTree> {
   const tree = new UpTree({
@@ -259,55 +259,6 @@ function nextIterator(
   });
 }
 
-// function advanceUpTree(
-//   universe: ConcreteHeads,
-//   tree: UpTree,
-//   op: Op,
-//   opHeads: ConcreteHeads,
-// ): UpTree {
-//   const parentIterator = advanceIteratorToAfter(
-//     buildUpTree(universe, op.parentId),
-//     op.timestamp,
-//   );
-//   const tree1 = tree.copy({
-//     heads: opHeads.foldLeft(tree.heads, (heads, [streamId, opHead]) => {
-//       if (!streamId.nodeId.equals(tree.nodeId) || streamId.type !== "up")
-//         return heads;
-//       return heads.put(streamId, opHead);
-//     }),
-//     edges: tree.edges.put(
-//       op.edgeId,
-//       new Edge({
-//         parent: parentIterator.value,
-//         rank: op.rank,
-//       }),
-//     ),
-//   });
-//
-//   const addedWriterDeviceIds = tree1
-//     .openWriterDevices()
-//     .removeAll(tree.openWriterDevices());
-//   const closedStreams1 = tree1.closedStreams.filterKeys((streamId) =>
-//     addedWriterDeviceIds.contains(streamId.deviceId),
-//   );
-//
-//   const removedWriterDeviceIds = tree
-//     .openWriterDevices()
-//     .removeAll(tree1.openWriterDevices());
-//   const closedStreams2 = closedStreams1.mergeWith(
-//     removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
-//       const streamId = new StreamId({
-//         deviceId: removedWriterId,
-//         nodeId: tree.nodeId,
-//         type: "up",
-//       });
-//       return op.contributingHeads.get(streamId).map((ops) => [streamId, ops]);
-//     }),
-//     (ops0, ops1) => throwError("Should not have stream-id collision"),
-//   );
-//   return tree1.copy({closedStreams: closedStreams2});
-// }
-
 // Advances the iterator until the next value is greater than `after`.
 export function advanceIteratorUntil<T>(
   iterator: InitialPersistentIterator<T>,
@@ -342,64 +293,8 @@ export class UpTree extends ObjectValue<{
 
   edges: HashMap<EdgeId, Edge>;
 }>() {
-  // update(
-  //   build: (nodeId: NodeId, until: Timestamp) => UpTree,
-  //   until: Timestamp,
-  //   opInfo: Option<{op: SetEdge; opHeads: ConcreteHeads}>,
-  // ): UpTree {
-  //   const this1 = opInfo
-  //     .map(({opHeads, op}) =>
-  //       this.copy({
-  //         heads: opHeads.foldLeft(this.heads, (heads, [streamId, opHead]) => {
-  //           if (!streamId.nodeId.equals(this.nodeId) || streamId.type !== "up")
-  //             return heads;
-  //           return heads.put(streamId, opHead);
-  //         }),
-  //         edges: this.edges.put(
-  //           op.edgeId,
-  //           new Edge({parent: build(op.parentId, until), rank: op.rank}),
-  //         ),
-  //       }),
-  //     )
-  //     .getOrElse(this);
-  //   const this2 = this1.copy({
-  //     parents: this1.parents.mapValues((edge) =>
-  //       edge.copy({parent: build(edge.parent.nodeId, until)}),
-  //     ),
-  //   });
-  //   const this3 = opInfo
-  //     .map(({opHeads, op}) => {
-  //       const addedWriterDeviceIds = this2
-  //         .openWriterDevices()
-  //         .removeAll(this.openWriterDevices());
-  //       const closedStreams1 = this2.closedStreams.filterKeys((streamId) =>
-  //         addedWriterDeviceIds.contains(streamId.deviceId),
-  //       );
-  //
-  //       const removedWriterDeviceIds = this.openWriterDevices().removeAll(
-  //         this2.openWriterDevices(),
-  //       );
-  //       const closedStreams2 = closedStreams1.mergeWith(
-  //         removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
-  //           const streamId = new StreamId({
-  //             deviceId: removedWriterId,
-  //             nodeId: this.nodeId,
-  //             type: "up",
-  //           });
-  //           return op.contributingHeads
-  //             .get(streamId)
-  //             .map((ops) => [streamId, ops]);
-  //         }),
-  //         (ops0, ops1) => throwError("Should not have stream-id collision"),
-  //       );
-  //       return this2.copy({closedStreams: closedStreams2});
-  //     })
-  //     .getOrElse(this2);
-  //   return this3;
-  // }
-
   desiredHeads(): AbstractHeads {
-    const openStreams = HashMap.ofIterable<StreamId, "open" | OpList>(
+    const openStreams = HashMap.ofIterable<StreamId, "open" | OpStream>(
       this.openWriterDevices()
         .toVector()
         .map((deviceId) => [
@@ -441,7 +336,7 @@ export class UpTree extends ObjectValue<{
 function streamIteratorForStream(
   stream: OpStream,
   next: () => Option<PersistentIterator<OpStream>> = () => Option.none(),
-): PersistentIterator<OpList> {
+): PersistentIterator<OpStream> {
   const iterator: PersistentIterator<OpStream> = {
     op: stream.head().get(),
     result: {

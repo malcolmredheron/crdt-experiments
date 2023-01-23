@@ -6,7 +6,7 @@ import {
   EdgeId,
   NodeId,
   Op,
-  OpList,
+  OpStream,
   Rank,
   SetEdge,
   StreamId,
@@ -23,8 +23,8 @@ describe("Tree", () => {
   let clock: Clock;
   beforeEach(() => (clock = new CountingClock()));
 
-  function opsList(...ops: Op[]): OpList {
-    return LinkedList.ofIterable(ops).reverse() as OpList;
+  function opsList(...ops: Op[]): OpStream {
+    return LinkedList.ofIterable(ops).reverse() as OpStream;
   }
 
   function setEdge(
@@ -32,7 +32,7 @@ describe("Tree", () => {
     childId: NodeId,
     extras?: {
       edgeId?: EdgeId;
-      streams?: HashMap<StreamId, OpList>;
+      streams?: HashMap<StreamId, OpStream>;
     },
   ): SetEdge {
     return {
@@ -122,7 +122,7 @@ describe("Tree", () => {
       expectIdentical(
         headsEqual(
           tree.desiredHeads(),
-          HashMap.of<StreamId, "open" | OpList>(
+          HashMap.of<StreamId, "open" | OpStream>(
             [
               new StreamId({deviceId: deviceId, nodeId: rootId, type: "up"}),
               "open" as const,
