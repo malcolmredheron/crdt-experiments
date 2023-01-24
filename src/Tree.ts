@@ -17,7 +17,7 @@ import {
   mapValuesStable,
   throwError,
 } from "./helper/Collection";
-import {match} from "ts-pattern";
+import {match, P} from "ts-pattern";
 import {AssertFailed} from "./helper/Assert";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
@@ -121,23 +121,7 @@ function nextIterator(
   universe: ConcreteHeads,
   state: UpTreeIteratorState,
 ): Option<PersistentIterator<UpTree>> {
-  const streamOps = state.streamIterators
-    .mapValues((streamIterator) => streamIterator.op)
-    .valueIterable();
-  const parentOps = mapMapOption(
-    state.parentIterators,
-    (streamId, parentIterator) => parentIterator.next().map((next) => next.op),
-  ).valueIterable();
-  const opOption = Vector.ofIterable([...streamOps, ...parentOps]).reduce(
-    (leftOp: Op, right: Op): Op =>
-      leftOp.timestamp < right.timestamp
-        ? leftOp
-        : right.timestamp < leftOp.timestamp
-        ? right
-        : leftOp === right
-        ? leftOp
-        : throwError("non-identical ops have the same timestamp"),
-  );
+  const opOption = nextOp(state.streamIterators, state.parentIterators);
   if (opOption.isNone()) return Option.none();
   const op = opOption.get();
 
@@ -174,29 +158,29 @@ function nextIterator(
     },
   );
 
-  const opHeads: ConcreteHeads = mapMapOption(
-    state.streamIterators,
-    (streamId, streamIterator) => {
+  const tree1 = match({
+    opHeads: mapMapOption(state.streamIterators, (streamId, streamIterator) => {
       return streamIterator.op === op
         ? Option.of(streamIterator.result.value)
-        : Option.none();
-    },
-  );
-  const tree1 = match({streamOps: !opHeads.isEmpty()})
-    .with({streamOps: true}, () => {
-      const edges2 = edges1.put(
-        op.edgeId,
-        new Edge({
-          rank: op.rank,
-          parent: parentIterators2.get(op.parentId).getOrThrow().value,
+        : Option.none<OpStream>();
+    }),
+  })
+    .with(
+      {},
+      ({opHeads}) => !opHeads.isEmpty(),
+      ({opHeads}) =>
+        state.tree.copy({
+          edges: edges1.put(
+            op.edgeId,
+            new Edge({
+              rank: op.rank,
+              parent: parentIterators2.get(op.parentId).getOrThrow().value,
+            }),
+          ),
+          heads: state.tree.heads.mergeWith(opHeads, (v0, v1) => v1),
         }),
-      );
-      return state.tree.copy({
-        edges: edges2,
-        heads: state.tree.heads.mergeWith(opHeads, (v0, v1) => v1),
-      });
-    })
-    .with({streamOps: false}, () => state.tree.copy({edges: edges1}))
+    )
+    .with(P._, () => state.tree.copy({edges: edges1}))
     .exhaustive();
 
   const addedWriterDeviceIds = tree1
@@ -257,6 +241,29 @@ function nextIterator(
       _concreteHeads: concreteHeads,
     },
   });
+}
+
+function nextOp(
+  streamIterators: HashMap<StreamId, PersistentIterator<OpStream>>,
+  parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>,
+): Option<Op> {
+  const streamOps = streamIterators
+    .mapValues((streamIterator) => streamIterator.op)
+    .valueIterable();
+  const parentOps = mapMapOption(parentIterators, (streamId, parentIterator) =>
+    parentIterator.next().map((next) => next.op),
+  ).valueIterable();
+  const opOption = Vector.ofIterable([...streamOps, ...parentOps]).reduce(
+    (leftOp: Op, right: Op): Op =>
+      leftOp.timestamp < right.timestamp
+        ? leftOp
+        : right.timestamp < leftOp.timestamp
+        ? right
+        : leftOp === right
+        ? leftOp
+        : throwError("non-identical ops have the same timestamp"),
+  );
+  return opOption;
 }
 
 // Advances the iterator until the next value is greater than `after`.
