@@ -26,6 +26,7 @@ export class StreamId extends ObjectValue<{
   deviceId: DeviceId;
   nodeId: NodeId;
   type: NodeType;
+  upRank: Rank;
 }>() {}
 export class NodeId extends ObjectValue<{
   creator: DeviceId;
@@ -33,6 +34,7 @@ export class NodeId extends ObjectValue<{
 }>() {}
 export class EdgeId extends TypedValue<"EdgeId", string> {}
 export class Rank extends TypedValue<"EdgeId", number> {}
+export const bootstrapRank = Rank.create(Number.MAX_SAFE_INTEGER);
 export type Op = SetEdge;
 export type OpStream = ConsLinkedList<Op>;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
@@ -158,13 +160,15 @@ function nextIterator(
     },
   );
 
-  const tree1 = match({
-    opHeads: mapMapOption(state.streamIterators, (streamId, streamIterator) => {
+  const opHeads = mapMapOption(
+    state.streamIterators,
+    (streamId, streamIterator) => {
       return streamIterator.op === op
         ? Option.of(streamIterator.result.value)
         : Option.none<OpStream>();
-    }),
-  })
+    },
+  );
+  const tree1 = match({opHeads})
     .with(
       {},
       ({opHeads}) => !opHeads.isEmpty(),
@@ -183,23 +187,27 @@ function nextIterator(
     .with(P._, () => state.tree.copy({edges: edges1}))
     .exhaustive();
 
-  const addedWriterDeviceIds = tree1
-    .openWriterDevices()
-    .removeAll(state.tree.openWriterDevices());
-  const closedStreams1 = tree1.closedStreams.filterKeys((streamId) =>
-    addedWriterDeviceIds.contains(streamId.deviceId),
+  const addedStreamIds = tree1
+    .openStreams()
+    .removeAll(state.tree.openStreams());
+  const closedStreams1 = tree1.closedStreams.filterKeys(
+    (streamId) => !addedStreamIds.contains(streamId),
   );
-  const removedWriterDeviceIds = state.tree
-    .openWriterDevices()
-    .removeAll(tree1.openWriterDevices());
+  const removedStreamIds = state.tree
+    .openStreams()
+    .removeAll(tree1.openStreams());
   const closedStreams2 = closedStreams1.mergeWith(
-    removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
-      const streamId = new StreamId({
-        deviceId: removedWriterId,
-        nodeId: state.tree.nodeId,
-        type: "up",
-      });
-      return op.contributingHeads.get(streamId).map((ops) => [streamId, ops]);
+    removedStreamIds.toVector().mapOption((streamId) => {
+      return (
+        op.contributingHeads
+          .get(streamId)
+          // Automatically include a closed stream for any stream that contained
+          // this operation. Without this, it's impossible to add the first parent
+          // of a node (which closes the bootstrap stream) since the op can't
+          // list itself in `contributingHeads`.
+          .orElse(opHeads.get(streamId))
+          .map((ops) => [streamId, ops])
+      );
     }),
     (ops0, ops1) => throwError("Should not have stream-id collision"),
   );
@@ -273,7 +281,10 @@ export function advanceIteratorUntil<T>(
 ): InitialPersistentIterator<T> {
   // `iterators` and the limit of 10 times through the loop are for debugging.
   // We will have to find a more sophisticated way to handle this at some point.
-  let iterators = LinkedList.of(iterator);
+  let iterators = LinkedList.of<{
+    iterator: InitialPersistentIterator<T>;
+    description: string;
+  }>({iterator, description: "initial"});
   for (let i = 0; i < 10; i++) {
     while (true) {
       const next = iterator.next();
@@ -282,8 +293,9 @@ export function advanceIteratorUntil<T>(
       iterator = next.get().result;
     }
     if (!iterator.needsReset) return iterator;
-    iterators = iterators.prepend(iterator);
+    iterators = iterators.prepend({iterator, description: "before reset"});
     iterator = iterator.reset();
+    iterators = iterators.prepend({iterator, description: "after reset"});
   }
   throw new AssertFailed("Iterator did not stabilize");
 }
@@ -302,16 +314,9 @@ export class UpTree extends ObjectValue<{
 }>() {
   desiredHeads(): AbstractHeads {
     const openStreams = HashMap.ofIterable<StreamId, "open" | OpStream>(
-      this.openWriterDevices()
+      this.openStreams()
         .toVector()
-        .map((deviceId) => [
-          new StreamId({
-            nodeId: this.nodeId,
-            deviceId: deviceId,
-            type: "up",
-          }),
-          "open",
-        ]),
+        .map((streamId) => [streamId, "open"]),
     );
     const ourStreams = HashMap.ofIterable([
       ...openStreams,
@@ -320,11 +325,37 @@ export class UpTree extends ObjectValue<{
     return ourStreams;
   }
 
-  public openWriterDevices(): HashSet<DeviceId> {
-    // A node with no parents is writeable by the creator.
+  private openWriterDevices(): HashSet<DeviceId> {
+    // #Bootstrap: A node with no parents is writeable by the creator.
     if (this.edges.isEmpty()) return HashSet.of(this.nodeId.creator);
     return this.edges.foldLeft(HashSet.of(), (devices, [, edge]) =>
       HashSet.ofIterable([...devices, ...edge.parent.openWriterDevices()]),
+    );
+  }
+
+  openStreams(): HashSet<StreamId> {
+    // #Bootstrap: A node with no parents is writeable by the creator.
+    if (this.edges.isEmpty())
+      return HashSet.of(
+        new StreamId({
+          nodeId: this.nodeId,
+          deviceId: this.nodeId.creator,
+          type: "up",
+          upRank: bootstrapRank,
+        }),
+      );
+    return this.edges.foldLeft(HashSet.of(), (streams, [edgeId, edge]) =>
+      streams.addAll(
+        edge.parent.openWriterDevices().map(
+          (deviceId) =>
+            new StreamId({
+              nodeId: this.nodeId,
+              deviceId: deviceId,
+              type: "up",
+              upRank: edge.rank,
+            }),
+        ),
+      ),
     );
   }
 

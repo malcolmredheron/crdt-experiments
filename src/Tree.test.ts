@@ -1,5 +1,6 @@
 import {
   advanceIteratorUntil,
+  bootstrapRank,
   buildUpTree,
   DeviceId,
   Edge,
@@ -27,12 +28,18 @@ describe("Tree", () => {
     return LinkedList.ofIterable(ops).reverse() as OpStream;
   }
 
+  const defaultRank = Rank.create(0);
+  const deviceId = DeviceId.create("device");
+  const rootId = new NodeId({creator: deviceId, rest: undefined});
+  const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
+
   function setEdge(
     parentId: NodeId,
     childId: NodeId,
     extras?: {
       edgeId?: EdgeId;
       streams?: HashMap<StreamId, OpStream>;
+      rank?: Rank;
     },
   ): SetEdge {
     return {
@@ -41,14 +48,10 @@ describe("Tree", () => {
       edgeId: extras?.edgeId || EdgeId.create("edge"),
       parentId,
       childId,
-      rank: Rank.create(0),
+      rank: extras?.rank || defaultRank,
       contributingHeads: extras?.streams || HashMap.of(),
     };
   }
-
-  const deviceId = DeviceId.create("device");
-  const rootId = new NodeId({creator: deviceId, rest: undefined});
-  const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
 
   describe("desiredStreams", () => {
     it("writeable by creator when no parents", () => {
@@ -61,13 +64,18 @@ describe("Tree", () => {
       expectPreludeEqual(
         tree.desiredHeads(),
         HashMap.of([
-          new StreamId({deviceId: deviceId, nodeId: rootId, type: "up"}),
+          new StreamId({
+            deviceId: deviceId,
+            nodeId: rootId,
+            type: "up",
+            upRank: bootstrapRank,
+          }),
           "open" as const,
         ]),
       );
     });
 
-    it("writeable by parents when parents", () => {
+    it("writeable by parents when there are parents", () => {
       const edgeId = EdgeId.create("edge");
       const rank = Rank.create(0);
       const otherDeviceId = DeviceId.create("other device");
@@ -95,7 +103,12 @@ describe("Tree", () => {
       expectPreludeEqual(
         tree.desiredHeads(),
         HashMap.of([
-          new StreamId({deviceId: otherDeviceId, nodeId: rootId, type: "up"}),
+          new StreamId({
+            deviceId: otherDeviceId,
+            nodeId: rootId,
+            type: "up",
+            upRank: defaultRank,
+          }),
           "open" as const,
         ]),
       );
@@ -112,6 +125,7 @@ describe("Tree", () => {
         nodeId: rootId,
         deviceId: otherDeviceId,
         type: "up",
+        upRank: defaultRank,
       });
       const tree = new UpTree({
         nodeId: rootId,
@@ -124,7 +138,12 @@ describe("Tree", () => {
           tree.desiredHeads(),
           HashMap.of<StreamId, "open" | OpStream>(
             [
-              new StreamId({deviceId: deviceId, nodeId: rootId, type: "up"}),
+              new StreamId({
+                deviceId: deviceId,
+                nodeId: rootId,
+                type: "up",
+                upRank: bootstrapRank,
+              }),
               "open" as const,
             ],
             [otherStreamId, otherDeviceOps],
@@ -145,7 +164,12 @@ describe("Tree", () => {
       const parentId = new NodeId({creator: deviceId, rest: "parent"});
       const op = setEdge(parentId, rootId);
       const universe = HashMap.of([
-        new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
+        new StreamId({
+          nodeId: rootId,
+          deviceId: deviceId,
+          type: "up",
+          upRank: bootstrapRank,
+        }),
         opsList(op),
       ]);
       const tree = advanceIteratorUntil(
@@ -160,7 +184,12 @@ describe("Tree", () => {
       const parentId = new NodeId({creator: deviceId, rest: "parent"});
       const op = setEdge(parentId, rootId);
       const universe = HashMap.of([
-        new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
+        new StreamId({
+          nodeId: rootId,
+          deviceId: deviceId,
+          type: "up",
+          upRank: bootstrapRank,
+        }),
         opsList(op),
       ]);
       expectIdentical(op.timestamp, Timestamp.create(0));
@@ -171,7 +200,7 @@ describe("Tree", () => {
       expectPreludeEqual(tree.edges, HashMap.of());
     });
 
-    it("applies one op, adds a parent and updates it with an earlier op", () => {
+    it("applies one op, adds a parent and updates the parent with an earlier op", () => {
       const parentId = new NodeId({creator: deviceId, rest: "parent"});
       const grandparentId = new NodeId({
         creator: deviceId,
@@ -179,11 +208,21 @@ describe("Tree", () => {
       });
       const universe = HashMap.of(
         [
-          new StreamId({nodeId: parentId, deviceId: deviceId, type: "up"}),
+          new StreamId({
+            nodeId: parentId,
+            deviceId: deviceId,
+            type: "up",
+            upRank: bootstrapRank,
+          }),
           opsList(setEdge(grandparentId, parentId)),
         ],
         [
-          new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
+          new StreamId({
+            nodeId: rootId,
+            deviceId: deviceId,
+            type: "up",
+            upRank: bootstrapRank,
+          }),
           opsList(setEdge(parentId, rootId)),
         ],
       );
@@ -204,7 +243,7 @@ describe("Tree", () => {
       expectPreludeEqual(grandparent.nodeId, grandparentId);
     });
 
-    it("applies one op, adds a parent and updates it with a later op", () => {
+    it("applies one op, adds a parent and updates the parent with a later op", () => {
       const parentId = new NodeId({creator: deviceId, rest: "parent"});
       const grandparentId = new NodeId({
         creator: deviceId,
@@ -212,11 +251,21 @@ describe("Tree", () => {
       });
       const universe = HashMap.of(
         [
-          new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
+          new StreamId({
+            nodeId: rootId,
+            deviceId: deviceId,
+            type: "up",
+            upRank: bootstrapRank,
+          }),
           opsList(setEdge(parentId, rootId)),
         ],
         [
-          new StreamId({nodeId: parentId, deviceId: deviceId, type: "up"}),
+          new StreamId({
+            nodeId: parentId,
+            deviceId: deviceId,
+            type: "up",
+            upRank: bootstrapRank,
+          }),
           opsList(setEdge(grandparentId, parentId)),
         ],
       );
@@ -250,17 +299,18 @@ describe("Tree", () => {
             nodeId: rootId,
             deviceId: otherDeviceId,
             type: "up",
+            upRank: defaultRank,
           }),
           opsList(setEdge(parentBId, rootId, {edgeId: EdgeId.create("B")})),
         ],
         [
-          new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
-          opsList(
-            // So that deviceId can continue to write to the root even after
-            // parents are added.
-            setEdge(parentId, rootId, {edgeId: EdgeId.create("parent")}),
-            setEdge(parentAId, rootId, {edgeId: EdgeId.create("A")}),
-          ),
+          new StreamId({
+            nodeId: rootId,
+            deviceId: deviceId,
+            type: "up",
+            upRank: bootstrapRank,
+          }),
+          opsList(setEdge(parentAId, rootId, {edgeId: EdgeId.create("A")})),
         ],
       );
       const tree = advanceIteratorUntil(
@@ -277,7 +327,7 @@ describe("Tree", () => {
       expectPreludeEqual(
         tree.edges.keySet(),
         HashSet.of(
-          EdgeId.create("parent"),
+          // EdgeId.create("parent"),
           EdgeId.create("A"),
           EdgeId.create("B"),
         ),
