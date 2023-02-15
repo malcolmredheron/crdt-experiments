@@ -3,13 +3,14 @@ import {TypedValue} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
 import {
   ConsLinkedList,
+  HasEquals,
   HashMap,
   HashSet,
   LinkedList,
   Option,
   Vector,
 } from "prelude-ts";
-import {concreteHeadsForAbstractHeads, headsEqual} from "./StreamHeads";
+import {concreteHeadsForAbstractHeads} from "./StreamHeads";
 import {
   asType,
   consTail,
@@ -21,20 +22,32 @@ import {match, P} from "ts-pattern";
 import {AssertFailed} from "./helper/Assert";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
-type NodeType = "up" | "down";
-export class StreamId extends ObjectValue<{
-  deviceId: DeviceId;
-  nodeId: NodeId;
-  type: NodeType;
-  upRank: Rank;
-}>() {}
-export class NodeId extends ObjectValue<{
-  creator: DeviceId;
-  rest: string | undefined;
-}>() {}
+export class TreeId extends TypedValue<"TreeId", string> {}
 export class EdgeId extends TypedValue<"EdgeId", string> {}
-export class Rank extends TypedValue<"EdgeId", number> {}
-export const bootstrapRank = Rank.create(Number.MAX_SAFE_INTEGER);
+export class PermGroupId extends ObjectValue<{
+  writers: HashSet<DeviceId>;
+}>() {}
+
+type StreamId = {
+  type: "tree" | "edge";
+  deviceId: DeviceId;
+} & HasEquals;
+export class TreeStreamId
+  extends ObjectValue<{
+    type: "tree";
+    deviceId: DeviceId;
+    treeId: TreeId;
+  }>()
+  implements StreamId {}
+export class EdgeStreamId
+  extends ObjectValue<{
+    type: "edge";
+    deviceId: DeviceId;
+    treeId: TreeId;
+    edgeId: EdgeId;
+  }>()
+  implements StreamId {}
+
 export type Op = SetEdge;
 export type OpStream = ConsLinkedList<Op>;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
@@ -45,14 +58,10 @@ export type SetEdge = {
   type: "set edge";
 
   edgeId: EdgeId;
-  childId: NodeId;
+  childId: TreeId;
+  childPermGroupId: PermGroupId;
 
-  parentId: NodeId;
-  rank: Rank;
-
-  // This indicates the final op that we'll accept for any streams that get
-  // removed by this op.
-  contributingHeads: ConcreteHeads;
+  parentId: TreeId;
 };
 
 interface InitialPersistentIterator<T> {
@@ -67,47 +76,53 @@ interface PersistentIterator<T> {
   result: InitialPersistentIterator<T>;
 }
 
-type UpTreeIteratorState = {
-  readonly tree: UpTree;
+type TreeIteratorState = {
+  readonly tree: Tree;
   // Unlike parentIterators, we map to PersistentIterators here because we
   // define a stream as containing an op, so we can't have a stream until after
   // the first op.
   readonly streamIterators: HashMap<StreamId, PersistentIterator<OpStream>>;
-  readonly parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>;
+  readonly childIterators: HashMap<TreeId, InitialPersistentIterator<Tree>>;
 };
 
 export function buildUpTree(
   universe: ConcreteHeads,
-  nodeId: NodeId,
-): InitialPersistentIterator<UpTree> {
+  permGroupId: PermGroupId,
+  treeId: TreeId,
+): InitialPersistentIterator<Tree> {
   const streamIterators = concreteHeadsForAbstractHeads(
     universe,
-    new UpTree({
-      nodeId,
-      heads: HashMap.of(),
-      closedStreams: HashMap.of(),
+    new Tree({
+      permGroupId,
+      treeId,
       edges: HashMap.of(),
     }).desiredHeads(),
   ).mapValues((stream) => streamIteratorForStream(stream));
-  return buildUpTreeInternal(universe, nodeId, streamIterators, HashMap.of());
+  return buildUpTreeInternal(
+    universe,
+    permGroupId,
+    treeId,
+    streamIterators,
+    HashMap.of(),
+  );
 }
 
 function buildUpTreeInternal(
   universe: ConcreteHeads,
-  nodeId: NodeId,
+  permGroupId: PermGroupId,
+  treeId: TreeId,
   streamIterators: HashMap<StreamId, PersistentIterator<OpStream>>,
-  parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>,
-): InitialPersistentIterator<UpTree> {
-  const tree = new UpTree({
-    nodeId,
-    heads: HashMap.of(),
-    closedStreams: HashMap.of(),
+  childIterators: HashMap<TreeId, InitialPersistentIterator<Tree>>,
+): InitialPersistentIterator<Tree> {
+  const tree = new Tree({
+    permGroupId,
+    treeId,
     edges: HashMap.of(),
   });
-  const state = asType<UpTreeIteratorState>({
+  const state = asType<TreeIteratorState>({
     tree,
     streamIterators,
-    parentIterators: parentIterators,
+    childIterators,
   });
   const iterator = {
     value: tree,
@@ -121,33 +136,34 @@ function buildUpTreeInternal(
 
 function nextIterator(
   universe: ConcreteHeads,
-  state: UpTreeIteratorState,
-): Option<PersistentIterator<UpTree>> {
-  const opOption = nextOp(state.streamIterators, state.parentIterators);
+  state: TreeIteratorState,
+): Option<PersistentIterator<Tree>> {
+  const opOption = nextOp(state.streamIterators, state.childIterators);
   if (opOption.isNone()) return Option.none();
   const op = opOption.get();
 
-  const parentIterators1 = state.parentIterators.mapValues((i) =>
+  const childIterators1 = state.childIterators.mapValues((i) =>
     i
       .next()
       .map((next) => (next.op === op ? next.result : i))
       .getOrElse(i),
   );
-  const parentIterators2 =
-    op.childId.equals(state.tree.nodeId) &&
-    !parentIterators1.containsKey(op.parentId)
-      ? parentIterators1.put(
-          op.parentId,
+  const childIterators2 =
+    op.parentId === state.tree.treeId &&
+    !childIterators1.containsKey(op.childId)
+      ? childIterators1.put(
+          // TODO: this should also be keyed on the child perm group id.
+          op.childId,
           advanceIteratorUntil(
-            buildUpTree(universe, op.parentId),
+            buildUpTree(universe, op.childPermGroupId, op.childId),
             op.timestamp,
           ),
         )
-      : parentIterators1;
+      : childIterators1;
   const edges1 = mapValuesStable(state.tree.edges, (edge) =>
-    parentIterators2
-      .get(edge.parent.nodeId)
-      .map((iterator) => edge.copy({parent: iterator.value}))
+    childIterators2
+      .get(edge.tree.treeId)
+      .map((iterator) => edge.copy({tree: iterator.value}))
       .getOrElse(edge),
   );
 
@@ -177,75 +193,76 @@ function nextIterator(
           edges: edges1.put(
             op.edgeId,
             new Edge({
-              rank: op.rank,
-              parent: parentIterators2.get(op.parentId).getOrThrow().value,
+              parent: op.parentId,
+              tree: childIterators2.get(op.childId).getOrThrow().value,
             }),
           ),
-          heads: state.tree.heads.mergeWith(opHeads, (v0, v1) => v1),
+          // heads: state.tree.heads.mergeWith(opHeads, (v0, v1) => v1),
         }),
     )
     .with(P._, () => state.tree.copy({edges: edges1}))
     .exhaustive();
 
-  const addedStreamIds = tree1
-    .openStreams()
-    .removeAll(state.tree.openStreams());
-  const closedStreams1 = tree1.closedStreams.filterKeys(
-    (streamId) => !addedStreamIds.contains(streamId),
-  );
-  const removedStreamIds = state.tree
-    .openStreams()
-    .removeAll(tree1.openStreams());
-  const closedStreams2 = closedStreams1.mergeWith(
-    removedStreamIds.toVector().mapOption((streamId) => {
-      return (
-        op.contributingHeads
-          .get(streamId)
-          // Automatically include a closed stream for any stream that contained
-          // this operation. Without this, it's impossible to add the first parent
-          // of a node (which closes the bootstrap stream) since the op can't
-          // list itself in `contributingHeads`.
-          .orElse(opHeads.get(streamId))
-          .map((ops) => [streamId, ops])
-      );
-    }),
-    (ops0, ops1) => throwError("Should not have stream-id collision"),
-  );
-  const tree2 = tree1.copy({closedStreams: closedStreams2});
+  // const addedStreamIds = tree1
+  //   .openStreams()
+  //   .removeAll(state.tree.openStreams());
+  // const closedStreams1 = tree1.closedStreams.filterKeys(
+  //   (streamId) => !addedStreamIds.contains(streamId),
+  // );
+  // const removedStreamIds = state.tree
+  //   .openStreams()
+  //   .removeAll(tree1.openStreams());
+  // const closedStreams2 = closedStreams1.mergeWith(
+  //   removedStreamIds.toVector().mapOption((streamId) => {
+  //     return (
+  //       op.contributingHeads
+  //         .get(streamId)
+  //         // Automatically include a closed stream for any stream that contained
+  //         // this operation. Without this, it's impossible to add the first parent
+  //         // of a node (which closes the bootstrap stream) since the op can't
+  //         // list itself in `contributingHeads`.
+  //         .orElse(opHeads.get(streamId))
+  //         .map((ops) => [streamId, ops])
+  //     );
+  //   }),
+  //   (ops0, ops1) => throwError("Should not have stream-id collision"),
+  // );
+  // const tree2 = tree1.copy({closedStreams: closedStreams2});
 
   const concreteHeads = concreteHeadsForAbstractHeads(
     universe,
-    tree2.desiredHeads(),
+    tree1.desiredHeads(),
   );
-  const headsNeedReset = !headsEqual(concreteHeads, tree2.heads);
-  const needsReset =
-    headsNeedReset ||
-    parentIterators2.anyMatch(
-      (nodeId, parentIterator) => parentIterator.needsReset,
-    );
+  // const headsNeedReset = !headsEqual(concreteHeads, tree1.heads);
+  // const needsReset =
+  //   headsNeedReset ||
+  //   childIterators2.anyMatch(
+  //     (nodeId, parentIterator) => parentIterator.needsReset,
+  //   );
+  const needsReset = false;
 
   const state1 = {
-    tree: tree2,
+    tree: tree1,
     streamIterators: streamIterators1,
-    parentIterators: parentIterators2,
+    childIterators: childIterators2,
   };
   return Option.of({
     op,
     result: {
-      value: tree2,
+      value: tree1,
       next: () => nextIterator(universe, state1),
       needsReset,
       reset: () => {
         return buildUpTreeInternal(
           universe,
-          tree2.nodeId,
+          tree1.permGroupId,
+          tree1.treeId,
           concreteHeads.mapValues((stream) => streamIteratorForStream(stream)),
-          state1.parentIterators.mapValues((iterator) => iterator.reset()),
+          state1.childIterators.mapValues((iterator) => iterator.reset()),
         );
       },
       _state: state,
       _state1: state1,
-      _headsNeedReset: headsNeedReset,
       _concreteHeads: concreteHeads,
     },
   });
@@ -253,7 +270,7 @@ function nextIterator(
 
 function nextOp(
   streamIterators: HashMap<StreamId, PersistentIterator<OpStream>>,
-  parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>,
+  parentIterators: HashMap<TreeId, InitialPersistentIterator<Tree>>,
 ): Option<Op> {
   const streamOps = streamIterators
     .mapValues((streamIterator) => streamIterator.op)
@@ -301,72 +318,37 @@ export function advanceIteratorUntil<T>(
 }
 
 export class Edge extends ObjectValue<{
-  parent: UpTree;
-  rank: Rank;
+  parent: TreeId;
+  tree: Tree;
 }>() {}
 
-export class UpTree extends ObjectValue<{
-  readonly nodeId: NodeId;
-  heads: ConcreteHeads;
-  closedStreams: ConcreteHeads;
+export class Tree extends ObjectValue<{
+  readonly treeId: TreeId;
+  readonly permGroupId: PermGroupId;
+  // heads: ConcreteHeads;
+  // closedStreams: ConcreteHeads;
 
   edges: HashMap<EdgeId, Edge>;
 }>() {
   desiredHeads(): AbstractHeads {
-    const openStreams = HashMap.ofIterable<StreamId, "open" | OpStream>(
-      this.openStreams()
-        .toVector()
-        .map((streamId) => [streamId, "open"]),
-    );
-    const ourStreams = HashMap.ofIterable([
-      ...openStreams,
-      ...this.closedStreams,
-    ]);
-    return ourStreams;
-  }
-
-  private openWriterDevices(): HashSet<DeviceId> {
-    // #Bootstrap: A node with no parents is writeable by the creator.
-    if (this.edges.isEmpty()) return HashSet.of(this.nodeId.creator);
-    return this.edges.foldLeft(HashSet.of(), (devices, [, edge]) =>
-      HashSet.ofIterable([...devices, ...edge.parent.openWriterDevices()]),
-    );
-  }
-
-  openStreams(): HashSet<StreamId> {
-    // #Bootstrap: A node with no parents is writeable by the creator.
-    if (this.edges.isEmpty())
-      return HashSet.of(
-        new StreamId({
-          nodeId: this.nodeId,
-          deviceId: this.nodeId.creator,
-          type: "up",
-          upRank: bootstrapRank,
+    const ourHeads: AbstractHeads = HashMap.ofIterable<
+      StreamId,
+      "open" | OpStream
+    >(
+      this.permGroupId.writers.toVector().map((writer) => [
+        new TreeStreamId({
+          type: "tree",
+          deviceId: writer,
+          treeId: this.treeId,
         }),
-      );
-    return this.edges.foldLeft(HashSet.of(), (streams, [edgeId, edge]) =>
-      streams.addAll(
-        edge.parent.openWriterDevices().map(
-          (deviceId) =>
-            new StreamId({
-              nodeId: this.nodeId,
-              deviceId: deviceId,
-              type: "up",
-              upRank: edge.rank,
-            }),
-        ),
-      ),
+        "open",
+      ]),
     );
-  }
-
-  excludeFromEquals = HashSet.of("closedStreams");
-  equals(other: unknown): boolean {
-    if (Object.getPrototypeOf(this) !== Object.getPrototypeOf(other))
-      return false;
-
-    return (
-      super.equals(other) &&
-      headsEqual(this.closedStreams, (other as this).closedStreams)
+    return this.edges.foldLeft(ourHeads, (heads, [, edge]) =>
+      HashMap.ofIterable<StreamId, "open" | OpStream>([
+        ...heads,
+        ...edge.tree.desiredHeads(),
+      ]),
     );
   }
 }
