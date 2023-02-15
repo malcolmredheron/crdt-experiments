@@ -6,7 +6,6 @@ import {
   HasEquals,
   HashMap,
   HashSet,
-  LinkedList,
   Option,
   Vector,
 } from "prelude-ts";
@@ -19,7 +18,6 @@ import {
   throwError,
 } from "./helper/Collection";
 import {match, P} from "ts-pattern";
-import {AssertFailed} from "./helper/Assert";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 export class TreeId extends TypedValue<"TreeId", string> {}
@@ -67,8 +65,6 @@ export type SetEdge = {
 interface InitialPersistentIterator<T> {
   value: T;
   next: () => Option<PersistentIterator<T>>;
-  needsReset: boolean;
-  reset: () => InitialPersistentIterator<T>;
 }
 
 interface PersistentIterator<T> {
@@ -233,14 +229,6 @@ function nextIterator(
     universe,
     tree1.desiredHeads(),
   );
-  // const headsNeedReset = !headsEqual(concreteHeads, tree1.heads);
-  // const needsReset =
-  //   headsNeedReset ||
-  //   childIterators2.anyMatch(
-  //     (nodeId, parentIterator) => parentIterator.needsReset,
-  //   );
-  const needsReset = false;
-
   const state1 = {
     tree: tree1,
     streamIterators: streamIterators1,
@@ -251,16 +239,6 @@ function nextIterator(
     result: {
       value: tree1,
       next: () => nextIterator(universe, state1),
-      needsReset,
-      reset: () => {
-        return buildUpTreeInternal(
-          universe,
-          tree1.permGroupId,
-          tree1.treeId,
-          concreteHeads.mapValues((stream) => streamIteratorForStream(stream)),
-          state1.childIterators.mapValues((iterator) => iterator.reset()),
-        );
-      },
       _state: state,
       _state1: state1,
       _concreteHeads: concreteHeads,
@@ -296,25 +274,13 @@ export function advanceIteratorUntil<T>(
   iterator: InitialPersistentIterator<T>,
   after: Timestamp,
 ): InitialPersistentIterator<T> {
-  // `iterators` and the limit of 10 times through the loop are for debugging.
-  // We will have to find a more sophisticated way to handle this at some point.
-  let iterators = LinkedList.of<{
-    iterator: InitialPersistentIterator<T>;
-    description: string;
-  }>({iterator, description: "initial"});
-  for (let i = 0; i < 10; i++) {
-    while (true) {
-      const next = iterator.next();
-      if (next.isNone()) break;
-      if (next.get().op.timestamp > after) break;
-      iterator = next.get().result;
-    }
-    if (!iterator.needsReset) return iterator;
-    iterators = iterators.prepend({iterator, description: "before reset"});
-    iterator = iterator.reset();
-    iterators = iterators.prepend({iterator, description: "after reset"});
+  while (true) {
+    const next = iterator.next();
+    if (next.isNone()) break;
+    if (next.get().op.timestamp > after) break;
+    iterator = next.get().result;
   }
-  throw new AssertFailed("Iterator did not stabilize");
+  return iterator;
 }
 
 export class Edge extends ObjectValue<{
@@ -362,11 +328,6 @@ function streamIteratorForStream(
     result: {
       value: stream,
       next: next,
-      needsReset: false,
-      // Annoyingly, we don't have a way of resetting a stream iterator because
-      // we'd need to return an InitialPersistentIterator, which we can't do
-      // because the stream doesn't have a value until after the first op.
-      reset: () => throwError("Not implemented"),
     },
   };
   return consTail(stream)
