@@ -2,22 +2,22 @@ import {ObjectValue} from "./helper/ObjectValue";
 import {TypedValue} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
 import {
-  ConsLinkedList,
   HasEquals,
   HashMap,
   HashSet,
+  LinkedList,
   Option,
   Vector,
 } from "prelude-ts";
 import {concreteHeadsForAbstractHeads} from "./StreamHeads";
 import {
   asType,
-  consTail,
   mapMapOption,
   mapValuesStable,
   throwError,
 } from "./helper/Collection";
 import {match, P} from "ts-pattern";
+import {Seq} from "prelude-ts/dist/src/Seq";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 export class TreeId extends TypedValue<"TreeId", string> {}
@@ -47,7 +47,7 @@ export class EdgeStreamId
   implements StreamId {}
 
 export type Op = SetEdge;
-export type OpStream = ConsLinkedList<Op>;
+export type OpStream = LinkedList<Op>;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
 export type ConcreteHeads = HashMap<StreamId, OpStream>;
 
@@ -74,10 +74,10 @@ interface PersistentIterator<T> {
 
 type TreeIteratorState = {
   readonly tree: Tree;
-  // Unlike parentIterators, we map to PersistentIterators here because we
-  // define a stream as containing an op, so we can't have a stream until after
-  // the first op.
-  readonly streamIterators: HashMap<StreamId, PersistentIterator<OpStream>>;
+  readonly streamIterators: HashMap<
+    StreamId,
+    InitialPersistentIterator<OpStream>
+  >;
   readonly childIterators: HashMap<TreeId, InitialPersistentIterator<Tree>>;
 };
 
@@ -107,7 +107,7 @@ function buildUpTreeInternal(
   universe: ConcreteHeads,
   permGroupId: PermGroupId,
   treeId: TreeId,
-  streamIterators: HashMap<StreamId, PersistentIterator<OpStream>>,
+  streamIterators: HashMap<StreamId, InitialPersistentIterator<OpStream>>,
   childIterators: HashMap<TreeId, InitialPersistentIterator<Tree>>,
 ): InitialPersistentIterator<Tree> {
   const tree = new Tree({
@@ -134,7 +134,12 @@ function nextIterator(
   universe: ConcreteHeads,
   state: TreeIteratorState,
 ): Option<PersistentIterator<Tree>> {
-  const opOption = nextOp(state.streamIterators, state.childIterators);
+  const opOption = nextOp(
+    Vector.of<InitialPersistentIterator<unknown>>(
+      ...state.streamIterators.valueIterable(),
+      ...state.childIterators.valueIterable(),
+    ),
+  );
   if (opOption.isNone()) return Option.none();
   const op = opOption.get();
 
@@ -163,21 +168,22 @@ function nextIterator(
       .getOrElse(edge),
   );
 
-  const streamIterators1 = mapMapOption(
-    state.streamIterators,
-    (streamId, streamIterator) => {
-      return streamIterator.op === op
-        ? streamIterator.result.next()
-        : Option.of(streamIterator);
-    },
-  );
+  const streamIterators1 = state.streamIterators.mapValues((streamIterator) => {
+    return streamIterator
+      .next()
+      .map((next) => (next.op === op ? next.result : streamIterator))
+      .getOrElse(streamIterator);
+  });
 
   const opHeads = mapMapOption(
     state.streamIterators,
     (streamId, streamIterator) => {
-      return streamIterator.op === op
-        ? Option.of(streamIterator.result.value)
-        : Option.none<OpStream>();
+      return streamIterator
+        .next()
+        .flatMap((next) =>
+          next.op === op ? Option.of(next.result) : Option.none(),
+        )
+        .orElse(Option.none<OpStream>());
     },
   );
   const tree1 = match({opHeads})
@@ -247,16 +253,12 @@ function nextIterator(
 }
 
 function nextOp(
-  streamIterators: HashMap<StreamId, PersistentIterator<OpStream>>,
-  parentIterators: HashMap<TreeId, InitialPersistentIterator<Tree>>,
+  iterators: Seq<InitialPersistentIterator<unknown>>,
 ): Option<Op> {
-  const streamOps = streamIterators
-    .mapValues((streamIterator) => streamIterator.op)
-    .valueIterable();
-  const parentOps = mapMapOption(parentIterators, (streamId, parentIterator) =>
-    parentIterator.next().map((next) => next.op),
-  ).valueIterable();
-  const opOption = Vector.ofIterable([...streamOps, ...parentOps]).reduce(
+  const ops = iterators.mapOption((iterator) =>
+    iterator.next().map((next) => next.op),
+  );
+  const opOption = ops.reduce(
     (leftOp: Op, right: Op): Op =>
       leftOp.timestamp < right.timestamp
         ? leftOp
@@ -322,15 +324,13 @@ export class Tree extends ObjectValue<{
 function streamIteratorForStream(
   stream: OpStream,
   next: () => Option<PersistentIterator<OpStream>> = () => Option.none(),
-): PersistentIterator<OpStream> {
-  const iterator: PersistentIterator<OpStream> = {
-    op: stream.head().get(),
-    result: {
-      value: stream,
-      next: next,
-    },
-  };
-  return consTail(stream)
-    .map((tail) => streamIteratorForStream(tail, () => Option.of(iterator)))
-    .getOrElse(iterator);
+): InitialPersistentIterator<OpStream> {
+  return stream
+    .head()
+    .map((head) =>
+      streamIteratorForStream(stream.tail().getOrElse(LinkedList.of()), () =>
+        Option.of({op: head, result: {value: stream, next}}),
+      ),
+    )
+    .getOrElse({value: stream, next: next});
 }
