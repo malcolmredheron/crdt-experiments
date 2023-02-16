@@ -17,8 +17,8 @@ export function headsEqual<
   Op extends {timestamp: Timestamp},
   StreamId extends WithEquality,
 >(
-  left: HashMap<StreamId, "open" | ConsLinkedList<Op>>,
-  right: HashMap<StreamId, "open" | ConsLinkedList<Op>>,
+  left: HashMap<StreamId, "open" | LinkedList<Op>>,
+  right: HashMap<StreamId, "open" | LinkedList<Op>>,
 ): boolean {
   if (left.length() !== right.length()) return false;
   for (const [streamId, leftHead] of left) {
@@ -84,12 +84,12 @@ export function concreteHeadsForAbstractHeads<
   Op extends {timestamp: Timestamp},
   StreamId extends WithEquality,
 >(
-  universe: HashMap<StreamId, ConsLinkedList<Op>>,
-  abstractHeads: HashMap<StreamId, "open" | ConsLinkedList<Op>>,
-): HashMap<StreamId, ConsLinkedList<Op>> {
+  universe: HashMap<StreamId, LinkedList<Op>>,
+  abstractHeads: HashMap<StreamId, "open" | LinkedList<Op>>,
+): HashMap<StreamId, LinkedList<Op>> {
   return abstractHeads.flatMap((streamId, openOrOp) =>
     openOrOp === "open"
-      ? asType<Option<[StreamId, ConsLinkedList<Op>][]>>(
+      ? asType<Option<[StreamId, LinkedList<Op>][]>>(
           universe.get(streamId).map((remoteHead) => [[streamId, remoteHead]]),
         ).getOrElse([])
       : [[streamId, openOrOp]],
