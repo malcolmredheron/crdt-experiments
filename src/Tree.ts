@@ -46,31 +46,22 @@ export type SetEdge = {
   contributingHeads: ConcreteHeads;
 };
 
-interface InitialPersistentIterator<T> {
-  value: T;
-  next: () => Option<PersistentIterator<T>>;
-  needsReset: boolean;
-  reset: () => InitialPersistentIterator<T>;
-}
-
-interface PersistentIterator<T> {
-  op: Op;
-  result: InitialPersistentIterator<T>;
-}
-
 type UpTreeIteratorState = {
   readonly tree: UpTree;
   readonly streamIterators: HashMap<
     StreamId,
-    InitialPersistentIterator<OpStream>
+    PersistentIteratorValue<OpStream, Op>
   >;
-  readonly parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>;
+  readonly parentIterators: HashMap<
+    NodeId,
+    PersistentIteratorValue<UpTree, Op>
+  >;
 };
 
 export function buildUpTree(
   universe: ConcreteHeads,
   nodeId: NodeId,
-): InitialPersistentIterator<UpTree> {
+): PersistentIteratorValue<UpTree, Op> {
   const streamIterators = concreteHeadsForAbstractHeads(
     universe,
     new UpTree({
@@ -86,9 +77,9 @@ export function buildUpTree(
 function buildUpTreeInternal(
   universe: ConcreteHeads,
   nodeId: NodeId,
-  streamIterators: HashMap<StreamId, InitialPersistentIterator<OpStream>>,
-  parentIterators: HashMap<NodeId, InitialPersistentIterator<UpTree>>,
-): InitialPersistentIterator<UpTree> {
+  streamIterators: HashMap<StreamId, PersistentIteratorValue<OpStream, Op>>,
+  parentIterators: HashMap<NodeId, PersistentIteratorValue<UpTree, Op>>,
+): PersistentIteratorValue<UpTree, Op> {
   const tree = new UpTree({
     nodeId,
     heads: HashMap.of(),
@@ -113,9 +104,9 @@ function buildUpTreeInternal(
 function nextIterator(
   universe: ConcreteHeads,
   state: UpTreeIteratorState,
-): Option<PersistentIterator<UpTree>> {
+): Option<PersistentIteratorOp<UpTree, Op>> {
   const opOption = nextOp(
-    Vector.of<InitialPersistentIterator<unknown>>(
+    Vector.of<PersistentIteratorValue<unknown, Op>>(
       ...state.streamIterators.valueIterable(),
       ...state.parentIterators.valueIterable(),
     ),
@@ -126,7 +117,7 @@ function nextIterator(
   const parentIterators1 = state.parentIterators.mapValues((i) =>
     i
       .next()
-      .map((next) => (next.op === op ? next.result : i))
+      .map((next) => (next.op === op ? next.value : i))
       .getOrElse(i),
   );
   const parentIterators2 =
@@ -150,7 +141,7 @@ function nextIterator(
   const streamIterators1 = state.streamIterators.mapValues((streamIterator) => {
     return streamIterator
       .next()
-      .map((next) => (next.op === op ? next.result : streamIterator))
+      .map((next) => (next.op === op ? next.value : streamIterator))
       .getOrElse(streamIterator);
   });
 
@@ -161,7 +152,7 @@ function nextIterator(
         .next()
         .flatMap((next) =>
           next.op === op
-            ? Option.of(next.result.value)
+            ? Option.of(next.value.value)
             : Option.none<OpStream>(),
         )
         .orElse(Option.none<OpStream>());
@@ -226,7 +217,7 @@ function nextIterator(
   };
   return Option.of({
     op,
-    result: {
+    value: {
       value: tree2,
       next: () => nextIterator(universe, state1),
       needsReset,
@@ -246,8 +237,8 @@ function nextIterator(
   });
 }
 
-function nextOp(
-  iterators: Seq<InitialPersistentIterator<unknown>>,
+function nextOp<Op extends {timestamp: Timestamp}>(
+  iterators: Seq<PersistentIteratorValue<unknown, Op>>,
 ): Option<Op> {
   const ops = iterators.mapOption((iterator) =>
     iterator.next().map((next) => next.op),
@@ -263,28 +254,6 @@ function nextOp(
         : throwError("non-identical ops have the same timestamp"),
   );
   return opOption;
-}
-
-// Advances the iterator until the next value is greater than `after`.
-export function advanceIteratorUntil<T>(
-  iterator: InitialPersistentIterator<T>,
-  after: Timestamp,
-): InitialPersistentIterator<T> {
-  // `iterators` and the limit of 10 times through the loop are for debugging.
-  // We will have to find a more sophisticated way to handle this at some point.
-  let iterators = LinkedList.of(iterator);
-  for (let i = 0; i < 10; i++) {
-    while (true) {
-      const next = iterator.next();
-      if (next.isNone()) break;
-      if (next.get().op.timestamp > after) break;
-      iterator = next.get().result;
-    }
-    if (!iterator.needsReset) return iterator;
-    iterators = iterators.prepend(iterator);
-    iterator = iterator.reset();
-  }
-  throw new AssertFailed("Iterator did not stabilize");
 }
 
 export class Edge extends ObjectValue<{
@@ -341,15 +310,15 @@ export class UpTree extends ObjectValue<{
 
 function streamIteratorForStream(
   stream: OpStream,
-  next: () => Option<PersistentIterator<OpStream>> = () => Option.none(),
-): InitialPersistentIterator<OpStream> {
+  next: () => Option<PersistentIteratorOp<OpStream, Op>> = () => Option.none(),
+): PersistentIteratorValue<OpStream, Op> {
   return stream
     .head()
     .map((head) =>
       streamIteratorForStream(stream.tail().getOrElse(LinkedList.of()), () =>
         Option.of({
           op: head,
-          result: {
+          value: {
             value: stream,
             next,
             needsReset: false,
@@ -368,4 +337,41 @@ function streamIteratorForStream(
         throw new AssertFailed("not implemented");
       },
     });
+}
+
+//------------------------------------------------------------------------------
+// Iterators
+
+interface PersistentIteratorValue<Value, Op extends {timestamp: Timestamp}> {
+  value: Value;
+  next: () => Option<PersistentIteratorOp<Value, Op>>;
+  needsReset: boolean;
+  reset: () => PersistentIteratorValue<Value, Op>;
+}
+
+interface PersistentIteratorOp<Value, Op extends {timestamp: Timestamp}> {
+  op: Op;
+  value: PersistentIteratorValue<Value, Op>;
+}
+
+// Advances the iterator until the next value is greater than `after`.
+export function advanceIteratorUntil<T, Op extends {timestamp: Timestamp}>(
+  iterator: PersistentIteratorValue<T, Op>,
+  after: Timestamp,
+): PersistentIteratorValue<T, Op> {
+  // `iterators` and the limit of 10 times through the loop are for debugging.
+  // We will have to find a more sophisticated way to handle this at some point.
+  let iterators = LinkedList.of(iterator);
+  for (let i = 0; i < 10; i++) {
+    while (true) {
+      const next = iterator.next();
+      if (next.isNone()) break;
+      if (next.get().op.timestamp > after) break;
+      iterator = next.get().value;
+    }
+    if (!iterator.needsReset) return iterator;
+    iterators = iterators.prepend(iterator);
+    iterator = iterator.reset();
+  }
+  throw new AssertFailed("Iterator did not stabilize");
 }
