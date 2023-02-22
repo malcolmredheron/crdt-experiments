@@ -47,7 +47,6 @@ export type SetEdge = {
   childId: DynamicPermGroupId;
 
   parentId: PermGroupId;
-  rank: Rank;
 
   // This indicates the final op that we'll accept for any streams that get
   // removed by this op.
@@ -204,7 +203,6 @@ function nextDynamicPermGroupIterator(
           edges: edges1.put(
             op.edgeId,
             new Edge({
-              rank: op.rank,
               parent: parentIterators2.get(op.parentId).getOrThrow().value,
             }),
           ),
@@ -276,7 +274,6 @@ function nextDynamicPermGroupIterator(
 
 export class Edge extends ObjectValue<{
   parent: PermGroup;
-  rank: Rank;
 }>() {}
 
 interface PermGroup {

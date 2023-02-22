@@ -2,13 +2,12 @@ import {
   advanceIteratorUntil,
   buildDynamicPermGroup,
   DeviceId,
+  DynamicPermGroup,
   DynamicPermGroupId,
   Edge,
   EdgeId,
   Op,
   OpStream,
-  DynamicPermGroup,
-  Rank,
   SetEdge,
   StreamId,
 } from "./Tree";
@@ -41,7 +40,6 @@ describe("Tree", () => {
       edgeId: extras?.edgeId || EdgeId.create("edge"),
       parentId,
       childId,
-      rank: Rank.create(0),
       contributingHeads: extras?.streams || HashMap.of(),
     };
   }
@@ -69,7 +67,6 @@ describe("Tree", () => {
 
     it("writeable by parents when parents", () => {
       const edgeId = EdgeId.create("edge");
-      const rank = Rank.create(0);
       const otherDeviceId = DeviceId.create("other device");
       const parentId = new DynamicPermGroupId({
         creator: otherDeviceId,
@@ -82,7 +79,6 @@ describe("Tree", () => {
         edges: HashMap.of([
           edgeId,
           new Edge({
-            rank,
             parent: new DynamicPermGroup({
               id: parentId,
               heads: HashMap.of(),
