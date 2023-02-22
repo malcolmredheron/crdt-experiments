@@ -1,6 +1,5 @@
 import {
   advanceIteratorUntil,
-  buildUpTree,
   DeviceId,
   Edge,
   EdgeId,
@@ -10,7 +9,8 @@ import {
   Rank,
   SetEdge,
   StreamId,
-  UpTree,
+  PermGroup,
+  buildPermGroup,
 } from "./Tree";
 import {HashMap, HashSet, LinkedList} from "prelude-ts";
 import {Timestamp} from "./helper/Timestamp";
@@ -52,7 +52,7 @@ describe("Tree", () => {
 
   describe("desiredStreams", () => {
     it("writeable by creator when no parents", () => {
-      const tree = new UpTree({
+      const tree = new PermGroup({
         nodeId: rootId,
         heads: HashMap.of(),
         closedStreams: HashMap.of(),
@@ -75,7 +75,7 @@ describe("Tree", () => {
         creator: otherDeviceId,
         rest: "parent",
       });
-      const tree = new UpTree({
+      const tree = new PermGroup({
         nodeId: rootId,
         closedStreams: HashMap.of(),
         heads: HashMap.of(),
@@ -83,7 +83,7 @@ describe("Tree", () => {
           edgeId,
           new Edge({
             rank,
-            parent: new UpTree({
+            parent: new PermGroup({
               nodeId: parentId,
               heads: HashMap.of(),
               closedStreams: HashMap.of(),
@@ -113,7 +113,7 @@ describe("Tree", () => {
         deviceId: otherDeviceId,
         type: "up",
       });
-      const tree = new UpTree({
+      const tree = new PermGroup({
         nodeId: rootId,
         heads: HashMap.of(),
         closedStreams: HashMap.of([otherStreamId, otherDeviceOps]),
@@ -137,7 +137,7 @@ describe("Tree", () => {
 
   describe("buildUpTree", () => {
     it("initial tree", () => {
-      const tree = buildUpTree(HashMap.of(), rootId).value;
+      const tree = buildPermGroup(HashMap.of(), rootId).value;
       expectPreludeEqual(tree.nodeId, rootId);
     });
 
@@ -149,7 +149,7 @@ describe("Tree", () => {
         opsList(op),
       ]);
       const tree = advanceIteratorUntil(
-        buildUpTree(universe, rootId),
+        buildPermGroup(universe, rootId),
         maxTimestamp,
       ).value;
       const parent = tree.edges.single().getOrThrow()[1].parent;
@@ -165,7 +165,7 @@ describe("Tree", () => {
       ]);
       expectIdentical(op.timestamp, Timestamp.create(0));
       const tree = advanceIteratorUntil(
-        buildUpTree(universe, rootId),
+        buildPermGroup(universe, rootId),
         Timestamp.create(-1),
       ).value;
       expectPreludeEqual(tree.edges, HashMap.of());
@@ -188,7 +188,7 @@ describe("Tree", () => {
         ],
       );
       const tree = advanceIteratorUntil(
-        buildUpTree(universe, rootId),
+        buildPermGroup(universe, rootId),
         maxTimestamp,
       ).value;
       expectIdentical(
@@ -221,7 +221,7 @@ describe("Tree", () => {
         ],
       );
       const tree = advanceIteratorUntil(
-        buildUpTree(universe, rootId),
+        buildPermGroup(universe, rootId),
         maxTimestamp,
       ).value;
       expectIdentical(
@@ -264,7 +264,7 @@ describe("Tree", () => {
         ],
       );
       const tree = advanceIteratorUntil(
-        buildUpTree(universe, rootId),
+        buildPermGroup(universe, rootId),
         maxTimestamp,
       ).value;
       expectIdentical(
@@ -321,7 +321,7 @@ describe("Tree", () => {
         ],
       );
       const iterator = advanceIteratorUntil(
-        buildUpTree(universe, childId),
+        buildPermGroup(universe, childId),
         maxTimestamp,
       );
       const tree = iterator.value;
@@ -381,7 +381,7 @@ describe("Tree", () => {
         ),
       ]);
       const tree = advanceIteratorUntil(
-        buildUpTree(universe, rootId),
+        buildPermGroup(universe, rootId),
         maxTimestamp,
       ).value;
       // Only the stream for the removed writer gets closed.

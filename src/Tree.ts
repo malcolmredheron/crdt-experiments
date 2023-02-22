@@ -46,54 +46,59 @@ export type SetEdge = {
   contributingHeads: ConcreteHeads;
 };
 
-type UpTreeIteratorState = {
-  readonly tree: UpTree;
+type PermGroupIteratorState = {
+  readonly tree: PermGroup;
   readonly streamIterators: HashMap<
     StreamId,
     PersistentIteratorValue<OpStream, Op>
   >;
   readonly parentIterators: HashMap<
     NodeId,
-    PersistentIteratorValue<UpTree, Op>
+    PersistentIteratorValue<PermGroup, Op>
   >;
 };
 
-export function buildUpTree(
+export function buildPermGroup(
   universe: ConcreteHeads,
   nodeId: NodeId,
-): PersistentIteratorValue<UpTree, Op> {
+): PersistentIteratorValue<PermGroup, Op> {
   const streamIterators = concreteHeadsForAbstractHeads(
     universe,
-    new UpTree({
+    new PermGroup({
       nodeId,
       heads: HashMap.of(),
       closedStreams: HashMap.of(),
       edges: HashMap.of(),
     }).desiredHeads(),
   ).mapValues((stream) => streamIteratorForStream(stream));
-  return buildUpTreeInternal(universe, nodeId, streamIterators, HashMap.of());
+  return buildPermGroupInternal(
+    universe,
+    nodeId,
+    streamIterators,
+    HashMap.of(),
+  );
 }
 
-function buildUpTreeInternal(
+function buildPermGroupInternal(
   universe: ConcreteHeads,
   nodeId: NodeId,
   streamIterators: HashMap<StreamId, PersistentIteratorValue<OpStream, Op>>,
-  parentIterators: HashMap<NodeId, PersistentIteratorValue<UpTree, Op>>,
-): PersistentIteratorValue<UpTree, Op> {
-  const tree = new UpTree({
+  parentIterators: HashMap<NodeId, PersistentIteratorValue<PermGroup, Op>>,
+): PersistentIteratorValue<PermGroup, Op> {
+  const tree = new PermGroup({
     nodeId,
     heads: HashMap.of(),
     closedStreams: HashMap.of(),
     edges: HashMap.of(),
   });
-  const state = asType<UpTreeIteratorState>({
+  const state = asType<PermGroupIteratorState>({
     tree,
     streamIterators,
     parentIterators: parentIterators,
   });
   const iterator = {
     value: tree,
-    next: () => nextIterator(universe, state),
+    next: () => nextPermGroupIterator(universe, state),
     needsReset: false,
     reset: () => iterator,
     _state: state,
@@ -101,10 +106,10 @@ function buildUpTreeInternal(
   return iterator;
 }
 
-function nextIterator(
+function nextPermGroupIterator(
   universe: ConcreteHeads,
-  state: UpTreeIteratorState,
-): Option<PersistentIteratorOp<UpTree, Op>> {
+  state: PermGroupIteratorState,
+): Option<PersistentIteratorOp<PermGroup, Op>> {
   const opOption = nextOp(
     Vector.of<PersistentIteratorValue<unknown, Op>>(
       ...state.streamIterators.valueIterable(),
@@ -126,7 +131,7 @@ function nextIterator(
       ? parentIterators1.put(
           op.parentId,
           advanceIteratorUntil(
-            buildUpTree(universe, op.parentId),
+            buildPermGroup(universe, op.parentId),
             op.timestamp,
           ),
         )
@@ -219,10 +224,10 @@ function nextIterator(
     op,
     value: {
       value: tree2,
-      next: () => nextIterator(universe, state1),
+      next: () => nextPermGroupIterator(universe, state1),
       needsReset,
       reset: () => {
-        return buildUpTreeInternal(
+        return buildPermGroupInternal(
           universe,
           tree2.nodeId,
           concreteHeads.mapValues((stream) => streamIteratorForStream(stream)),
@@ -237,31 +242,12 @@ function nextIterator(
   });
 }
 
-function nextOp<Op extends {timestamp: Timestamp}>(
-  iterators: Seq<PersistentIteratorValue<unknown, Op>>,
-): Option<Op> {
-  const ops = iterators.mapOption((iterator) =>
-    iterator.next().map((next) => next.op),
-  );
-  const opOption = ops.reduce(
-    (leftOp: Op, right: Op): Op =>
-      leftOp.timestamp < right.timestamp
-        ? leftOp
-        : right.timestamp < leftOp.timestamp
-        ? right
-        : leftOp === right
-        ? leftOp
-        : throwError("non-identical ops have the same timestamp"),
-  );
-  return opOption;
-}
-
 export class Edge extends ObjectValue<{
-  parent: UpTree;
+  parent: PermGroup;
   rank: Rank;
 }>() {}
 
-export class UpTree extends ObjectValue<{
+export class PermGroup extends ObjectValue<{
   readonly nodeId: NodeId;
   heads: ConcreteHeads;
   closedStreams: ConcreteHeads;
@@ -340,7 +326,7 @@ function streamIteratorForStream(
 }
 
 //------------------------------------------------------------------------------
-// Iterators
+// Iterators and generic ops
 
 interface PersistentIteratorValue<Value, Op extends {timestamp: Timestamp}> {
   value: Value;
@@ -374,4 +360,23 @@ export function advanceIteratorUntil<T, Op extends {timestamp: Timestamp}>(
     iterator = iterator.reset();
   }
   throw new AssertFailed("Iterator did not stabilize");
+}
+
+function nextOp<Op extends {timestamp: Timestamp}>(
+  iterators: Seq<PersistentIteratorValue<unknown, Op>>,
+): Option<Op> {
+  const ops = iterators.mapOption((iterator) =>
+    iterator.next().map((next) => next.op),
+  );
+  const opOption = ops.reduce(
+    (leftOp: Op, right: Op): Op =>
+      leftOp.timestamp < right.timestamp
+        ? leftOp
+        : right.timestamp < leftOp.timestamp
+        ? right
+        : leftOp === right
+        ? leftOp
+        : throwError("non-identical ops have the same timestamp"),
+  );
+  return opOption;
 }
