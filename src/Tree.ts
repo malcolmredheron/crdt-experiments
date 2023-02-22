@@ -169,8 +169,8 @@ function nextDynamicPermGroupIterator(
       : parentIterators1;
   const edges1 = mapValuesStable(state.tree.edges, (edge) =>
     parentIterators2
-      .get(edge.parent.id)
-      .map((iterator) => edge.copy({parent: iterator.value}))
+      .get(edge.id)
+      .map((iterator) => iterator.value)
       .getOrElse(edge),
   );
 
@@ -202,9 +202,7 @@ function nextDynamicPermGroupIterator(
         state.tree.copy({
           edges: edges1.put(
             op.edgeId,
-            new Edge({
-              parent: parentIterators2.get(op.parentId).getOrThrow().value,
-            }),
+            parentIterators2.get(op.parentId).getOrThrow().value,
           ),
           heads: state.tree.heads.mergeWith(opHeads, (v0, v1) => v1),
         }),
@@ -272,10 +270,6 @@ function nextDynamicPermGroupIterator(
   });
 }
 
-export class Edge extends ObjectValue<{
-  parent: PermGroup;
-}>() {}
-
 interface PermGroup {
   readonly id: PermGroupId;
   openWriterDevices(): HashSet<DeviceId>;
@@ -295,7 +289,7 @@ export class DynamicPermGroup extends ObjectValue<{
   heads: ConcreteHeads;
   closedStreams: ConcreteHeads;
 
-  edges: HashMap<EdgeId, Edge>;
+  edges: HashMap<EdgeId, PermGroup>;
 }>() {
   desiredHeads(): AbstractHeads {
     const openStreams = HashMap.ofIterable<StreamId, "open" | OpStream>(
@@ -321,7 +315,7 @@ export class DynamicPermGroup extends ObjectValue<{
     // A node with no parents is writeable by the creator.
     if (this.edges.isEmpty()) return HashSet.of(this.id.creator);
     return this.edges.foldLeft(HashSet.of(), (devices, [, edge]) =>
-      HashSet.ofIterable([...devices, ...edge.parent.openWriterDevices()]),
+      HashSet.ofIterable([...devices, ...edge.openWriterDevices()]),
     );
   }
 

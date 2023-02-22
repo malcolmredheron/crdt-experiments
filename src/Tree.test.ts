@@ -4,7 +4,6 @@ import {
   DeviceId,
   DynamicPermGroup,
   DynamicPermGroupId,
-  Edge,
   EdgeId,
   Op,
   OpStream,
@@ -78,13 +77,11 @@ describe("Tree", () => {
         heads: HashMap.of(),
         edges: HashMap.of([
           edgeId,
-          new Edge({
-            parent: new DynamicPermGroup({
-              id: parentId,
-              heads: HashMap.of(),
-              closedStreams: HashMap.of(),
-              edges: HashMap.of(),
-            }),
+          new DynamicPermGroup({
+            id: parentId,
+            heads: HashMap.of(),
+            closedStreams: HashMap.of(),
+            edges: HashMap.of(),
           }),
         ]),
       });
@@ -151,7 +148,7 @@ describe("Tree", () => {
         buildDynamicPermGroup(universe, rootId),
         maxTimestamp,
       ).value;
-      const parent = group.edges.single().getOrThrow()[1].parent;
+      const parent = group.edges.single().getOrThrow()[1];
       expectPreludeEqual(parent.id, parentId);
     });
 
@@ -203,11 +200,11 @@ describe("Tree", () => {
         ),
         true,
       );
-      const parent = group.edges.single().getOrThrow()[1].parent;
+      const parent = group.edges.single().getOrThrow()[1];
       expectPreludeEqual(parent.id, parentId);
       const grandparent = (parent as DynamicPermGroup).edges
         .single()
-        .getOrThrow()[1].parent;
+        .getOrThrow()[1];
       expectPreludeEqual(grandparent.id, grandparentId);
     });
 
@@ -241,11 +238,11 @@ describe("Tree", () => {
         ),
         true,
       );
-      const parent = group.edges.single().getOrThrow()[1].parent;
+      const parent = group.edges.single().getOrThrow()[1];
       expectPreludeEqual(parent.id, parentId);
       const grandparent = (parent as DynamicPermGroup).edges
         .single()
-        .getOrThrow()[1].parent;
+        .getOrThrow()[1];
       expectPreludeEqual(grandparent.id, grandparentId);
     });
 
@@ -358,8 +355,7 @@ describe("Tree", () => {
         maxTimestamp,
       );
       const group = iterator.value;
-      const root = group.edges.single().getOrThrow()[1]
-        .parent as DynamicPermGroup;
+      const root = group.edges.single().getOrThrow()[1] as DynamicPermGroup;
       expectIdentical(
         headsEqual(
           root.heads,
