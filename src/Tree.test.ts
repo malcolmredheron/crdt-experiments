@@ -7,7 +7,7 @@ import {
   EdgeId,
   Op,
   OpStream,
-  PermGroup,
+  DynamicPermGroup,
   Rank,
   SetEdge,
   StreamId,
@@ -52,7 +52,7 @@ describe("Tree", () => {
 
   describe("desiredStreams", () => {
     it("writeable by creator when no parents", () => {
-      const group = new PermGroup({
+      const group = new DynamicPermGroup({
         id: rootId,
         heads: HashMap.of(),
         closedStreams: HashMap.of(),
@@ -75,7 +75,7 @@ describe("Tree", () => {
         creator: otherDeviceId,
         rest: "parent",
       });
-      const group = new PermGroup({
+      const group = new DynamicPermGroup({
         id: rootId,
         closedStreams: HashMap.of(),
         heads: HashMap.of(),
@@ -83,7 +83,7 @@ describe("Tree", () => {
           edgeId,
           new Edge({
             rank,
-            parent: new PermGroup({
+            parent: new DynamicPermGroup({
               id: parentId,
               heads: HashMap.of(),
               closedStreams: HashMap.of(),
@@ -113,7 +113,7 @@ describe("Tree", () => {
         deviceId: otherDeviceId,
         type: "up",
       });
-      const group = new PermGroup({
+      const group = new DynamicPermGroup({
         id: rootId,
         heads: HashMap.of(),
         closedStreams: HashMap.of([otherStreamId, otherDeviceOps]),

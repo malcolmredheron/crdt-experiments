@@ -53,25 +53,25 @@ export type SetEdge = {
   contributingHeads: ConcreteHeads;
 };
 
-type PermGroupIteratorState = {
-  readonly tree: PermGroup;
+type DynamicPermGroupIteratorState = {
+  readonly tree: DynamicPermGroup;
   readonly streamIterators: HashMap<
     StreamId,
     PersistentIteratorValue<OpStream, Op>
   >;
   readonly parentIterators: HashMap<
     PermGroupId,
-    PersistentIteratorValue<PermGroup, Op>
+    PersistentIteratorValue<DynamicPermGroup, Op>
   >;
 };
 
 export function buildDynamicPermGroup(
   universe: ConcreteHeads,
   id: DynamicPermGroupId,
-): PersistentIteratorValue<PermGroup, Op> {
+): PersistentIteratorValue<DynamicPermGroup, Op> {
   const streamIterators = concreteHeadsForAbstractHeads(
     universe,
-    new PermGroup({
+    new DynamicPermGroup({
       id,
       heads: HashMap.of(),
       closedStreams: HashMap.of(),
@@ -90,15 +90,18 @@ function buildDynamicPermGroupInternal(
   universe: ConcreteHeads,
   id: DynamicPermGroupId,
   streamIterators: HashMap<StreamId, PersistentIteratorValue<OpStream, Op>>,
-  parentIterators: HashMap<PermGroupId, PersistentIteratorValue<PermGroup, Op>>,
-): PersistentIteratorValue<PermGroup, Op> {
-  const tree = new PermGroup({
+  parentIterators: HashMap<
+    PermGroupId,
+    PersistentIteratorValue<DynamicPermGroup, Op>
+  >,
+): PersistentIteratorValue<DynamicPermGroup, Op> {
+  const tree = new DynamicPermGroup({
     id,
     heads: HashMap.of(),
     closedStreams: HashMap.of(),
     edges: HashMap.of(),
   });
-  const state = asType<PermGroupIteratorState>({
+  const state = asType<DynamicPermGroupIteratorState>({
     tree,
     streamIterators,
     parentIterators: parentIterators,
@@ -115,8 +118,8 @@ function buildDynamicPermGroupInternal(
 
 function nextDynamicPermGroupIterator(
   universe: ConcreteHeads,
-  state: PermGroupIteratorState,
-): Option<PersistentIteratorOp<PermGroup, Op>> {
+  state: DynamicPermGroupIteratorState,
+): Option<PersistentIteratorOp<DynamicPermGroup, Op>> {
   const opOption = nextOp(
     Vector.of<PersistentIteratorValue<unknown, Op>>(
       ...state.streamIterators.valueIterable(),
@@ -250,7 +253,7 @@ function nextDynamicPermGroupIterator(
 }
 
 export class Edge extends ObjectValue<{
-  parent: PermGroup;
+  parent: DynamicPermGroup;
   rank: Rank;
 }>() {}
 
@@ -258,7 +261,7 @@ export class StaticPermGroup extends ObjectValue<{
   readonly devices: HashSet<DeviceId>;
 }>() {}
 
-export class PermGroup extends ObjectValue<{
+export class DynamicPermGroup extends ObjectValue<{
   readonly id: DynamicPermGroupId;
   heads: ConcreteHeads;
   closedStreams: ConcreteHeads;
