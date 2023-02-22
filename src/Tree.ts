@@ -32,8 +32,6 @@ export class DynamicPermGroupId extends ObjectValue<{
 }>() {
   readonly type = "dynamic";
 }
-export class EdgeId extends TypedValue<"EdgeId", string> {}
-export class Rank extends TypedValue<"EdgeId", number> {}
 export type Op = SetEdge;
 export type OpStream = LinkedList<Op>;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;

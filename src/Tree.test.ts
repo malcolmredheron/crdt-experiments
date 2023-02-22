@@ -4,7 +4,6 @@ import {
   DeviceId,
   DynamicPermGroup,
   DynamicPermGroupId,
-  EdgeId,
   Op,
   OpStream,
   SetEdge,
@@ -29,7 +28,6 @@ describe("Tree", () => {
     parentId: DynamicPermGroupId,
     childId: DynamicPermGroupId,
     extras?: {
-      edgeId?: EdgeId;
       streams?: HashMap<StreamId, OpStream>;
     },
   ): SetEdge {
@@ -267,15 +265,15 @@ describe("Tree", () => {
             deviceId: otherDeviceId,
             type: "up",
           }),
-          opsList(setEdge(parentBId, rootId, {edgeId: EdgeId.create("B")})),
+          opsList(setEdge(parentBId, rootId)),
         ],
         [
           new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
           opsList(
             // So that deviceId can continue to write to the root even after
             // parents are added.
-            setEdge(parentId, rootId, {edgeId: EdgeId.create("parent")}),
-            setEdge(parentAId, rootId, {edgeId: EdgeId.create("A")}),
+            setEdge(parentId, rootId),
+            setEdge(parentAId, rootId),
           ),
         ],
       );
@@ -332,15 +330,15 @@ describe("Tree", () => {
             deviceId: otherDeviceId,
             type: "up",
           }),
-          opsList(setEdge(parentBId, rootId, {edgeId: EdgeId.create("B")})),
+          opsList(setEdge(parentBId, rootId)),
         ],
         [
           new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
           opsList(
             // So that deviceId can continue to write to the root even after
             // parents are added.
-            setEdge(parentId, rootId, {edgeId: EdgeId.create("parent")}),
-            setEdge(parentAId, rootId, {edgeId: EdgeId.create("A")}),
+            setEdge(parentId, rootId),
+            setEdge(parentAId, rootId),
           ),
         ],
       );
@@ -386,11 +384,7 @@ describe("Tree", () => {
         deviceId: otherDeviceId,
         type: "up",
       });
-      const otherRootOps = opsList(
-        setEdge(parentCId, rootId, {
-          edgeId: EdgeId.create("from contributions"),
-        }),
-      );
+      const otherRootOps = opsList(setEdge(parentCId, rootId));
       const deviceRootStreamId = new StreamId({
         nodeId: rootId,
         deviceId: deviceId,
@@ -399,7 +393,7 @@ describe("Tree", () => {
       const deviceRootEarlyOps = opsList(
         // So that deviceId can continue to write to the root even after
         // parents are added.
-        setEdge(parentId, rootId, {edgeId: EdgeId.create("permanent")}),
+        setEdge(parentId, rootId),
         // Add otherDeviceId as a writer.
         setEdge(parentAId, rootId),
       );
