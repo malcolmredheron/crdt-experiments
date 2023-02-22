@@ -43,9 +43,7 @@ export type SetEdge = {
   timestamp: Timestamp;
   type: "set edge";
 
-  edgeId: EdgeId;
   childId: DynamicPermGroupId;
-
   parentId: PermGroupId;
 
   // This indicates the final op that we'll accept for any streams that get
@@ -201,7 +199,7 @@ function nextDynamicPermGroupIterator(
       ({opHeads}) =>
         state.tree.copy({
           edges: edges1.put(
-            op.edgeId,
+            op.parentId,
             parentIterators2.get(op.parentId).getOrThrow().value,
           ),
           heads: state.tree.heads.mergeWith(opHeads, (v0, v1) => v1),
@@ -289,7 +287,7 @@ export class DynamicPermGroup extends ObjectValue<{
   heads: ConcreteHeads;
   closedStreams: ConcreteHeads;
 
-  edges: HashMap<EdgeId, PermGroup>;
+  edges: HashMap<PermGroupId, PermGroup>;
 }>() {
   desiredHeads(): AbstractHeads {
     const openStreams = HashMap.ofIterable<StreamId, "open" | OpStream>(
