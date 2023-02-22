@@ -315,14 +315,15 @@ export class DynamicPermGroup extends ObjectValue<{
     );
   }
 
-  excludeFromEquals = HashSet.of("closedStreams");
+  excludeFromEquals = HashSet.of("closedStreams", "heads");
   equals(other: unknown): boolean {
     if (Object.getPrototypeOf(this) !== Object.getPrototypeOf(other))
       return false;
 
     return (
       super.equals(other) &&
-      headsEqual(this.closedStreams, (other as this).closedStreams)
+      headsEqual(this.closedStreams, (other as this).closedStreams) &&
+      headsEqual(this.heads, (other as this).heads)
     );
   }
 }
