@@ -17,13 +17,20 @@ export class DeviceId extends TypedValue<"DeviceId", string> {}
 type NodeType = "up" | "down";
 export class StreamId extends ObjectValue<{
   deviceId: DeviceId;
-  nodeId: NodeId;
+  nodeId: PermGroupId;
   type: NodeType;
 }>() {}
-export class NodeId extends ObjectValue<{
+export type PermGroupId = StaticPermGroupId | DynamicPermGroupId;
+export class StaticPermGroupId extends ObjectValue<{
+  type: "static";
+  writers: HashSet<DeviceId>;
+}>() {}
+export class DynamicPermGroupId extends ObjectValue<{
   creator: DeviceId;
   rest: string | undefined;
-}>() {}
+}>() {
+  readonly type = "dynamic";
+}
 export class EdgeId extends TypedValue<"EdgeId", string> {}
 export class Rank extends TypedValue<"EdgeId", number> {}
 export type Op = SetEdge;
@@ -36,9 +43,9 @@ export type SetEdge = {
   type: "set edge";
 
   edgeId: EdgeId;
-  childId: NodeId;
+  childId: DynamicPermGroupId;
 
-  parentId: NodeId;
+  parentId: DynamicPermGroupId;
   rank: Rank;
 
   // This indicates the final op that we'll accept for any streams that get
@@ -53,40 +60,40 @@ type PermGroupIteratorState = {
     PersistentIteratorValue<OpStream, Op>
   >;
   readonly parentIterators: HashMap<
-    NodeId,
+    PermGroupId,
     PersistentIteratorValue<PermGroup, Op>
   >;
 };
 
-export function buildPermGroup(
+export function buildDynamicPermGroup(
   universe: ConcreteHeads,
-  nodeId: NodeId,
+  id: DynamicPermGroupId,
 ): PersistentIteratorValue<PermGroup, Op> {
   const streamIterators = concreteHeadsForAbstractHeads(
     universe,
     new PermGroup({
-      nodeId,
+      id,
       heads: HashMap.of(),
       closedStreams: HashMap.of(),
       edges: HashMap.of(),
     }).desiredHeads(),
   ).mapValues((stream) => streamIteratorForStream(stream));
-  return buildPermGroupInternal(
+  return buildDynamicPermGroupInternal(
     universe,
-    nodeId,
+    id,
     streamIterators,
     HashMap.of(),
   );
 }
 
-function buildPermGroupInternal(
+function buildDynamicPermGroupInternal(
   universe: ConcreteHeads,
-  nodeId: NodeId,
+  id: DynamicPermGroupId,
   streamIterators: HashMap<StreamId, PersistentIteratorValue<OpStream, Op>>,
-  parentIterators: HashMap<NodeId, PersistentIteratorValue<PermGroup, Op>>,
+  parentIterators: HashMap<PermGroupId, PersistentIteratorValue<PermGroup, Op>>,
 ): PersistentIteratorValue<PermGroup, Op> {
   const tree = new PermGroup({
-    nodeId,
+    id,
     heads: HashMap.of(),
     closedStreams: HashMap.of(),
     edges: HashMap.of(),
@@ -98,7 +105,7 @@ function buildPermGroupInternal(
   });
   const iterator = {
     value: tree,
-    next: () => nextPermGroupIterator(universe, state),
+    next: () => nextDynamicPermGroupIterator(universe, state),
     needsReset: false,
     reset: () => iterator,
     _state: state,
@@ -106,7 +113,7 @@ function buildPermGroupInternal(
   return iterator;
 }
 
-function nextPermGroupIterator(
+function nextDynamicPermGroupIterator(
   universe: ConcreteHeads,
   state: PermGroupIteratorState,
 ): Option<PersistentIteratorOp<PermGroup, Op>> {
@@ -126,19 +133,19 @@ function nextPermGroupIterator(
       .getOrElse(i),
   );
   const parentIterators2 =
-    op.childId.equals(state.tree.nodeId) &&
+    op.childId.equals(state.tree.id) &&
     !parentIterators1.containsKey(op.parentId)
       ? parentIterators1.put(
           op.parentId,
           advanceIteratorUntil(
-            buildPermGroup(universe, op.parentId),
+            buildDynamicPermGroup(universe, op.parentId),
             op.timestamp,
           ),
         )
       : parentIterators1;
   const edges1 = mapValuesStable(state.tree.edges, (edge) =>
     parentIterators2
-      .get(edge.parent.nodeId)
+      .get(edge.parent.id)
       .map((iterator) => edge.copy({parent: iterator.value}))
       .getOrElse(edge),
   );
@@ -195,7 +202,7 @@ function nextPermGroupIterator(
     removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
       const streamId = new StreamId({
         deviceId: removedWriterId,
-        nodeId: state.tree.nodeId,
+        nodeId: state.tree.id,
         type: "up",
       });
       return op.contributingHeads.get(streamId).map((ops) => [streamId, ops]);
@@ -224,12 +231,12 @@ function nextPermGroupIterator(
     op,
     value: {
       value: tree2,
-      next: () => nextPermGroupIterator(universe, state1),
+      next: () => nextDynamicPermGroupIterator(universe, state1),
       needsReset,
       reset: () => {
-        return buildPermGroupInternal(
+        return buildDynamicPermGroupInternal(
           universe,
-          tree2.nodeId,
+          tree2.id,
           concreteHeads.mapValues((stream) => streamIteratorForStream(stream)),
           state1.parentIterators.mapValues((iterator) => iterator.reset()),
         );
@@ -247,8 +254,12 @@ export class Edge extends ObjectValue<{
   rank: Rank;
 }>() {}
 
+export class StaticPermGroup extends ObjectValue<{
+  readonly devices: HashSet<DeviceId>;
+}>() {}
+
 export class PermGroup extends ObjectValue<{
-  readonly nodeId: NodeId;
+  readonly id: DynamicPermGroupId;
   heads: ConcreteHeads;
   closedStreams: ConcreteHeads;
 
@@ -260,7 +271,7 @@ export class PermGroup extends ObjectValue<{
         .toVector()
         .map((deviceId) => [
           new StreamId({
-            nodeId: this.nodeId,
+            nodeId: this.id,
             deviceId: deviceId,
             type: "up",
           }),
@@ -276,7 +287,7 @@ export class PermGroup extends ObjectValue<{
 
   public openWriterDevices(): HashSet<DeviceId> {
     // A node with no parents is writeable by the creator.
-    if (this.edges.isEmpty()) return HashSet.of(this.nodeId.creator);
+    if (this.edges.isEmpty()) return HashSet.of(this.id.creator);
     return this.edges.foldLeft(HashSet.of(), (devices, [, edge]) =>
       HashSet.ofIterable([...devices, ...edge.parent.openWriterDevices()]),
     );
