@@ -6,7 +6,10 @@ import {
   DynamicPermGroupId,
   Op,
   OpStream,
+  PermGroupId,
   SetEdge,
+  StaticPermGroup,
+  StaticPermGroupId,
   StreamId,
 } from "./Tree";
 import {HashMap, HashSet, LinkedList} from "prelude-ts";
@@ -25,7 +28,7 @@ describe("Tree", () => {
   }
 
   function setEdge(
-    parentId: DynamicPermGroupId,
+    parentId: PermGroupId,
     childId: DynamicPermGroupId,
     extras?: {
       streams?: HashMap<StreamId, OpStream>;
@@ -41,7 +44,9 @@ describe("Tree", () => {
   }
 
   const deviceId = DeviceId.create("device");
-  const rootId = new DynamicPermGroupId({admin: deviceId, rest: undefined});
+  const adminId = new StaticPermGroupId({writers: HashSet.of(deviceId)});
+  const admin = new StaticPermGroup({id: adminId, writers: adminId.writers});
+  const rootId = new DynamicPermGroupId({admin: adminId, rest: undefined});
   const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
 
   describe("desiredStreams", () => {
@@ -50,6 +55,7 @@ describe("Tree", () => {
         id: rootId,
         heads: HashMap.of(),
         closedStreams: HashMap.of(),
+        admin,
         writers: HashMap.of(),
       });
       expectPreludeEqual(
@@ -63,21 +69,19 @@ describe("Tree", () => {
 
     it("writeable by parents when parents", () => {
       const otherDeviceId = DeviceId.create("other device");
-      const parentId = new DynamicPermGroupId({
-        admin: otherDeviceId,
-        rest: "parent",
+      const parentId = new StaticPermGroupId({
+        writers: HashSet.of(otherDeviceId),
       });
       const group = new DynamicPermGroup({
         id: rootId,
         closedStreams: HashMap.of(),
         heads: HashMap.of(),
+        admin: admin,
         writers: HashMap.of([
           parentId,
-          new DynamicPermGroup({
+          new StaticPermGroup({
             id: parentId,
-            heads: HashMap.of(),
-            closedStreams: HashMap.of(),
-            writers: HashMap.of(),
+            writers: HashSet.of(otherDeviceId),
           }),
         ]),
       });
@@ -92,9 +96,8 @@ describe("Tree", () => {
 
     it("includes closed streams", () => {
       const otherDeviceId = DeviceId.create("other device");
-      const parentId = new DynamicPermGroupId({
-        admin: otherDeviceId,
-        rest: "parent",
+      const parentId = new StaticPermGroupId({
+        writers: HashSet.of(otherDeviceId),
       });
       const otherDeviceOps = opsList(setEdge(parentId, rootId));
       const otherStreamId = new StreamId({
@@ -106,6 +109,7 @@ describe("Tree", () => {
         id: rootId,
         heads: HashMap.of(),
         closedStreams: HashMap.of([otherStreamId, otherDeviceOps]),
+        admin,
         writers: HashMap.of(),
       });
       expectIdentical(
@@ -132,7 +136,7 @@ describe("Tree", () => {
 
     it("applies one op", () => {
       const parentId = new DynamicPermGroupId({
-        admin: deviceId,
+        admin: adminId,
         rest: "parent",
       });
       const op = setEdge(parentId, rootId);
@@ -150,7 +154,7 @@ describe("Tree", () => {
 
     it("ignores later op", () => {
       const parentId = new DynamicPermGroupId({
-        admin: deviceId,
+        admin: adminId,
         rest: "parent",
       });
       const op = setEdge(parentId, rootId);
@@ -168,11 +172,11 @@ describe("Tree", () => {
 
     it("applies one op, adds a parent and updates it with an earlier op", () => {
       const parentId = new DynamicPermGroupId({
-        admin: deviceId,
+        admin: adminId,
         rest: "parent",
       });
       const grandparentId = new DynamicPermGroupId({
-        admin: deviceId,
+        admin: adminId,
         rest: "grandparent",
       });
       const universe = HashMap.of(
@@ -206,11 +210,11 @@ describe("Tree", () => {
 
     it("applies one op, adds a parent and updates it with a later op", () => {
       const parentId = new DynamicPermGroupId({
-        admin: deviceId,
+        admin: adminId,
         rest: "parent",
       });
       const grandparentId = new DynamicPermGroupId({
-        admin: deviceId,
+        admin: adminId,
         rest: "grandparent",
       });
       const universe = HashMap.of(
@@ -243,18 +247,16 @@ describe("Tree", () => {
     });
 
     it("applies one op, adds a parent and updates the root with an earlier op from that parent", () => {
-      const otherDeviceId = DeviceId.create("other device");
-      const parentId = new DynamicPermGroupId({
-        admin: deviceId,
-        rest: "parent",
+      const deviceAId = DeviceId.create("device a");
+      const deviceBId = DeviceId.create("device b");
+      const parentId = new StaticPermGroupId({
+        writers: HashSet.of(deviceId),
       });
-      const parentAId = new DynamicPermGroupId({
-        admin: otherDeviceId,
-        rest: "parent a",
+      const parentAId = new StaticPermGroupId({
+        writers: HashSet.of(deviceAId),
       });
-      const parentBId = new DynamicPermGroupId({
-        admin: otherDeviceId,
-        rest: "parent b",
+      const parentBId = new StaticPermGroupId({
+        writers: HashSet.of(deviceBId),
       });
       const universe = HashMap.of(
         // This op is earlier than the second one, but isn't part of the
@@ -262,7 +264,7 @@ describe("Tree", () => {
         [
           new StreamId({
             nodeId: rootId,
-            deviceId: otherDeviceId,
+            deviceId: deviceAId,
             type: "up",
           }),
           opsList(setEdge(parentBId, rootId)),
@@ -296,22 +298,20 @@ describe("Tree", () => {
 
     // Doing all of this on a parent forces us to handle nested resets.
     it("(to a parent) applies one op, adds a parent and updates the root with an earlier op from that parent", () => {
-      const otherDeviceId = DeviceId.create("other device");
+      const deviceAId = DeviceId.create("device a");
+      const deviceBId = DeviceId.create("device b");
       const childId = new DynamicPermGroupId({
-        admin: deviceId,
+        admin: adminId,
         rest: "child",
       });
-      const parentId = new DynamicPermGroupId({
-        admin: deviceId,
-        rest: "parent",
+      const parentId = new StaticPermGroupId({
+        writers: HashSet.of(deviceId),
       });
-      const parentAId = new DynamicPermGroupId({
-        admin: otherDeviceId,
-        rest: "parent a",
+      const parentAId = new StaticPermGroupId({
+        writers: HashSet.of(deviceAId),
       });
-      const parentBId = new DynamicPermGroupId({
-        admin: otherDeviceId,
-        rest: "parent b",
+      const parentBId = new StaticPermGroupId({
+        writers: HashSet.of(deviceBId),
       });
       const universe = HashMap.of(
         [
@@ -327,7 +327,7 @@ describe("Tree", () => {
         [
           new StreamId({
             nodeId: rootId,
-            deviceId: otherDeviceId,
+            deviceId: deviceAId,
             type: "up",
           }),
           opsList(setEdge(parentBId, rootId)),
@@ -362,26 +362,24 @@ describe("Tree", () => {
     });
 
     it("closes streams for removed writers", () => {
-      const otherDeviceId = DeviceId.create("other device");
-      const parentId = new DynamicPermGroupId({
-        admin: deviceId,
-        rest: "parent",
+      const deviceAId = DeviceId.create("device a");
+      const deviceBId = DeviceId.create("device b");
+      const deviceCId = DeviceId.create("device c");
+      const parentId = new StaticPermGroupId({
+        writers: HashSet.of(deviceId),
       });
-      const parentAId = new DynamicPermGroupId({
-        admin: otherDeviceId,
-        rest: "parent a",
+      const parentAId = new StaticPermGroupId({
+        writers: HashSet.of(deviceAId),
       });
-      const parentBId = new DynamicPermGroupId({
-        admin: deviceId,
-        rest: "parent b",
+      const parentBId = new StaticPermGroupId({
+        writers: HashSet.of(deviceBId),
       });
-      const parentCId = new DynamicPermGroupId({
-        admin: deviceId,
-        rest: "parent c",
+      const parentCId = new StaticPermGroupId({
+        writers: HashSet.of(deviceCId),
       });
       const otherRootStreamId = new StreamId({
         nodeId: rootId,
-        deviceId: otherDeviceId,
+        deviceId: deviceAId,
         type: "up",
       });
       const otherRootOps = opsList(setEdge(parentCId, rootId));

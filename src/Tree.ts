@@ -22,7 +22,7 @@ export class StaticPermGroupId extends ObjectValue<{
   readonly type = "static";
 }
 export class DynamicPermGroupId extends ObjectValue<{
-  readonly admin: DeviceId;
+  readonly admin: PermGroupId;
   readonly rest: string | undefined;
 }>() {
   readonly type = "dynamic";
@@ -61,7 +61,7 @@ export function buildStaticPermGroup(
 ): PersistentIteratorValue<StaticPermGroup, Op> {
   const value: PersistentIteratorValue<StaticPermGroup, Op> = {
     next: () => Option.none(),
-    value: new StaticPermGroup({id, devices: id.writers}),
+    value: new StaticPermGroup({id, writers: id.writers}),
     needsReset: false,
     reset: () => value,
   };
@@ -72,6 +72,7 @@ export function buildStaticPermGroup(
 // Dynamic perm groups
 
 type DynamicPermGroupIterators = {
+  readonly adminIterator: PersistentIteratorValue<PermGroup, Op>;
   readonly streamIterators: HashMap<
     StreamId,
     PersistentIteratorValue<OpStream, Op>
@@ -86,16 +87,19 @@ export function buildDynamicPermGroup(
   universe: ConcreteHeads,
   id: DynamicPermGroupId,
 ): PersistentIteratorValue<DynamicPermGroup, Op> {
+  const adminIterator = buildPermGroup(universe, id.admin);
   const streamIterators = concreteHeadsForAbstractHeads(
     universe,
     new DynamicPermGroup({
       id,
       heads: HashMap.of(),
       closedStreams: HashMap.of(),
+      admin: adminIterator.value,
       writers: HashMap.of(),
     }).desiredHeads(),
   ).mapValues((stream) => streamIteratorForStream(stream));
   return buildDynamicPermGroupInternal(universe, id, {
+    adminIterator,
     streamIterators,
     parentIterators: HashMap.of(),
   });
@@ -110,6 +114,7 @@ function buildDynamicPermGroupInternal(
     id,
     heads: HashMap.of(),
     closedStreams: HashMap.of(),
+    admin: iterators.adminIterator.value,
     writers: HashMap.of(),
   });
   const iterator = {
@@ -135,6 +140,15 @@ function nextDynamicPermGroupIterator(
   );
   if (opOption.isNone()) return Option.none();
   const op = opOption.get();
+
+  const adminIterator1 = state.adminIterator
+    .next()
+    .flatMap((adminOp) =>
+      adminOp.op === op
+        ? Option.of(adminOp.value)
+        : Option.none<typeof adminOp.value>(),
+    )
+    .getOrElse(state.adminIterator);
 
   const parentIterators1 = state.parentIterators.mapValues((i) =>
     i
@@ -228,8 +242,8 @@ function nextDynamicPermGroupIterator(
       (nodeId, parentIterator) => parentIterator.needsReset,
     );
 
-  const state1 = {
-    tree: tree2,
+  const state1: DynamicPermGroupIterators = {
+    adminIterator: adminIterator1,
     streamIterators: streamIterators1,
     parentIterators: parentIterators2,
   };
@@ -241,6 +255,7 @@ function nextDynamicPermGroupIterator(
       needsReset,
       reset: () => {
         return buildDynamicPermGroupInternal(universe, tree2.id, {
+          adminIterator: adminIterator1.reset(),
           streamIterators: concreteHeads.mapValues((stream) =>
             streamIteratorForStream(stream),
           ),
@@ -264,10 +279,10 @@ interface PermGroup {
 
 export class StaticPermGroup extends ObjectValue<{
   readonly id: PermGroupId;
-  readonly devices: HashSet<DeviceId>;
+  readonly writers: HashSet<DeviceId>;
 }>() {
   public openWriterDevices(): HashSet<DeviceId> {
-    return this.devices;
+    return this.writers;
   }
 }
 
@@ -276,6 +291,7 @@ export class DynamicPermGroup extends ObjectValue<{
   heads: ConcreteHeads;
   closedStreams: ConcreteHeads;
 
+  admin: PermGroup;
   writers: HashMap<PermGroupId, PermGroup>;
 }>() {
   desiredHeads(): AbstractHeads {
@@ -300,7 +316,7 @@ export class DynamicPermGroup extends ObjectValue<{
 
   public openWriterDevices(): HashSet<DeviceId> {
     // A node with no parents is writeable by the creator.
-    if (this.writers.isEmpty()) return HashSet.of(this.id.admin);
+    if (this.writers.isEmpty()) return this.admin.openWriterDevices();
     return this.writers.foldLeft(HashSet.of(), (devices, [, writer]) =>
       HashSet.ofIterable([...devices, ...writer.openWriterDevices()]),
     );
