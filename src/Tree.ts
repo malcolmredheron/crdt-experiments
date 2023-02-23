@@ -27,7 +27,7 @@ export class StaticPermGroupId extends ObjectValue<{
   readonly type = "static";
 }
 export class DynamicPermGroupId extends ObjectValue<{
-  readonly creator: DeviceId;
+  readonly admin: DeviceId;
   readonly rest: string | undefined;
 }>() {
   readonly type = "dynamic";
@@ -309,7 +309,7 @@ export class DynamicPermGroup extends ObjectValue<{
 
   public openWriterDevices(): HashSet<DeviceId> {
     // A node with no parents is writeable by the creator.
-    if (this.writers.isEmpty()) return HashSet.of(this.id.creator);
+    if (this.writers.isEmpty()) return HashSet.of(this.id.admin);
     return this.writers.foldLeft(HashSet.of(), (devices, [, writer]) =>
       HashSet.ofIterable([...devices, ...writer.openWriterDevices()]),
     );

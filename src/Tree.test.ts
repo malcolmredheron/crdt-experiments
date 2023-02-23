@@ -41,7 +41,7 @@ describe("Tree", () => {
   }
 
   const deviceId = DeviceId.create("device");
-  const rootId = new DynamicPermGroupId({creator: deviceId, rest: undefined});
+  const rootId = new DynamicPermGroupId({admin: deviceId, rest: undefined});
   const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
 
   describe("desiredStreams", () => {
@@ -64,7 +64,7 @@ describe("Tree", () => {
     it("writeable by parents when parents", () => {
       const otherDeviceId = DeviceId.create("other device");
       const parentId = new DynamicPermGroupId({
-        creator: otherDeviceId,
+        admin: otherDeviceId,
         rest: "parent",
       });
       const group = new DynamicPermGroup({
@@ -93,7 +93,7 @@ describe("Tree", () => {
     it("includes closed streams", () => {
       const otherDeviceId = DeviceId.create("other device");
       const parentId = new DynamicPermGroupId({
-        creator: otherDeviceId,
+        admin: otherDeviceId,
         rest: "parent",
       });
       const otherDeviceOps = opsList(setEdge(parentId, rootId));
@@ -132,7 +132,7 @@ describe("Tree", () => {
 
     it("applies one op", () => {
       const parentId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "parent",
       });
       const op = setEdge(parentId, rootId);
@@ -150,7 +150,7 @@ describe("Tree", () => {
 
     it("ignores later op", () => {
       const parentId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "parent",
       });
       const op = setEdge(parentId, rootId);
@@ -168,11 +168,11 @@ describe("Tree", () => {
 
     it("applies one op, adds a parent and updates it with an earlier op", () => {
       const parentId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "parent",
       });
       const grandparentId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "grandparent",
       });
       const universe = HashMap.of(
@@ -206,11 +206,11 @@ describe("Tree", () => {
 
     it("applies one op, adds a parent and updates it with a later op", () => {
       const parentId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "parent",
       });
       const grandparentId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "grandparent",
       });
       const universe = HashMap.of(
@@ -245,15 +245,15 @@ describe("Tree", () => {
     it("applies one op, adds a parent and updates the root with an earlier op from that parent", () => {
       const otherDeviceId = DeviceId.create("other device");
       const parentId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "parent",
       });
       const parentAId = new DynamicPermGroupId({
-        creator: otherDeviceId,
+        admin: otherDeviceId,
         rest: "parent a",
       });
       const parentBId = new DynamicPermGroupId({
-        creator: otherDeviceId,
+        admin: otherDeviceId,
         rest: "parent b",
       });
       const universe = HashMap.of(
@@ -298,19 +298,19 @@ describe("Tree", () => {
     it("(to a parent) applies one op, adds a parent and updates the root with an earlier op from that parent", () => {
       const otherDeviceId = DeviceId.create("other device");
       const childId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "child",
       });
       const parentId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "parent",
       });
       const parentAId = new DynamicPermGroupId({
-        creator: otherDeviceId,
+        admin: otherDeviceId,
         rest: "parent a",
       });
       const parentBId = new DynamicPermGroupId({
-        creator: otherDeviceId,
+        admin: otherDeviceId,
         rest: "parent b",
       });
       const universe = HashMap.of(
@@ -364,19 +364,19 @@ describe("Tree", () => {
     it("closes streams for removed writers", () => {
       const otherDeviceId = DeviceId.create("other device");
       const parentId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "parent",
       });
       const parentAId = new DynamicPermGroupId({
-        creator: otherDeviceId,
+        admin: otherDeviceId,
         rest: "parent a",
       });
       const parentBId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "parent b",
       });
       const parentCId = new DynamicPermGroupId({
-        creator: deviceId,
+        admin: deviceId,
         rest: "parent c",
       });
       const otherRootStreamId = new StreamId({
