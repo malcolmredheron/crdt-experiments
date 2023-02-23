@@ -50,7 +50,7 @@ describe("Tree", () => {
         id: rootId,
         heads: HashMap.of(),
         closedStreams: HashMap.of(),
-        edges: HashMap.of(),
+        writers: HashMap.of(),
       });
       expectPreludeEqual(
         group.desiredHeads(),
@@ -71,13 +71,13 @@ describe("Tree", () => {
         id: rootId,
         closedStreams: HashMap.of(),
         heads: HashMap.of(),
-        edges: HashMap.of([
+        writers: HashMap.of([
           parentId,
           new DynamicPermGroup({
             id: parentId,
             heads: HashMap.of(),
             closedStreams: HashMap.of(),
-            edges: HashMap.of(),
+            writers: HashMap.of(),
           }),
         ]),
       });
@@ -106,7 +106,7 @@ describe("Tree", () => {
         id: rootId,
         heads: HashMap.of(),
         closedStreams: HashMap.of([otherStreamId, otherDeviceOps]),
-        edges: HashMap.of(),
+        writers: HashMap.of(),
       });
       expectIdentical(
         headsEqual(
@@ -144,7 +144,7 @@ describe("Tree", () => {
         buildDynamicPermGroup(universe, rootId),
         maxTimestamp,
       ).value;
-      const parent = group.edges.single().getOrThrow()[1];
+      const parent = group.writers.single().getOrThrow()[1];
       expectPreludeEqual(parent.id, parentId);
     });
 
@@ -163,7 +163,7 @@ describe("Tree", () => {
         buildDynamicPermGroup(universe, rootId),
         Timestamp.create(-1),
       ).value;
-      expectPreludeEqual(group.edges, HashMap.of());
+      expectPreludeEqual(group.writers, HashMap.of());
     });
 
     it("applies one op, adds a parent and updates it with an earlier op", () => {
@@ -196,9 +196,9 @@ describe("Tree", () => {
         ),
         true,
       );
-      const parent = group.edges.single().getOrThrow()[1];
+      const parent = group.writers.single().getOrThrow()[1];
       expectPreludeEqual(parent.id, parentId);
-      const grandparent = (parent as DynamicPermGroup).edges
+      const grandparent = (parent as DynamicPermGroup).writers
         .single()
         .getOrThrow()[1];
       expectPreludeEqual(grandparent.id, grandparentId);
@@ -234,9 +234,9 @@ describe("Tree", () => {
         ),
         true,
       );
-      const parent = group.edges.single().getOrThrow()[1];
+      const parent = group.writers.single().getOrThrow()[1];
       expectPreludeEqual(parent.id, parentId);
-      const grandparent = (parent as DynamicPermGroup).edges
+      const grandparent = (parent as DynamicPermGroup).writers
         .single()
         .getOrThrow()[1];
       expectPreludeEqual(grandparent.id, grandparentId);
@@ -289,7 +289,7 @@ describe("Tree", () => {
         true,
       );
       expectPreludeEqual(
-        group.edges.keySet(),
+        group.writers.keySet(),
         HashSet.of(parentId, parentAId, parentBId),
       );
     });
@@ -347,7 +347,7 @@ describe("Tree", () => {
         maxTimestamp,
       );
       const group = iterator.value;
-      const root = group.edges.single().getOrThrow()[1] as DynamicPermGroup;
+      const root = group.writers.single().getOrThrow()[1] as DynamicPermGroup;
       expectIdentical(
         headsEqual(
           root.heads,
@@ -356,7 +356,7 @@ describe("Tree", () => {
         true,
       );
       expectPreludeEqual(
-        root.edges.keySet(),
+        root.writers.keySet(),
         HashSet.of(parentId, parentAId, parentBId),
       );
     });
@@ -419,7 +419,7 @@ describe("Tree", () => {
       //   true,
       // );
       // expectPreludeEqual(
-      //   group.edges.keySet(),
+      //   group.writers.keySet(),
       //   HashSet.of(
       //     EdgeId.create("permanent"),
       //     EdgeId.create("edge"),

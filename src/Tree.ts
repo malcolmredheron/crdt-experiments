@@ -95,7 +95,7 @@ export function buildDynamicPermGroup(
       id,
       heads: HashMap.of(),
       closedStreams: HashMap.of(),
-      edges: HashMap.of(),
+      writers: HashMap.of(),
     }).desiredHeads(),
   ).mapValues((stream) => streamIteratorForStream(stream));
   return buildDynamicPermGroupInternal(
@@ -116,7 +116,7 @@ function buildDynamicPermGroupInternal(
     id,
     heads: HashMap.of(),
     closedStreams: HashMap.of(),
-    edges: HashMap.of(),
+    writers: HashMap.of(),
   });
   const state = asType<DynamicPermGroupIteratorState>({
     tree,
@@ -163,11 +163,11 @@ function nextDynamicPermGroupIterator(
           ),
         )
       : parentIterators1;
-  const edges1 = mapValuesStable(state.tree.edges, (edge) =>
+  const writers1 = mapValuesStable(state.tree.writers, (writer) =>
     parentIterators2
-      .get(edge.id)
+      .get(writer.id)
       .map((iterator) => iterator.value)
-      .getOrElse(edge),
+      .getOrElse(writer),
   );
 
   const streamIterators1 = state.streamIterators.mapValues((streamIterator) => {
@@ -196,14 +196,14 @@ function nextDynamicPermGroupIterator(
       ({opHeads}) => !opHeads.isEmpty(),
       ({opHeads}) =>
         state.tree.copy({
-          edges: edges1.put(
+          writers: writers1.put(
             op.parentId,
             parentIterators2.get(op.parentId).getOrThrow().value,
           ),
           heads: state.tree.heads.mergeWith(opHeads, (v0, v1) => v1),
         }),
     )
-    .with(P._, () => state.tree.copy({edges: edges1}))
+    .with(P._, () => state.tree.copy({writers: writers1}))
     .exhaustive();
 
   const addedWriterDeviceIds = tree1
@@ -285,7 +285,7 @@ export class DynamicPermGroup extends ObjectValue<{
   heads: ConcreteHeads;
   closedStreams: ConcreteHeads;
 
-  edges: HashMap<PermGroupId, PermGroup>;
+  writers: HashMap<PermGroupId, PermGroup>;
 }>() {
   desiredHeads(): AbstractHeads {
     const openStreams = HashMap.ofIterable<StreamId, "open" | OpStream>(
@@ -309,9 +309,9 @@ export class DynamicPermGroup extends ObjectValue<{
 
   public openWriterDevices(): HashSet<DeviceId> {
     // A node with no parents is writeable by the creator.
-    if (this.edges.isEmpty()) return HashSet.of(this.id.creator);
-    return this.edges.foldLeft(HashSet.of(), (devices, [, edge]) =>
-      HashSet.ofIterable([...devices, ...edge.openWriterDevices()]),
+    if (this.writers.isEmpty()) return HashSet.of(this.id.creator);
+    return this.writers.foldLeft(HashSet.of(), (devices, [, writer]) =>
+      HashSet.ofIterable([...devices, ...writer.openWriterDevices()]),
     );
   }
 
