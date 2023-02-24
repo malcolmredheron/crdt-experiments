@@ -44,6 +44,14 @@ export type SetEdge = {
   contributingHeads: ConcreteHeads;
 };
 
+//------------------------------------------------------------------------------
+// Perm group
+
+interface PermGroup {
+  readonly id: PermGroupId;
+  openWriterDevices(): HashSet<DeviceId>;
+}
+
 export function buildPermGroup(
   universe: ConcreteHeads,
   id: PermGroupId,
@@ -53,6 +61,18 @@ export function buildPermGroup(
       return buildStaticPermGroup(id);
     case "dynamic":
       return buildDynamicPermGroup(universe, id);
+  }
+}
+
+//------------------------------------------------------------------------------
+// Static perm group
+
+export class StaticPermGroup extends ObjectValue<{
+  readonly id: PermGroupId;
+  readonly writers: HashSet<DeviceId>;
+}>() {
+  public openWriterDevices(): HashSet<DeviceId> {
+    return this.writers;
   }
 }
 
@@ -69,7 +89,67 @@ export function buildStaticPermGroup(
 }
 
 //------------------------------------------------------------------------------
-// Dynamic perm groups
+// Dynamic perm group
+
+export class DynamicPermGroup extends ObjectValue<{
+  readonly id: DynamicPermGroupId;
+  heads: ConcreteHeads;
+  closedStreams: ConcreteHeads;
+
+  // Admins can write to this perm group -- that is, they can add and remove
+  // writers.
+  admin: PermGroup;
+  // Writers can write to objects that use this perm group to decide on their
+  // writers, but can't write to this perm group.
+  writers: HashMap<PermGroupId, PermGroup>;
+}>() {
+  // These are the heads that this perm group wants included in order to build
+  // itself.
+  desiredHeads(): AbstractHeads {
+    const openStreams = HashMap.ofIterable<StreamId, "open" | OpStream>(
+      this.admin
+        .openWriterDevices()
+        .toVector()
+        .map((deviceId) => [
+          new StreamId({
+            nodeId: this.id,
+            deviceId: deviceId,
+            type: "up",
+          }),
+          "open",
+        ]),
+    );
+    const ourStreams = HashMap.ofIterable([
+      ...openStreams,
+      ...this.closedStreams,
+    ]);
+    return ourStreams;
+  }
+
+  // These are the devices that should be used as writers for anything using
+  // this perm group to decide who can write. *This is not the list of devices
+  // that can write to this perm group*.
+  public openWriterDevices(): HashSet<DeviceId> {
+    return HashSet.of(
+      ...this.admin.openWriterDevices(),
+      ...this.writers.foldLeft(HashSet.of<DeviceId>(), (devices, [, group]) =>
+        HashSet.of(...devices, ...group.openWriterDevices()),
+      ),
+    );
+  }
+
+  excludeFromEquals = HashSet.of("closedStreams", "heads");
+  equals(other: unknown): boolean {
+    if (Object.getPrototypeOf(this) !== Object.getPrototypeOf(other))
+      return false;
+
+    return (
+      super.equals(other) &&
+      headsEqual(this.closedStreams, (other as this).closedStreams) &&
+      headsEqual(this.heads, (other as this).heads)
+    );
+  }
+}
 
 type DynamicPermGroupIterators = {
   readonly adminIterator: PersistentIteratorValue<PermGroup, Op>;
@@ -280,80 +360,6 @@ function nextDynamicPermGroupIterator(
       _concreteHeads: concreteHeads,
     },
   });
-}
-
-interface PermGroup {
-  readonly id: PermGroupId;
-  openWriterDevices(): HashSet<DeviceId>;
-}
-
-export class StaticPermGroup extends ObjectValue<{
-  readonly id: PermGroupId;
-  readonly writers: HashSet<DeviceId>;
-}>() {
-  public openWriterDevices(): HashSet<DeviceId> {
-    return this.writers;
-  }
-}
-
-export class DynamicPermGroup extends ObjectValue<{
-  readonly id: DynamicPermGroupId;
-  heads: ConcreteHeads;
-  closedStreams: ConcreteHeads;
-
-  // Admins can write to this perm group -- that is, they can add and remove
-  // writers.
-  admin: PermGroup;
-  // Writers can write to objects that use this perm group to decide on their
-  // writers, but can't write to this perm group.
-  writers: HashMap<PermGroupId, PermGroup>;
-}>() {
-  // These are the heads that this perm group wants included in order to build
-  // itself.
-  desiredHeads(): AbstractHeads {
-    const openStreams = HashMap.ofIterable<StreamId, "open" | OpStream>(
-      this.admin
-        .openWriterDevices()
-        .toVector()
-        .map((deviceId) => [
-          new StreamId({
-            nodeId: this.id,
-            deviceId: deviceId,
-            type: "up",
-          }),
-          "open",
-        ]),
-    );
-    const ourStreams = HashMap.ofIterable([
-      ...openStreams,
-      ...this.closedStreams,
-    ]);
-    return ourStreams;
-  }
-
-  // These are the devices that should be used as writers for anything using
-  // this perm group to decide who can write. *This is not the list of devices
-  // that can write to this perm group*.
-  public openWriterDevices(): HashSet<DeviceId> {
-    return HashSet.of(
-      ...this.admin.openWriterDevices(),
-      ...this.writers.foldLeft(HashSet.of<DeviceId>(), (devices, [, group]) =>
-        HashSet.of(...devices, ...group.openWriterDevices()),
-      ),
-    );
-  }
-
-  excludeFromEquals = HashSet.of("closedStreams", "heads");
-  equals(other: unknown): boolean {
-    if (Object.getPrototypeOf(this) !== Object.getPrototypeOf(other))
-      return false;
-
-    return (
-      super.equals(other) &&
-      headsEqual(this.closedStreams, (other as this).closedStreams) &&
-      headsEqual(this.heads, (other as this).heads)
-    );
-  }
 }
 
 function streamIteratorForStream(
