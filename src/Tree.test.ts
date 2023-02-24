@@ -50,24 +50,7 @@ describe("Tree", () => {
   const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
 
   describe("desiredStreams", () => {
-    it("writeable by creator when no parents", () => {
-      const group = new DynamicPermGroup({
-        id: rootId,
-        heads: HashMap.of(),
-        closedStreams: HashMap.of(),
-        admin,
-        writers: HashMap.of(),
-      });
-      expectPreludeEqual(
-        group.desiredHeads(),
-        HashMap.of([
-          new StreamId({deviceId: deviceId, nodeId: rootId, type: "up"}),
-          "open" as const,
-        ]),
-      );
-    });
-
-    it("writeable by parents when parents", () => {
+    it("writeable by admins but not writers", () => {
       const otherDeviceId = DeviceId.create("other device");
       const parentId = new StaticPermGroupId({
         writers: HashSet.of(otherDeviceId),
@@ -88,9 +71,13 @@ describe("Tree", () => {
       expectPreludeEqual(
         group.desiredHeads(),
         HashMap.of([
-          new StreamId({deviceId: otherDeviceId, nodeId: rootId, type: "up"}),
+          new StreamId({deviceId: deviceId, nodeId: rootId, type: "up"}),
           "open" as const,
         ]),
+      );
+      expectPreludeEqual(
+        group.openWriterDevices(),
+        HashSet.of(deviceId, otherDeviceId),
       );
     });
 
@@ -246,66 +233,13 @@ describe("Tree", () => {
       expectPreludeEqual(grandparent.id, grandparentId);
     });
 
-    it("applies one op, adds a parent and updates the root with an earlier op from that parent", () => {
-      const deviceAId = DeviceId.create("device a");
-      const deviceBId = DeviceId.create("device b");
-      const parentId = new StaticPermGroupId({
-        writers: HashSet.of(deviceId),
-      });
-      const parentAId = new StaticPermGroupId({
-        writers: HashSet.of(deviceAId),
-      });
-      const parentBId = new StaticPermGroupId({
-        writers: HashSet.of(deviceBId),
-      });
-      const universe = HashMap.of(
-        // This op is earlier than the second one, but isn't part of the
-        // original desired heads for the root.
-        [
-          new StreamId({
-            nodeId: rootId,
-            deviceId: deviceAId,
-            type: "up",
-          }),
-          opsList(setEdge(parentBId, rootId)),
-        ],
-        [
-          new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
-          opsList(
-            // So that deviceId can continue to write to the root even after
-            // parents are added.
-            setEdge(parentId, rootId),
-            setEdge(parentAId, rootId),
-          ),
-        ],
-      );
-      const group = advanceIteratorUntil(
-        buildDynamicPermGroup(universe, rootId),
-        maxTimestamp,
-      ).value;
-      expectIdentical(
-        headsEqual(
-          group.heads,
-          universe.filterKeys((streamId) => streamId.nodeId.equals(rootId)),
-        ),
-        true,
-      );
-      expectPreludeEqual(
-        group.writers.keySet(),
-        HashSet.of(parentId, parentAId, parentBId),
-      );
-    });
-
     // Doing all of this on a parent forces us to handle nested resets.
     it("(to a parent) applies one op, adds a parent and updates the root with an earlier op from that parent", () => {
       const deviceAId = DeviceId.create("device a");
       const deviceBId = DeviceId.create("device b");
       const childId = new DynamicPermGroupId({
-        admin: adminId,
+        admin: rootId,
         rest: "child",
-      });
-      const parentId = new StaticPermGroupId({
-        writers: HashSet.of(deviceId),
       });
       const parentAId = new StaticPermGroupId({
         writers: HashSet.of(deviceAId),
@@ -314,32 +248,19 @@ describe("Tree", () => {
         writers: HashSet.of(deviceBId),
       });
       const universe = HashMap.of(
-        [
-          new StreamId({
-            nodeId: childId,
-            deviceId: deviceId,
-            type: "up",
-          }),
-          opsList(setEdge(rootId, childId)),
-        ],
         // This op is earlier than the second one, but isn't part of the
         // original desired heads for the root.
         [
           new StreamId({
-            nodeId: rootId,
+            nodeId: childId,
             deviceId: deviceAId,
             type: "up",
           }),
-          opsList(setEdge(parentBId, rootId)),
+          opsList(setEdge(parentBId, childId)),
         ],
         [
           new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
-          opsList(
-            // So that deviceId can continue to write to the root even after
-            // parents are added.
-            setEdge(parentId, rootId),
-            setEdge(parentAId, rootId),
-          ),
+          opsList(setEdge(parentAId, rootId)),
         ],
       );
       const iterator = advanceIteratorUntil(
@@ -347,17 +268,17 @@ describe("Tree", () => {
         maxTimestamp,
       );
       const group = iterator.value;
-      const root = group.writers.single().getOrThrow()[1] as DynamicPermGroup;
+      const root = group;
       expectIdentical(
         headsEqual(
           root.heads,
-          universe.filterKeys((streamId) => streamId.nodeId.equals(rootId)),
+          universe.filterKeys((streamId) => streamId.nodeId.equals(root.id)),
         ),
         true,
       );
       expectPreludeEqual(
-        root.writers.keySet(),
-        HashSet.of(parentId, parentAId, parentBId),
+        root.openWriterDevices(),
+        HashSet.of(deviceId, deviceAId, deviceBId),
       );
     });
 

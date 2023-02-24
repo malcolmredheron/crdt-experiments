@@ -134,6 +134,7 @@ function nextDynamicPermGroupIterator(
 ): Option<PersistentIteratorOp<DynamicPermGroup, Op>> {
   const opOption = nextOp(
     Vector.of<PersistentIteratorValue<unknown, Op>>(
+      state.adminIterator,
       ...state.streamIterators.valueIterable(),
       ...state.parentIterators.valueIterable(),
     ),
@@ -199,6 +200,7 @@ function nextDynamicPermGroupIterator(
       ({opHeads}) => !opHeads.isEmpty(),
       ({opHeads}) =>
         tree.copy({
+          admin: adminIterator1.value,
           writers: writers1.put(
             op.parentId,
             parentIterators2.get(op.parentId).getOrThrow().value,
@@ -206,7 +208,12 @@ function nextDynamicPermGroupIterator(
           heads: tree.heads.mergeWith(opHeads, (v0, v1) => v1),
         }),
     )
-    .with(P._, () => tree.copy({writers: writers1}))
+    .with(P._, () =>
+      tree.copy({
+        admin: adminIterator1.value,
+        writers: writers1,
+      }),
+    )
     .exhaustive();
 
   const addedWriterDeviceIds = tree1
@@ -238,6 +245,7 @@ function nextDynamicPermGroupIterator(
   const headsNeedReset = !headsEqual(concreteHeads, tree2.heads);
   const needsReset =
     headsNeedReset ||
+    adminIterator1.needsReset ||
     parentIterators2.anyMatch(
       (nodeId, parentIterator) => parentIterator.needsReset,
     );
@@ -291,12 +299,19 @@ export class DynamicPermGroup extends ObjectValue<{
   heads: ConcreteHeads;
   closedStreams: ConcreteHeads;
 
+  // Admins can write to this perm group -- that is, they can add and remove
+  // writers.
   admin: PermGroup;
+  // Writers can write to objects that use this perm group to decide on their
+  // writers, but can't write to this perm group.
   writers: HashMap<PermGroupId, PermGroup>;
 }>() {
+  // These are the heads that this perm group wants included in order to build
+  // itself.
   desiredHeads(): AbstractHeads {
     const openStreams = HashMap.ofIterable<StreamId, "open" | OpStream>(
-      this.openWriterDevices()
+      this.admin
+        .openWriterDevices()
         .toVector()
         .map((deviceId) => [
           new StreamId({
@@ -314,11 +329,15 @@ export class DynamicPermGroup extends ObjectValue<{
     return ourStreams;
   }
 
+  // These are the devices that should be used as writers for anything using
+  // this perm group to decide who can write. *This is not the list of devices
+  // that can write to this perm group*.
   public openWriterDevices(): HashSet<DeviceId> {
-    // A node with no parents is writeable by the creator.
-    if (this.writers.isEmpty()) return this.admin.openWriterDevices();
-    return this.writers.foldLeft(HashSet.of(), (devices, [, writer]) =>
-      HashSet.ofIterable([...devices, ...writer.openWriterDevices()]),
+    return HashSet.of(
+      ...this.admin.openWriterDevices(),
+      ...this.writers.foldLeft(HashSet.of<DeviceId>(), (devices, [, group]) =>
+        HashSet.of(...devices, ...group.openWriterDevices()),
+      ),
     );
   }
 
@@ -388,7 +407,10 @@ export function advanceIteratorUntil<T, Op extends {timestamp: Timestamp}>(
 ): PersistentIteratorValue<T, Op> {
   // `iterators` and the limit of 10 times through the loop are for debugging.
   // We will have to find a more sophisticated way to handle this at some point.
-  let iterators = LinkedList.of(iterator);
+  let iterators = LinkedList.of<{
+    iterator: PersistentIteratorValue<T, Op>;
+    description: string;
+  }>({iterator, description: "initial"});
   for (let i = 0; i < 10; i++) {
     while (true) {
       const next = iterator.next();
@@ -397,12 +419,12 @@ export function advanceIteratorUntil<T, Op extends {timestamp: Timestamp}>(
       iterator = next.get().value;
     }
     if (!iterator.needsReset) return iterator;
-    iterators = iterators.prepend(iterator);
+    iterators = iterators.prepend({iterator, description: "before reset"});
     iterator = iterator.reset();
+    iterators = iterators.prepend({iterator, description: "after reset"});
   }
   throw new AssertFailed("Iterator did not stabilize");
 }
-
 function nextOp<Op extends {timestamp: Timestamp}>(
   iterators: Seq<PersistentIteratorValue<unknown, Op>>,
 ): Option<Op> {
