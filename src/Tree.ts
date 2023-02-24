@@ -110,7 +110,7 @@ function buildDynamicPermGroupInternal(
   id: DynamicPermGroupId,
   iterators: DynamicPermGroupIterators,
 ): PersistentIteratorValue<DynamicPermGroup, Op> {
-  const tree = new DynamicPermGroup({
+  const group = new DynamicPermGroup({
     id,
     heads: HashMap.of(),
     closedStreams: HashMap.of(),
@@ -118,8 +118,8 @@ function buildDynamicPermGroupInternal(
     writers: HashMap.of(),
   });
   const iterator = {
-    value: tree,
-    next: () => nextDynamicPermGroupIterator(universe, tree, iterators),
+    value: group,
+    next: () => nextDynamicPermGroupIterator(universe, group, iterators),
     needsReset: false,
     reset: () => iterator,
     _iterators: iterators,
@@ -129,36 +129,36 @@ function buildDynamicPermGroupInternal(
 
 function nextDynamicPermGroupIterator(
   universe: ConcreteHeads,
-  tree: DynamicPermGroup,
-  state: DynamicPermGroupIterators,
+  group: DynamicPermGroup,
+  iterators: DynamicPermGroupIterators,
 ): Option<PersistentIteratorOp<DynamicPermGroup, Op>> {
   const opOption = nextOp(
     Vector.of<PersistentIteratorValue<unknown, Op>>(
-      state.adminIterator,
-      ...state.streamIterators.valueIterable(),
-      ...state.parentIterators.valueIterable(),
+      iterators.adminIterator,
+      ...iterators.streamIterators.valueIterable(),
+      ...iterators.parentIterators.valueIterable(),
     ),
   );
   if (opOption.isNone()) return Option.none();
   const op = opOption.get();
 
-  const adminIterator1 = state.adminIterator
+  const adminIterator1 = iterators.adminIterator
     .next()
     .flatMap((adminOp) =>
       adminOp.op === op
         ? Option.of(adminOp.value)
         : Option.none<typeof adminOp.value>(),
     )
-    .getOrElse(state.adminIterator);
+    .getOrElse(iterators.adminIterator);
 
-  const parentIterators1 = state.parentIterators.mapValues((i) =>
+  const parentIterators1 = iterators.parentIterators.mapValues((i) =>
     i
       .next()
       .map((next) => (next.op === op ? next.value : i))
       .getOrElse(i),
   );
   const parentIterators2 =
-    op.childId.equals(tree.id) && !parentIterators1.containsKey(op.parentId)
+    op.childId.equals(group.id) && !parentIterators1.containsKey(op.parentId)
       ? parentIterators1.put(
           op.parentId,
           advanceIteratorUntil(
@@ -167,22 +167,24 @@ function nextDynamicPermGroupIterator(
           ),
         )
       : parentIterators1;
-  const writers1 = mapValuesStable(tree.writers, (writer) =>
+  const writers1 = mapValuesStable(group.writers, (writer) =>
     parentIterators2
       .get(writer.id)
       .map((iterator) => iterator.value)
       .getOrElse(writer),
   );
 
-  const streamIterators1 = state.streamIterators.mapValues((streamIterator) => {
-    return streamIterator
-      .next()
-      .map((next) => (next.op === op ? next.value : streamIterator))
-      .getOrElse(streamIterator);
-  });
+  const streamIterators1 = iterators.streamIterators.mapValues(
+    (streamIterator) => {
+      return streamIterator
+        .next()
+        .map((next) => (next.op === op ? next.value : streamIterator))
+        .getOrElse(streamIterator);
+    },
+  );
 
   const opHeads: HashMap<StreamId, OpStream> = mapMapOption(
-    state.streamIterators,
+    iterators.streamIterators,
     (streamId, streamIterator) => {
       return streamIterator
         .next()
@@ -194,55 +196,55 @@ function nextDynamicPermGroupIterator(
         .orElse(Option.none<OpStream>());
     },
   );
-  const tree1 = match({opHeads})
+  const group1 = match({opHeads})
     .with(
       {},
       ({opHeads}) => !opHeads.isEmpty(),
       ({opHeads}) =>
-        tree.copy({
+        group.copy({
           admin: adminIterator1.value,
           writers: writers1.put(
             op.parentId,
             parentIterators2.get(op.parentId).getOrThrow().value,
           ),
-          heads: tree.heads.mergeWith(opHeads, (v0, v1) => v1),
+          heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
         }),
     )
     .with(P._, () =>
-      tree.copy({
+      group.copy({
         admin: adminIterator1.value,
         writers: writers1,
       }),
     )
     .exhaustive();
 
-  const addedWriterDeviceIds = tree1
+  const addedWriterDeviceIds = group1
     .openWriterDevices()
-    .removeAll(tree.openWriterDevices());
-  const closedStreams1 = tree1.closedStreams.filterKeys((streamId) =>
+    .removeAll(group.openWriterDevices());
+  const closedStreams1 = group1.closedStreams.filterKeys((streamId) =>
     addedWriterDeviceIds.contains(streamId.deviceId),
   );
-  const removedWriterDeviceIds = tree
+  const removedWriterDeviceIds = group
     .openWriterDevices()
-    .removeAll(tree1.openWriterDevices());
+    .removeAll(group1.openWriterDevices());
   const closedStreams2 = closedStreams1.mergeWith(
     removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
       const streamId = new StreamId({
         deviceId: removedWriterId,
-        nodeId: tree.id,
+        nodeId: group.id,
         type: "up",
       });
       return op.contributingHeads.get(streamId).map((ops) => [streamId, ops]);
     }),
     (ops0, ops1) => throwError("Should not have stream-id collision"),
   );
-  const tree2 = tree1.copy({closedStreams: closedStreams2});
+  const group2 = group1.copy({closedStreams: closedStreams2});
 
   const concreteHeads = concreteHeadsForAbstractHeads(
     universe,
-    tree2.desiredHeads(),
+    group2.desiredHeads(),
   );
-  const headsNeedReset = !headsEqual(concreteHeads, tree2.heads);
+  const headsNeedReset = !headsEqual(concreteHeads, group2.heads);
   const needsReset =
     headsNeedReset ||
     adminIterator1.needsReset ||
@@ -250,7 +252,7 @@ function nextDynamicPermGroupIterator(
       (nodeId, parentIterator) => parentIterator.needsReset,
     );
 
-  const state1: DynamicPermGroupIterators = {
+  const iterators1: DynamicPermGroupIterators = {
     adminIterator: adminIterator1,
     streamIterators: streamIterators1,
     parentIterators: parentIterators2,
@@ -258,22 +260,22 @@ function nextDynamicPermGroupIterator(
   return Option.of({
     op,
     value: {
-      value: tree2,
-      next: () => nextDynamicPermGroupIterator(universe, tree2, state1),
+      value: group2,
+      next: () => nextDynamicPermGroupIterator(universe, group2, iterators1),
       needsReset,
       reset: () => {
-        return buildDynamicPermGroupInternal(universe, tree2.id, {
+        return buildDynamicPermGroupInternal(universe, group2.id, {
           adminIterator: adminIterator1.reset(),
           streamIterators: concreteHeads.mapValues((stream) =>
             streamIteratorForStream(stream),
           ),
-          parentIterators: state1.parentIterators.mapValues((iterator) =>
+          parentIterators: iterators1.parentIterators.mapValues((iterator) =>
             iterator.reset(),
           ),
         });
       },
-      _state: state,
-      _state1: state1,
+      _iterators: iterators,
+      _iterators1: iterators1,
       _headsNeedReset: headsNeedReset,
       _concreteHeads: concreteHeads,
     },
