@@ -157,7 +157,7 @@ type DynamicPermGroupIterators = {
     StreamId,
     PersistentIteratorValue<OpStream, Op>
   >;
-  readonly parentIterators: HashMap<
+  readonly writerIterators: HashMap<
     PermGroupId,
     PersistentIteratorValue<PermGroup, Op>
   >;
@@ -181,7 +181,7 @@ export function buildDynamicPermGroup(
   return buildDynamicPermGroupInternal(universe, id, {
     adminIterator,
     streamIterators,
-    parentIterators: HashMap.of(),
+    writerIterators: HashMap.of(),
   });
 }
 
@@ -216,7 +216,7 @@ function nextDynamicPermGroupIterator(
     Vector.of<PersistentIteratorValue<unknown, Op>>(
       iterators.adminIterator,
       ...iterators.streamIterators.valueIterable(),
-      ...iterators.parentIterators.valueIterable(),
+      ...iterators.writerIterators.valueIterable(),
     ),
   );
   if (opOption.isNone()) return Option.none();
@@ -231,24 +231,24 @@ function nextDynamicPermGroupIterator(
     )
     .getOrElse(iterators.adminIterator);
 
-  const parentIterators1 = iterators.parentIterators.mapValues((i) =>
+  const writerIterators1 = iterators.writerIterators.mapValues((i) =>
     i
       .next()
       .map((next) => (next.op === op ? next.value : i))
       .getOrElse(i),
   );
-  const parentIterators2 =
-    op.childId.equals(group.id) && !parentIterators1.containsKey(op.parentId)
-      ? parentIterators1.put(
+  const writerIterators2 =
+    op.childId.equals(group.id) && !writerIterators1.containsKey(op.parentId)
+      ? writerIterators1.put(
           op.parentId,
           advanceIteratorUntil(
             buildPermGroup(universe, op.parentId),
             op.timestamp,
           ),
         )
-      : parentIterators1;
+      : writerIterators1;
   const writers1 = mapValuesStable(group.writers, (writer) =>
-    parentIterators2
+    writerIterators2
       .get(writer.id)
       .map((iterator) => iterator.value)
       .getOrElse(writer),
@@ -285,7 +285,7 @@ function nextDynamicPermGroupIterator(
           admin: adminIterator1.value,
           writers: writers1.put(
             op.parentId,
-            parentIterators2.get(op.parentId).getOrThrow().value,
+            writerIterators2.get(op.parentId).getOrThrow().value,
           ),
           heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
         }),
@@ -328,14 +328,14 @@ function nextDynamicPermGroupIterator(
   const needsReset =
     headsNeedReset ||
     adminIterator1.needsReset ||
-    parentIterators2.anyMatch(
-      (nodeId, parentIterator) => parentIterator.needsReset,
+    writerIterators2.anyMatch(
+      (nodeId, writerIterator) => writerIterator.needsReset,
     );
 
   const iterators1: DynamicPermGroupIterators = {
     adminIterator: adminIterator1,
     streamIterators: streamIterators1,
-    parentIterators: parentIterators2,
+    writerIterators: writerIterators2,
   };
   return Option.of({
     op,
@@ -349,7 +349,7 @@ function nextDynamicPermGroupIterator(
           streamIterators: concreteHeads.mapValues((stream) =>
             streamIteratorForStream(stream),
           ),
-          parentIterators: iterators1.parentIterators.mapValues((iterator) =>
+          writerIterators: iterators1.writerIterators.mapValues((iterator) =>
             iterator.reset(),
           ),
         });
