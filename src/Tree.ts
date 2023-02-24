@@ -34,10 +34,10 @@ export type ConcreteHeads = HashMap<StreamId, OpStream>;
 
 export type SetEdge = {
   timestamp: Timestamp;
-  type: "set edge";
+  type: "add writer";
 
-  childId: DynamicPermGroupId;
-  parentId: PermGroupId;
+  groupId: DynamicPermGroupId;
+  writerId: PermGroupId;
 
   // This indicates the final op that we'll accept for any streams that get
   // removed by this op.
@@ -238,11 +238,11 @@ function nextDynamicPermGroupIterator(
       .getOrElse(i),
   );
   const writerIterators2 =
-    op.childId.equals(group.id) && !writerIterators1.containsKey(op.parentId)
+    op.groupId.equals(group.id) && !writerIterators1.containsKey(op.writerId)
       ? writerIterators1.put(
-          op.parentId,
+          op.writerId,
           advanceIteratorUntil(
-            buildPermGroup(universe, op.parentId),
+            buildPermGroup(universe, op.writerId),
             op.timestamp,
           ),
         )
@@ -284,8 +284,8 @@ function nextDynamicPermGroupIterator(
         group.copy({
           admin: adminIterator1.value,
           writers: writers1.put(
-            op.parentId,
-            writerIterators2.get(op.parentId).getOrThrow().value,
+            op.writerId,
+            writerIterators2.get(op.writerId).getOrThrow().value,
           ),
           heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
         }),

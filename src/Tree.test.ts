@@ -27,18 +27,16 @@ describe("Tree", () => {
     return LinkedList.ofIterable(ops).reverse() as OpStream;
   }
 
-  function setEdge(
-    parentId: PermGroupId,
-    childId: DynamicPermGroupId,
-    extras?: {
-      streams?: HashMap<StreamId, OpStream>;
-    },
+  function addWriter(
+    groupId: DynamicPermGroupId,
+    writerId: PermGroupId,
+    extras?: {streams?: HashMap<StreamId, OpStream>},
   ): SetEdge {
     return {
       timestamp: clock.now(),
-      type: "set edge",
-      parentId,
-      childId,
+      type: "add writer",
+      groupId: groupId,
+      writerId: writerId,
       contributingHeads: extras?.streams || HashMap.of(),
     };
   }
@@ -86,7 +84,7 @@ describe("Tree", () => {
       const parentId = new StaticPermGroupId({
         writers: HashSet.of(otherDeviceId),
       });
-      const otherDeviceOps = opsList(setEdge(parentId, rootId));
+      const otherDeviceOps = opsList(addWriter(rootId, parentId));
       const otherStreamId = new StreamId({
         nodeId: rootId,
         deviceId: otherDeviceId,
@@ -126,7 +124,7 @@ describe("Tree", () => {
         admin: adminId,
         rest: "parent",
       });
-      const op = setEdge(parentId, rootId);
+      const op = addWriter(rootId, parentId);
       const universe = HashMap.of([
         new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
         opsList(op),
@@ -144,7 +142,7 @@ describe("Tree", () => {
         admin: adminId,
         rest: "parent",
       });
-      const op = setEdge(parentId, rootId);
+      const op = addWriter(rootId, parentId);
       const universe = HashMap.of([
         new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
         opsList(op),
@@ -169,11 +167,11 @@ describe("Tree", () => {
       const universe = HashMap.of(
         [
           new StreamId({nodeId: parentId, deviceId: deviceId, type: "up"}),
-          opsList(setEdge(grandparentId, parentId)),
+          opsList(addWriter(parentId, grandparentId)),
         ],
         [
           new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
-          opsList(setEdge(parentId, rootId)),
+          opsList(addWriter(rootId, parentId)),
         ],
       );
       const group = advanceIteratorUntil(
@@ -207,11 +205,11 @@ describe("Tree", () => {
       const universe = HashMap.of(
         [
           new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
-          opsList(setEdge(parentId, rootId)),
+          opsList(addWriter(rootId, parentId)),
         ],
         [
           new StreamId({nodeId: parentId, deviceId: deviceId, type: "up"}),
-          opsList(setEdge(grandparentId, parentId)),
+          opsList(addWriter(parentId, grandparentId)),
         ],
       );
       const group = advanceIteratorUntil(
@@ -256,11 +254,11 @@ describe("Tree", () => {
             deviceId: deviceAId,
             type: "up",
           }),
-          opsList(setEdge(parentBId, childId)),
+          opsList(addWriter(childId, parentBId)),
         ],
         [
           new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
-          opsList(setEdge(parentAId, rootId)),
+          opsList(addWriter(rootId, parentAId)),
         ],
       );
       const iterator = advanceIteratorUntil(
@@ -303,7 +301,7 @@ describe("Tree", () => {
         deviceId: deviceAId,
         type: "up",
       });
-      const otherRootOps = opsList(setEdge(parentCId, rootId));
+      const otherRootOps = opsList(addWriter(rootId, parentCId));
       const deviceRootStreamId = new StreamId({
         nodeId: rootId,
         deviceId: deviceId,
@@ -312,15 +310,15 @@ describe("Tree", () => {
       const deviceRootEarlyOps = opsList(
         // So that deviceId can continue to write to the root even after
         // parents are added.
-        setEdge(parentId, rootId),
+        addWriter(rootId, parentId),
         // Add otherDeviceId as a writer.
-        setEdge(parentAId, rootId),
+        addWriter(rootId, parentAId),
       );
       const universe = HashMap.of([
         deviceRootStreamId,
         deviceRootEarlyOps.prepend(
           // Remove otherDeviceId as a writer.
-          setEdge(parentBId, rootId, {
+          addWriter(rootId, parentBId, {
             streams: HashMap.of([otherRootStreamId, otherRootOps]),
           }),
         ),
