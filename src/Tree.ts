@@ -9,12 +9,15 @@ import {AssertFailed} from "./helper/Assert";
 import {Seq} from "prelude-ts/dist/src/Seq";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
-type NodeType = "up" | "down";
-export class StreamId extends ObjectValue<{
+
+export type StreamId = DynamicPermGroupStreamId;
+export class DynamicPermGroupStreamId extends ObjectValue<{
+  permGroupId: DynamicPermGroupId;
   deviceId: DeviceId;
-  nodeId: PermGroupId;
-  type: NodeType;
-}>() {}
+}>() {
+  readonly type = "DynamicPermGroup";
+}
+
 export type PermGroupId = StaticPermGroupId | DynamicPermGroupId;
 export class StaticPermGroupId extends ObjectValue<{
   readonly writers: HashSet<DeviceId>;
@@ -27,6 +30,7 @@ export class DynamicPermGroupId extends ObjectValue<{
 }>() {
   readonly type = "dynamic";
 }
+
 export type Op = SetEdge;
 export type OpStream = LinkedList<Op>;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
@@ -111,10 +115,9 @@ export class DynamicPermGroup extends ObjectValue<{
         .openWriterDevices()
         .toVector()
         .map((deviceId) => [
-          new StreamId({
-            nodeId: this.id,
+          new DynamicPermGroupStreamId({
+            permGroupId: this.id,
             deviceId: deviceId,
-            type: "up",
           }),
           "open",
         ]),
@@ -309,10 +312,9 @@ function nextDynamicPermGroupIterator(
     .removeAll(group1.openWriterDevices());
   const closedStreams2 = closedStreams1.mergeWith(
     removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
-      const streamId = new StreamId({
+      const streamId = new DynamicPermGroupStreamId({
+        permGroupId: group.id,
         deviceId: removedWriterId,
-        nodeId: group.id,
-        type: "up",
       });
       return op.contributingHeads.get(streamId).map((ops) => [streamId, ops]);
     }),

@@ -4,6 +4,7 @@ import {
   DeviceId,
   DynamicPermGroup,
   DynamicPermGroupId,
+  DynamicPermGroupStreamId,
   Op,
   OpStream,
   PermGroupId,
@@ -69,7 +70,10 @@ describe("Tree", () => {
       expectPreludeEqual(
         group.desiredHeads(),
         HashMap.of([
-          new StreamId({deviceId: deviceId, nodeId: rootId, type: "up"}),
+          new DynamicPermGroupStreamId({
+            deviceId: deviceId,
+            permGroupId: rootId,
+          }),
           "open" as const,
         ]),
       );
@@ -85,10 +89,9 @@ describe("Tree", () => {
         writers: HashSet.of(otherDeviceId),
       });
       const otherDeviceOps = opsList(addWriter(rootId, parentId));
-      const otherStreamId = new StreamId({
-        nodeId: rootId,
+      const otherStreamId = new DynamicPermGroupStreamId({
+        permGroupId: rootId,
         deviceId: otherDeviceId,
-        type: "up",
       });
       const group = new DynamicPermGroup({
         id: rootId,
@@ -102,7 +105,10 @@ describe("Tree", () => {
           group.desiredHeads(),
           HashMap.of<StreamId, "open" | OpStream>(
             [
-              new StreamId({deviceId: deviceId, nodeId: rootId, type: "up"}),
+              new DynamicPermGroupStreamId({
+                deviceId: deviceId,
+                permGroupId: rootId,
+              }),
               "open" as const,
             ],
             [otherStreamId, otherDeviceOps],
@@ -126,7 +132,10 @@ describe("Tree", () => {
       });
       const op = addWriter(rootId, parentId);
       const universe = HashMap.of([
-        new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
+        new DynamicPermGroupStreamId({
+          permGroupId: rootId,
+          deviceId: deviceId,
+        }),
         opsList(op),
       ]);
       const group = advanceIteratorUntil(
@@ -144,7 +153,10 @@ describe("Tree", () => {
       });
       const op = addWriter(rootId, parentId);
       const universe = HashMap.of([
-        new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
+        new DynamicPermGroupStreamId({
+          permGroupId: rootId,
+          deviceId: deviceId,
+        }),
         opsList(op),
       ]);
       expectIdentical(op.timestamp, Timestamp.create(0));
@@ -166,11 +178,17 @@ describe("Tree", () => {
       });
       const universe = HashMap.of(
         [
-          new StreamId({nodeId: parentId, deviceId: deviceId, type: "up"}),
+          new DynamicPermGroupStreamId({
+            permGroupId: parentId,
+            deviceId: deviceId,
+          }),
           opsList(addWriter(parentId, grandparentId)),
         ],
         [
-          new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
+          new DynamicPermGroupStreamId({
+            permGroupId: rootId,
+            deviceId: deviceId,
+          }),
           opsList(addWriter(rootId, parentId)),
         ],
       );
@@ -181,7 +199,9 @@ describe("Tree", () => {
       expectIdentical(
         headsEqual(
           group.heads,
-          universe.filterKeys((streamId) => streamId.nodeId.equals(rootId)),
+          universe.filterKeys((streamId) =>
+            streamId.permGroupId.equals(rootId),
+          ),
         ),
         true,
       );
@@ -204,11 +224,17 @@ describe("Tree", () => {
       });
       const universe = HashMap.of(
         [
-          new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
+          new DynamicPermGroupStreamId({
+            permGroupId: rootId,
+            deviceId: deviceId,
+          }),
           opsList(addWriter(rootId, parentId)),
         ],
         [
-          new StreamId({nodeId: parentId, deviceId: deviceId, type: "up"}),
+          new DynamicPermGroupStreamId({
+            permGroupId: parentId,
+            deviceId: deviceId,
+          }),
           opsList(addWriter(parentId, grandparentId)),
         ],
       );
@@ -219,7 +245,9 @@ describe("Tree", () => {
       expectIdentical(
         headsEqual(
           group.heads,
-          universe.filterKeys((streamId) => streamId.nodeId.equals(rootId)),
+          universe.filterKeys((streamId) =>
+            streamId.permGroupId.equals(rootId),
+          ),
         ),
         true,
       );
@@ -249,15 +277,17 @@ describe("Tree", () => {
         // This op is earlier than the second one, but isn't part of the
         // original desired heads for the root.
         [
-          new StreamId({
-            nodeId: childId,
+          new DynamicPermGroupStreamId({
+            permGroupId: childId,
             deviceId: deviceAId,
-            type: "up",
           }),
           opsList(addWriter(childId, parentBId)),
         ],
         [
-          new StreamId({nodeId: rootId, deviceId: deviceId, type: "up"}),
+          new DynamicPermGroupStreamId({
+            permGroupId: rootId,
+            deviceId: deviceId,
+          }),
           opsList(addWriter(rootId, parentAId)),
         ],
       );
@@ -270,7 +300,9 @@ describe("Tree", () => {
       expectIdentical(
         headsEqual(
           root.heads,
-          universe.filterKeys((streamId) => streamId.nodeId.equals(root.id)),
+          universe.filterKeys((streamId) =>
+            streamId.permGroupId.equals(root.id),
+          ),
         ),
         true,
       );
@@ -296,16 +328,14 @@ describe("Tree", () => {
       const parentCId = new StaticPermGroupId({
         writers: HashSet.of(deviceCId),
       });
-      const otherRootStreamId = new StreamId({
-        nodeId: rootId,
+      const otherRootStreamId = new DynamicPermGroupStreamId({
+        permGroupId: rootId,
         deviceId: deviceAId,
-        type: "up",
       });
       const otherRootOps = opsList(addWriter(rootId, parentCId));
-      const deviceRootStreamId = new StreamId({
-        nodeId: rootId,
+      const deviceRootStreamId = new DynamicPermGroupStreamId({
+        permGroupId: rootId,
         deviceId: deviceId,
-        type: "up",
       });
       const deviceRootEarlyOps = opsList(
         // So that deviceId can continue to write to the root even after
