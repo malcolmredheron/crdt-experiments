@@ -11,25 +11,6 @@ import {Seq} from "prelude-ts/dist/src/Seq";
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 
 export type StreamId = DynamicPermGroupStreamId;
-export class DynamicPermGroupStreamId extends ObjectValue<{
-  permGroupId: DynamicPermGroupId;
-  deviceId: DeviceId;
-}>() {
-  readonly type = "DynamicPermGroup";
-}
-
-export type PermGroupId = StaticPermGroupId | DynamicPermGroupId;
-export class StaticPermGroupId extends ObjectValue<{
-  readonly writers: HashSet<DeviceId>;
-}>() {
-  readonly type = "static";
-}
-export class DynamicPermGroupId extends ObjectValue<{
-  readonly admin: PermGroupId;
-  readonly rest: string | undefined;
-}>() {
-  readonly type = "dynamic";
-}
 
 export type Op = SetEdge;
 export type OpStream = LinkedList<Op>;
@@ -51,6 +32,8 @@ export type SetEdge = {
 //------------------------------------------------------------------------------
 // Perm group
 
+export type PermGroupId = StaticPermGroupId | DynamicPermGroupId;
+
 interface PermGroup {
   readonly id: PermGroupId;
   openWriterDevices(): HashSet<DeviceId>;
@@ -70,6 +53,12 @@ export function buildPermGroup(
 
 //------------------------------------------------------------------------------
 // Static perm group
+
+export class StaticPermGroupId extends ObjectValue<{
+  readonly writers: HashSet<DeviceId>;
+}>() {
+  readonly type = "static";
+}
 
 export class StaticPermGroup extends ObjectValue<{
   readonly id: PermGroupId;
@@ -94,6 +83,20 @@ export function buildStaticPermGroup(
 
 //------------------------------------------------------------------------------
 // Dynamic perm group
+
+export class DynamicPermGroupId extends ObjectValue<{
+  readonly admin: PermGroupId;
+  readonly rest: string | undefined;
+}>() {
+  readonly type = "dynamic";
+}
+
+export class DynamicPermGroupStreamId extends ObjectValue<{
+  permGroupId: DynamicPermGroupId;
+  deviceId: DeviceId;
+}>() {
+  readonly type = "DynamicPermGroup";
+}
 
 export class DynamicPermGroup extends ObjectValue<{
   readonly id: DynamicPermGroupId;
