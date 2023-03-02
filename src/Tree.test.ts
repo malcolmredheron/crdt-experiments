@@ -1,4 +1,5 @@
 import {
+  AddWriter,
   advanceIteratorUntil,
   buildDynamicPermGroup,
   DeviceId,
@@ -8,7 +9,6 @@ import {
   Op,
   OpStream,
   PermGroupId,
-  SetEdge,
   StaticPermGroup,
   StaticPermGroupId,
   StreamId,
@@ -32,7 +32,7 @@ describe("Tree", () => {
     groupId: DynamicPermGroupId,
     writerId: PermGroupId,
     extras?: {streams?: HashMap<StreamId, OpStream>},
-  ): SetEdge {
+  ): AddWriter {
     return {
       timestamp: clock.now(),
       type: "add writer",

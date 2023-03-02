@@ -9,25 +9,11 @@ import {AssertFailed} from "./helper/Assert";
 import {Seq} from "prelude-ts/dist/src/Seq";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
-
 export type StreamId = DynamicPermGroupStreamId;
-
-export type Op = SetEdge;
+export type Op = AddWriter;
 export type OpStream = LinkedList<Op>;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
 export type ConcreteHeads = HashMap<StreamId, OpStream>;
-
-export type SetEdge = {
-  timestamp: Timestamp;
-  type: "add writer";
-
-  groupId: DynamicPermGroupId;
-  writerId: PermGroupId;
-
-  // This indicates the final op that we'll accept for any streams that get
-  // removed by this op.
-  contributingHeads: ConcreteHeads;
-};
 
 //------------------------------------------------------------------------------
 // Perm group
@@ -97,6 +83,18 @@ export class DynamicPermGroupStreamId extends ObjectValue<{
 }>() {
   readonly type = "DynamicPermGroup";
 }
+
+export type AddWriter = {
+  timestamp: Timestamp;
+  type: "add writer";
+
+  groupId: DynamicPermGroupId;
+  writerId: PermGroupId;
+
+  // This indicates the final op that we'll accept for any streams that get
+  // removed by this op.
+  contributingHeads: ConcreteHeads;
+};
 
 export class DynamicPermGroup extends ObjectValue<{
   readonly id: DynamicPermGroupId;
