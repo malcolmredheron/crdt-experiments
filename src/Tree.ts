@@ -10,7 +10,7 @@ import {Seq} from "prelude-ts/dist/src/Seq";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 export type StreamId = DynamicPermGroupStreamId;
-export type Op = AddWriter;
+export type Op = AddWriter | RemoveWriter;
 export type OpStream = LinkedList<Op>;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
 export type ConcreteHeads = HashMap<StreamId, OpStream>;
@@ -87,6 +87,18 @@ export class DynamicPermGroupStreamId extends ObjectValue<{
 export type AddWriter = {
   timestamp: Timestamp;
   type: "add writer";
+
+  groupId: DynamicPermGroupId;
+  writerId: PermGroupId;
+
+  // This indicates the final op that we'll accept for any streams that get
+  // removed by this op.
+  contributingHeads: ConcreteHeads;
+};
+
+export type RemoveWriter = {
+  timestamp: Timestamp;
+  type: "remove writer";
 
   groupId: DynamicPermGroupId;
   writerId: PermGroupId;
@@ -267,6 +279,11 @@ function nextDynamicPermGroupIterator(
     },
   );
 
+  const group1 = group.copy({
+    admin: adminIterator1.value,
+    writers: writers1,
+  });
+
   const opHeads: HashMap<StreamId, OpStream> = mapMapOption(
     iterators.streamIterators,
     (streamId, streamIterator) => {
@@ -280,37 +297,45 @@ function nextDynamicPermGroupIterator(
         .orElse(Option.none<OpStream>());
     },
   );
-  const group1 = match({opHeads})
+  const group2 = match({op, opHeads})
     .with(
-      {},
+      {op: {type: "add writer"}},
       ({opHeads}) => !opHeads.isEmpty(),
       ({opHeads}) =>
-        group.copy({
-          admin: adminIterator1.value,
-          writers: writers1.put(
+        group1.copy({
+          writers: group1.writers.put(
             op.writerId,
             writerIterators2.get(op.writerId).getOrThrow().value,
           ),
           heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
         }),
     )
-    .with(P._, () =>
-      group.copy({
-        admin: adminIterator1.value,
-        writers: writers1,
-      }),
+    .with(
+      {op: {type: "remove writer"}},
+      ({opHeads}) => !opHeads.isEmpty(),
+      ({opHeads}) =>
+        group1.copy({
+          writers: group1.writers.remove(op.writerId),
+          heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
+        }),
     )
+    .with(
+      {},
+      ({opHeads}) => !opHeads.isEmpty(),
+      () => throwError<DynamicPermGroup>("Op not handled"),
+    )
+    .with(P._, () => group1)
     .exhaustive();
 
-  const addedWriterDeviceIds = group1
+  const addedWriterDeviceIds = group2
     .openWriterDevices()
     .removeAll(group.openWriterDevices());
-  const closedStreams1 = group1.closedStreams.filterKeys((streamId) =>
+  const closedStreams1 = group2.closedStreams.filterKeys((streamId) =>
     addedWriterDeviceIds.contains(streamId.deviceId),
   );
   const removedWriterDeviceIds = group
     .openWriterDevices()
-    .removeAll(group1.openWriterDevices());
+    .removeAll(group2.openWriterDevices());
   const closedStreams2 = closedStreams1.mergeWith(
     removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
       const streamId = new DynamicPermGroupStreamId({
@@ -321,13 +346,13 @@ function nextDynamicPermGroupIterator(
     }),
     (ops0, ops1) => throwError("Should not have stream-id collision"),
   );
-  const group2 = group1.copy({closedStreams: closedStreams2});
+  const group3 = group2.copy({closedStreams: closedStreams2});
 
   const concreteHeads = concreteHeadsForAbstractHeads(
     universe,
-    group2.desiredHeads(),
+    group3.desiredHeads(),
   );
-  const headsNeedReset = !headsEqual(concreteHeads, group2.heads);
+  const headsNeedReset = !headsEqual(concreteHeads, group3.heads);
   const needsReset =
     headsNeedReset ||
     adminIterator1.needsReset ||
@@ -343,11 +368,11 @@ function nextDynamicPermGroupIterator(
   return Option.of({
     op,
     value: {
-      value: group2,
-      next: () => nextDynamicPermGroupIterator(universe, group2, iterators1),
+      value: group3,
+      next: () => nextDynamicPermGroupIterator(universe, group3, iterators1),
       needsReset,
       reset: () => {
-        return buildDynamicPermGroupInternal(universe, group2.id, {
+        return buildDynamicPermGroupInternal(universe, group3.id, {
           adminIterator: adminIterator1.reset(),
           streamIterators: concreteHeads.mapValues((stream) =>
             streamIteratorForStream(stream),

@@ -9,6 +9,7 @@ import {
   Op,
   OpStream,
   PermGroupId,
+  RemoveWriter,
   StaticPermGroup,
   StaticPermGroupId,
   StreamId,
@@ -36,6 +37,20 @@ describe("Tree", () => {
     return {
       timestamp: clock.now(),
       type: "add writer",
+      groupId: groupId,
+      writerId: writerId,
+      contributingHeads: extras?.streams || HashMap.of(),
+    };
+  }
+
+  function removeWriter(
+    groupId: DynamicPermGroupId,
+    writerId: PermGroupId,
+    extras?: {streams?: HashMap<StreamId, OpStream>},
+  ): RemoveWriter {
+    return {
+      timestamp: clock.now(),
+      type: "remove writer",
       groupId: groupId,
       writerId: writerId,
       contributingHeads: extras?.streams || HashMap.of(),
@@ -315,64 +330,48 @@ describe("Tree", () => {
     it("closes streams for removed writers", () => {
       const deviceAId = DeviceId.create("device a");
       const deviceBId = DeviceId.create("device b");
-      const deviceCId = DeviceId.create("device c");
-      const parentId = new StaticPermGroupId({
-        writers: HashSet.of(deviceId),
-      });
       const parentAId = new StaticPermGroupId({
         writers: HashSet.of(deviceAId),
       });
       const parentBId = new StaticPermGroupId({
         writers: HashSet.of(deviceBId),
       });
-      const parentCId = new StaticPermGroupId({
-        writers: HashSet.of(deviceCId),
-      });
       const otherRootStreamId = new DynamicPermGroupStreamId({
         permGroupId: rootId,
         deviceId: deviceAId,
       });
-      const otherRootOps = opsList(addWriter(rootId, parentCId));
+      const otherRootOps = opsList(addWriter(rootId, parentBId));
       const deviceRootStreamId = new DynamicPermGroupStreamId({
         permGroupId: rootId,
         deviceId: deviceId,
       });
-      const deviceRootEarlyOps = opsList(
-        // So that deviceId can continue to write to the root even after
-        // parents are added.
-        addWriter(rootId, parentId),
-        // Add otherDeviceId as a writer.
-        addWriter(rootId, parentAId),
-      );
       const universe = HashMap.of([
         deviceRootStreamId,
-        deviceRootEarlyOps.prepend(
+        opsList(
+          // Add otherDeviceId as a writer.
+          addWriter(rootId, parentAId),
           // Remove otherDeviceId as a writer.
-          addWriter(rootId, parentBId, {
+          removeWriter(rootId, parentAId, {
             streams: HashMap.of([otherRootStreamId, otherRootOps]),
           }),
         ),
       ]);
-      /*const group =*/ advanceIteratorUntil(
+      const group = advanceIteratorUntil(
         buildDynamicPermGroup(universe, rootId),
         maxTimestamp,
       ).value;
       // Only the stream for the removed writer gets closed.
-      // expectIdentical(
-      //   headsEqual(
-      //     group.closedStreams,
-      //     HashMap.of([otherRootStreamId, otherRootOps]),
-      //   ),
-      //   true,
-      // );
-      // expectPreludeEqual(
-      //   group.writers.keySet(),
-      //   HashSet.of(
-      //     EdgeId.create("permanent"),
-      //     EdgeId.create("edge"),
-      //     EdgeId.create("from contributions"),
-      //   ),
-      // );
+      expectIdentical(
+        headsEqual(
+          group.closedStreams,
+          HashMap.of([otherRootStreamId, otherRootOps]),
+        ),
+        true,
+      );
+      // deviceB was added as a writer by the ops in the stream in the
+      // remove-writer op. Seeing it here shows that we correctly applied the
+      // closed stream.
+      expectPreludeEqual(group.writers.keySet(), HashSet.of(parentBId));
     });
   });
 });
