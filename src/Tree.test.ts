@@ -32,14 +32,13 @@ describe("Tree", () => {
   function addWriter(
     groupId: DynamicPermGroupId,
     writerId: PermGroupId,
-    extras?: {streams?: HashMap<StreamId, OpStream>},
+    extras?: {},
   ): AddWriter {
     return {
       timestamp: clock.now(),
       type: "add writer",
       groupId: groupId,
       writerId: writerId,
-      contributingHeads: extras?.streams || HashMap.of(),
     };
   }
 
