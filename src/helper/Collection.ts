@@ -80,7 +80,7 @@ export function consTail<T>(
 }
 
 // #Prelude: Map should support mapOption
-export function mapMapOption<K extends WithEquality, V1, V2 = V1>(
+export function mapMapValueOption<K extends WithEquality, V1, V2 = V1>(
   map: HashMap<K, V1>,
   f: (key: K, value: V1) => Option<V2>,
 ): HashMap<K, V2> {
@@ -88,5 +88,22 @@ export function mapMapOption<K extends WithEquality, V1, V2 = V1>(
     f(key, value)
       .map((value) => [[key, value]] as Iterable<[K, V2]>)
       .getOrElse([] as Iterable<[K, V2]>),
+  );
+}
+
+// #Prelude: Map should support mapOption
+export function mapMapOption<
+  K1 extends WithEquality,
+  K2 extends WithEquality,
+  V1,
+  V2 = V1,
+>(
+  map: HashMap<K1, V1>,
+  f: (key: K1, value: V1) => Option<{key: K2; value: V2}>,
+): HashMap<K2, V2> {
+  return map.flatMap((key, value) =>
+    f(key, value)
+      .map(({key, value}) => [[key, value]] as Iterable<[K2, V2]>)
+      .getOrElse([] as Iterable<[K2, V2]>),
   );
 }

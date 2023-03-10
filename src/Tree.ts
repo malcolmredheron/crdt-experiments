@@ -3,7 +3,12 @@ import {TypedValue} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
 import {HashMap, HashSet, LinkedList, Option, Vector} from "prelude-ts";
 import {concreteHeadsForAbstractHeads, headsEqual} from "./StreamHeads";
-import {mapMapOption, mapValuesStable, throwError} from "./helper/Collection";
+import {
+  mapMapOption,
+  mapMapValueOption,
+  mapValuesStable,
+  throwError,
+} from "./helper/Collection";
 import {match, P} from "ts-pattern";
 import {AssertFailed} from "./helper/Assert";
 import {Seq} from "prelude-ts/dist/src/Seq";
@@ -15,6 +20,18 @@ export type OpStream = LinkedList<Op>;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
 export type ConcreteHeads = HashMap<StreamId, OpStream>;
 
+export class Device extends ObjectValue<{
+  heads: ConcreteHeads;
+}>() {
+  excludeFromEquals = HashSet.of("heads");
+  equals(other: unknown): boolean {
+    if (Object.getPrototypeOf(this) !== Object.getPrototypeOf(other))
+      return false;
+
+    return super.equals(other) && headsEqual(this.heads, (other as this).heads);
+  }
+}
+
 //------------------------------------------------------------------------------
 // Perm group
 
@@ -22,7 +39,7 @@ export type PermGroupId = StaticPermGroupId | DynamicPermGroupId;
 
 interface PermGroup {
   readonly id: PermGroupId;
-  openWriterDevices(): HashSet<DeviceId>;
+  writerDevices(): HashMap<DeviceId, "open" | Device>;
 }
 
 export function buildPermGroup(
@@ -50,8 +67,10 @@ export class StaticPermGroup extends ObjectValue<{
   readonly id: PermGroupId;
   readonly writers: HashSet<DeviceId>;
 }>() {
-  public openWriterDevices(): HashSet<DeviceId> {
-    return this.writers;
+  public writerDevices(): HashMap<DeviceId, "open"> {
+    return HashMap.ofIterable(
+      this.writers.toVector().map((deviceId) => [deviceId, "open"]),
+    );
   }
 }
 
@@ -99,54 +118,68 @@ export type RemoveWriter = {
   groupId: DynamicPermGroupId;
   writerId: PermGroupId;
 
-  // This indicates the final op that we'll accept for any streams that get
+  // This indicates the final heads that we'll use for any writers devices that get
   // removed by this op.
-  contributingHeads: ConcreteHeads;
+  contributingDevices: HashMap<DeviceId, Device>;
 };
 
-export class DynamicPermGroup extends ObjectValue<{
-  readonly id: DynamicPermGroupId;
-  heads: ConcreteHeads;
-  closedStreams: ConcreteHeads;
+export class DynamicPermGroup
+  extends ObjectValue<{
+    readonly id: DynamicPermGroupId;
+    heads: ConcreteHeads;
+    closedDevices: HashMap<DeviceId, Device>;
 
-  // Admins can write to this perm group -- that is, they can add and remove
-  // writers.
-  admin: PermGroup;
-  // Writers can write to objects that use this perm group to decide on their
-  // writers, but can't write to this perm group.
-  writers: HashMap<PermGroupId, PermGroup>;
-}>() {
+    // Admins can write to this perm group -- that is, they can add and remove
+    // writers.
+    admin: PermGroup;
+    // Writers can write to objects that use this perm group to decide on their
+    // writers, but can't write to this perm group.
+    writers: HashMap<PermGroupId, PermGroup>;
+  }>()
+  implements PermGroup
+{
   // These are the heads that this perm group wants included in order to build
   // itself.
   desiredHeads(): AbstractHeads {
-    const openStreams = HashMap.ofIterable<StreamId, "open" | OpStream>(
-      this.admin
-        .openWriterDevices()
-        .toVector()
-        .map((deviceId) => [
-          new DynamicPermGroupStreamId({
-            permGroupId: this.id,
-            deviceId: deviceId,
-          }),
-          "open",
-        ]),
+    const openStreams = mapMapOption(
+      this.admin.writerDevices(),
+      (deviceId, openOrDevice) => {
+        const streamId = new DynamicPermGroupStreamId({
+          permGroupId: this.id,
+          deviceId: deviceId,
+        });
+        const openOrOpStream =
+          openOrDevice === "open"
+            ? Option.of<"open">("open")
+            : openOrDevice.heads.get(streamId);
+        if (!openOrOpStream.isSome())
+          return Option.none<{key: StreamId; value: "open" | OpStream}>();
+        return Option.of({key: streamId, value: openOrOpStream.get()});
+      },
     );
-    const ourStreams = HashMap.ofIterable([
-      ...openStreams,
-      ...this.closedStreams,
-    ]);
-    return ourStreams;
+    return openStreams;
   }
 
   // These are the devices that should be used as writers for anything using
   // this perm group to decide who can write. *This is not the list of devices
   // that can write to this perm group*.
-  public openWriterDevices(): HashSet<DeviceId> {
-    return HashSet.of(
-      ...this.admin.openWriterDevices(),
+  public writerDevices(): HashMap<DeviceId, "open" | Device> {
+    const openDeviceIds = (group: PermGroup): HashSet<DeviceId> =>
+      group
+        .writerDevices()
+        .filterValues((openOrDevice) => openOrDevice === "open")
+        .keySet();
+    const openWriterDevices = HashSet.of(
+      ...openDeviceIds(this.admin),
       ...this.writers.foldLeft(HashSet.of<DeviceId>(), (devices, [, group]) =>
-        HashSet.of(...devices, ...group.openWriterDevices()),
+        HashSet.of(...devices, ...openDeviceIds(group)),
       ),
+    );
+    return HashMap.of(
+      ...openWriterDevices
+        .toVector()
+        .map((deviceId) => [deviceId, "open"] as [DeviceId, "open" | Device]),
+      ...this.closedDevices,
     );
   }
 
@@ -155,11 +188,7 @@ export class DynamicPermGroup extends ObjectValue<{
     if (Object.getPrototypeOf(this) !== Object.getPrototypeOf(other))
       return false;
 
-    return (
-      super.equals(other) &&
-      headsEqual(this.closedStreams, (other as this).closedStreams) &&
-      headsEqual(this.heads, (other as this).heads)
-    );
+    return super.equals(other) && headsEqual(this.heads, (other as this).heads);
   }
 }
 
@@ -185,7 +214,7 @@ export function buildDynamicPermGroup(
     new DynamicPermGroup({
       id,
       heads: HashMap.of(),
-      closedStreams: HashMap.of(),
+      closedDevices: HashMap.of(),
       admin: adminIterator.value,
       writers: HashMap.of(),
     }).desiredHeads(),
@@ -205,7 +234,7 @@ function buildDynamicPermGroupInternal(
   const group = new DynamicPermGroup({
     id,
     heads: HashMap.of(),
-    closedStreams: HashMap.of(),
+    closedDevices: HashMap.of(),
     admin: iterators.adminIterator.value,
     writers: HashMap.of(),
   });
@@ -265,7 +294,6 @@ function nextDynamicPermGroupIterator(
       .map((iterator) => iterator.value)
       .getOrElse(writer),
   );
-
   const streamIterators1 = iterators.streamIterators.mapValues(
     (streamIterator) => {
       return streamIterator
@@ -274,70 +302,48 @@ function nextDynamicPermGroupIterator(
         .getOrElse(streamIterator);
     },
   );
-
   const group1 = group.copy({
     admin: adminIterator1.value,
     writers: writers1,
   });
 
-  const opHeads: HashMap<StreamId, OpStream> = mapMapOption(
-    iterators.streamIterators,
-    (streamId, streamIterator) => {
-      return streamIterator
-        .next()
-        .flatMap((next) =>
-          next.op === op
-            ? Option.of(next.value.value)
-            : Option.none<OpStream>(),
-        )
-        .orElse(Option.none<OpStream>());
-    },
-  );
-  const group2 = match({op, opHeads})
+  const group2 = match({
+    op,
+    opHeads: mapMapValueOption(
+      iterators.streamIterators,
+      (streamId, streamIterator) => {
+        return streamIterator
+          .next()
+          .flatMap((next) =>
+            next.op === op
+              ? Option.of(next.value.value)
+              : Option.none<OpStream>(),
+          )
+          .orElse(Option.none<OpStream>());
+      },
+    ),
+  })
     .with(
       {op: {type: "add writer"}},
       ({opHeads}) => !opHeads.isEmpty(),
       ({op, opHeads}) => {
-        const group2 = group1.copy({
+        return group1.copy({
           writers: group1.writers.put(
             op.writerId,
             writerIterators2.get(op.writerId).getOrThrow().value,
           ),
           heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
         });
-        const addedWriterDeviceIds = group2
-          .openWriterDevices()
-          .removeAll(group.openWriterDevices());
-        const closedStreams1 = group2.closedStreams.filterKeys((streamId) =>
-          addedWriterDeviceIds.contains(streamId.deviceId),
-        );
-        return group2.copy({closedStreams: closedStreams1});
       },
     )
     .with(
       {op: {type: "remove writer"}},
       ({opHeads}) => !opHeads.isEmpty(),
       ({op, opHeads}) => {
-        const group2 = group1.copy({
+        return group1.copy({
           writers: group1.writers.remove(op.writerId),
           heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
         });
-        const removedWriterDeviceIds = group
-          .openWriterDevices()
-          .removeAll(group2.openWriterDevices());
-        const closedStreams2 = group2.closedStreams.mergeWith(
-          removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
-            const streamId = new DynamicPermGroupStreamId({
-              permGroupId: group.id,
-              deviceId: removedWriterId,
-            });
-            return op.contributingHeads
-              .get(streamId)
-              .map((ops) => [streamId, ops]);
-          }),
-          (ops0, ops1) => throwError("Should not have stream-id collision"),
-        );
-        return group2.copy({closedStreams: closedStreams2});
       },
     )
     .with(
@@ -348,11 +354,50 @@ function nextDynamicPermGroupIterator(
     .with(P._, () => group1)
     .exhaustive();
 
+  const openDeviceIds = (group: PermGroup): HashSet<DeviceId> =>
+    group
+      .writerDevices()
+      .filterValues((openOrDevice) => openOrDevice === "open")
+      .keySet();
+  const group3 = match({
+    op,
+    group,
+    group1: group2,
+    openDeviceIds0: openDeviceIds(group),
+    openDeviceIds1: openDeviceIds(group2),
+  })
+    .with(
+      {op: {type: "add writer"}},
+      ({group, group1, openDeviceIds0, openDeviceIds1}) => {
+        const openedWriterDeviceIds = openDeviceIds1.removeAll(openDeviceIds0);
+        const closedDevices1 = group1.closedDevices.filterKeys(
+          (deviceId) => !(openedWriterDeviceIds.contains(deviceId) as boolean),
+        );
+        return group1.copy({closedDevices: closedDevices1});
+      },
+    )
+    .with(
+      {op: {type: "remove writer"}},
+      ({op, group, group1, openDeviceIds0, openDeviceIds1}) => {
+        const removedWriterDeviceIds = openDeviceIds0.removeAll(openDeviceIds1);
+        const closedDevices1 = group1.closedDevices.mergeWith(
+          removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
+            return op.contributingDevices
+              .get(removedWriterId)
+              .map((device) => [removedWriterId, device]);
+          }),
+          (ops0, ops1) => throwError("Should not have stream-id collision"),
+        );
+        return group1.copy({closedDevices: closedDevices1});
+      },
+    )
+    .exhaustive();
+
   const concreteHeads = concreteHeadsForAbstractHeads(
     universe,
-    group2.desiredHeads(),
+    group3.desiredHeads(),
   );
-  const headsNeedReset = !headsEqual(concreteHeads, group2.heads);
+  const headsNeedReset = !headsEqual(concreteHeads, group3.heads);
   const needsReset =
     headsNeedReset ||
     adminIterator1.needsReset ||
@@ -368,11 +413,11 @@ function nextDynamicPermGroupIterator(
   return Option.of({
     op,
     value: {
-      value: group2,
-      next: () => nextDynamicPermGroupIterator(universe, group2, iterators1),
+      value: group3,
+      next: () => nextDynamicPermGroupIterator(universe, group3, iterators1),
       needsReset,
       reset: () => {
-        return buildDynamicPermGroupInternal(universe, group2.id, {
+        return buildDynamicPermGroupInternal(universe, group3.id, {
           adminIterator: adminIterator1.reset(),
           streamIterators: concreteHeads.mapValues((stream) =>
             streamIteratorForStream(stream),
