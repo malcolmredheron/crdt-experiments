@@ -198,7 +198,7 @@ describe("Tree", () => {
       expectIdentical(op.timestamp, Timestamp.create(0));
       const root = advanceIteratorUntil(
         buildDynamicPermGroup(universe, rootId),
-        Timestamp.create(-1),
+        Timestamp.create(0),
       ).value;
       expectPreludeEqual(root.writers, HashMap.of());
     });

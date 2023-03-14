@@ -1,5 +1,5 @@
 import {ObjectValue} from "./helper/ObjectValue";
-import {TypedValue, value} from "./helper/TypedValue";
+import {TypedValue} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
 import {HashMap, HashSet, LinkedList, Option, Vector} from "prelude-ts";
 import {concreteHeadsForAbstractHeads, headsEqual} from "./StreamHeads";
@@ -342,7 +342,7 @@ function nextDynamicPermGroupIterator(
       ({op, opHeads}) => {
         const writerIterator = advanceIteratorUntil(
           buildPermGroup(universe, op.writerId),
-          Timestamp.create(value(op.timestamp) - 1),
+          op.timestamp,
         );
         if (writerIterator.value.writerGroups().contains(group.id))
           return {group: group1, writerIterators: writerIterators1};
@@ -528,10 +528,11 @@ interface PersistentIteratorOp<Value, Op extends {timestamp: Timestamp}> {
   value: PersistentIteratorValue<Value, Op>;
 }
 
-// Advances the iterator until the next value is greater than `after`.
+// Advances the iterator until there are no more ops or the next op is greater
+// than or equal to `until`.
 export function advanceIteratorUntil<T, Op extends {timestamp: Timestamp}>(
   iterator: PersistentIteratorValue<T, Op>,
-  after: Timestamp,
+  until: Timestamp,
 ): PersistentIteratorValue<T, Op> {
   // `iterators` and the limit of 10 times through the loop are for debugging.
   // We will have to find a more sophisticated way to handle this at some point.
@@ -541,9 +542,9 @@ export function advanceIteratorUntil<T, Op extends {timestamp: Timestamp}>(
   }>({iterator, description: "initial"});
   for (let i = 0; i < 10; i++) {
     while (true) {
-      const next = iterator.next(Timestamp.create(value(after) + 1));
+      const next = iterator.next(until);
       if (next.isNone()) break;
-      if (next.get().op.timestamp > after)
+      if (next.get().op.timestamp >= until)
         throw new AssertFailed("`.next()` ignored `until`");
       iterator = next.get().value;
     }
