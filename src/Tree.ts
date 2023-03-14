@@ -1,5 +1,5 @@
 import {ObjectValue} from "./helper/ObjectValue";
-import {TypedValue} from "./helper/TypedValue";
+import {TypedValue, value} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
 import {HashMap, HashSet, LinkedList, Option, Vector} from "prelude-ts";
 import {concreteHeadsForAbstractHeads, headsEqual} from "./StreamHeads";
@@ -40,6 +40,7 @@ export type PermGroupId = StaticPermGroupId | DynamicPermGroupId;
 interface PermGroup {
   readonly id: PermGroupId;
   writerDevices(): HashMap<DeviceId, "open" | Device>;
+  writerGroups(): HashSet<PermGroupId>;
 }
 
 export function buildPermGroup(
@@ -63,14 +64,21 @@ export class StaticPermGroupId extends ObjectValue<{
   readonly type = "static";
 }
 
-export class StaticPermGroup extends ObjectValue<{
-  readonly id: PermGroupId;
-  readonly writers: HashSet<DeviceId>;
-}>() {
-  public writerDevices(): HashMap<DeviceId, "open"> {
+export class StaticPermGroup
+  extends ObjectValue<{
+    readonly id: PermGroupId;
+    readonly writers: HashSet<DeviceId>;
+  }>()
+  implements PermGroup
+{
+  writerDevices(): HashMap<DeviceId, "open"> {
     return HashMap.ofIterable(
       this.writers.toVector().map((deviceId) => [deviceId, "open"]),
     );
+  }
+
+  writerGroups(): HashSet<PermGroupId> {
+    return HashSet.of(this.id);
   }
 }
 
@@ -183,6 +191,16 @@ export class DynamicPermGroup
     );
   }
 
+  writerGroups(): HashSet<PermGroupId> {
+    return HashSet.of<PermGroupId>(
+      this.id,
+      ...this.admin.writerGroups(),
+      ...Vector.ofIterable(this.writers.valueIterable()).flatMap(
+        (writerGroup) => writerGroup.writerGroups().toVector(),
+      ),
+    );
+  }
+
   excludeFromEquals = HashSet.of("closedStreams", "heads");
   equals(other: unknown): boolean {
     if (Object.getPrototypeOf(this) !== Object.getPrototypeOf(other))
@@ -240,7 +258,8 @@ function buildDynamicPermGroupInternal(
   });
   const iterator = {
     value: group,
-    next: () => nextDynamicPermGroupIterator(universe, group, iterators),
+    next: (until: Timestamp) =>
+      nextDynamicPermGroupIterator(universe, until, group, iterators),
     needsReset: false,
     reset: () => iterator,
     _iterators: iterators,
@@ -250,10 +269,12 @@ function buildDynamicPermGroupInternal(
 
 function nextDynamicPermGroupIterator(
   universe: ConcreteHeads,
+  until: Timestamp,
   group: DynamicPermGroup,
   iterators: DynamicPermGroupIterators,
 ): Option<PersistentIteratorOp<DynamicPermGroup, Op>> {
   const opOption = nextOp(
+    until,
     Vector.of<PersistentIteratorValue<unknown, Op>>(
       iterators.adminIterator,
       ...iterators.streamIterators.valueIterable(),
@@ -264,7 +285,7 @@ function nextDynamicPermGroupIterator(
   const op = opOption.get();
 
   const adminIterator1 = iterators.adminIterator
-    .next()
+    .next(until)
     .flatMap((adminOp) =>
       adminOp.op === op
         ? Option.of(adminOp.value)
@@ -274,22 +295,12 @@ function nextDynamicPermGroupIterator(
 
   const writerIterators1 = iterators.writerIterators.mapValues((i) =>
     i
-      .next()
+      .next(until)
       .map((next) => (next.op === op ? next.value : i))
       .getOrElse(i),
   );
-  const writerIterators2 =
-    op.groupId.equals(group.id) && !writerIterators1.containsKey(op.writerId)
-      ? writerIterators1.put(
-          op.writerId,
-          advanceIteratorUntil(
-            buildPermGroup(universe, op.writerId),
-            op.timestamp,
-          ),
-        )
-      : writerIterators1;
   const writers1 = mapValuesStable(group.writers, (writer) =>
-    writerIterators2
+    writerIterators1
       .get(writer.id)
       .map((iterator) => iterator.value)
       .getOrElse(writer),
@@ -297,61 +308,81 @@ function nextDynamicPermGroupIterator(
   const streamIterators1 = iterators.streamIterators.mapValues(
     (streamIterator) => {
       return streamIterator
-        .next()
+        .next(until)
         .map((next) => (next.op === op ? next.value : streamIterator))
         .getOrElse(streamIterator);
+    },
+  );
+  const opHeads = mapMapValueOption(
+    iterators.streamIterators,
+    (streamId, streamIterator) => {
+      return streamIterator
+        .next(until)
+        .flatMap((next) =>
+          next.op === op
+            ? Option.of(next.value.value)
+            : Option.none<OpStream>(),
+        )
+        .orElse(Option.none<OpStream>());
     },
   );
   const group1 = group.copy({
     admin: adminIterator1.value,
     writers: writers1,
+    heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
   });
 
-  const group2 = match({
+  const {group: group2, writerIterators: writerIterators2} = match({
     op,
-    opHeads: mapMapValueOption(
-      iterators.streamIterators,
-      (streamId, streamIterator) => {
-        return streamIterator
-          .next()
-          .flatMap((next) =>
-            next.op === op
-              ? Option.of(next.value.value)
-              : Option.none<OpStream>(),
-          )
-          .orElse(Option.none<OpStream>());
-      },
-    ),
+    opHeads: opHeads,
   })
     .with(
       {op: {type: "add writer"}},
       ({opHeads}) => !opHeads.isEmpty(),
       ({op, opHeads}) => {
-        return group1.copy({
-          writers: group1.writers.put(
-            op.writerId,
-            writerIterators2.get(op.writerId).getOrThrow().value,
-          ),
-          heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
-        });
+        const writerIterator = advanceIteratorUntil(
+          buildPermGroup(universe, op.writerId),
+          Timestamp.create(value(op.timestamp) - 1),
+        );
+        if (writerIterator.value.writerGroups().contains(group.id))
+          return {group: group1, writerIterators: writerIterators1};
+
+        const writerIterators2 = !writerIterators1.containsKey(op.writerId)
+          ? writerIterators1.put(op.writerId, writerIterator)
+          : writerIterators1;
+        return {
+          group: group1.copy({
+            writers: group1.writers.put(
+              op.writerId,
+              writerIterators2.get(op.writerId).getOrThrow().value,
+            ),
+          }),
+          writerIterators: writerIterators2,
+        };
       },
     )
     .with(
       {op: {type: "remove writer"}},
       ({opHeads}) => !opHeads.isEmpty(),
       ({op, opHeads}) => {
-        return group1.copy({
-          writers: group1.writers.remove(op.writerId),
-          heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
-        });
+        return {
+          group: group1.copy({
+            writers: group1.writers.remove(op.writerId),
+          }),
+          writerIterators: writerIterators1,
+        };
       },
     )
     .with(
       {},
       ({opHeads}) => !opHeads.isEmpty(),
-      () => throwError<DynamicPermGroup>("Op not handled"),
+      () =>
+        throwError<{
+          group: DynamicPermGroup;
+          writerIterators: typeof writerIterators1;
+        }>("Op not handled"),
     )
-    .with(P._, () => group1)
+    .with(P._, () => ({group: group1, writerIterators: writerIterators1}))
     .exhaustive();
 
   const openDeviceIds = (group: PermGroup): HashSet<DeviceId> =>
@@ -414,7 +445,8 @@ function nextDynamicPermGroupIterator(
     op,
     value: {
       value: group3,
-      next: () => nextDynamicPermGroupIterator(universe, group3, iterators1),
+      next: () =>
+        nextDynamicPermGroupIterator(universe, until, group3, iterators1),
       needsReset,
       reset: () => {
         return buildDynamicPermGroupInternal(universe, group3.id, {
@@ -437,23 +469,28 @@ function nextDynamicPermGroupIterator(
 
 function streamIteratorForStream(
   stream: OpStream,
-  next: () => Option<PersistentIteratorOp<OpStream, Op>> = () => Option.none(),
+  next: (until: Timestamp) => Option<PersistentIteratorOp<OpStream, Op>> = () =>
+    Option.none(),
 ): PersistentIteratorValue<OpStream, Op> {
   return stream
     .head()
     .map((head) =>
-      streamIteratorForStream(stream.tail().getOrElse(LinkedList.of()), () =>
-        Option.of({
-          op: head,
-          value: {
-            value: stream,
-            next,
-            needsReset: false,
-            reset: () => {
-              throw new AssertFailed("not implemented");
-            },
-          },
-        }),
+      streamIteratorForStream(
+        stream.tail().getOrElse(LinkedList.of()),
+        (until: Timestamp) =>
+          until > head.timestamp
+            ? Option.of({
+                op: head,
+                value: {
+                  value: stream,
+                  next,
+                  needsReset: false,
+                  reset: () => {
+                    throw new AssertFailed("not implemented");
+                  },
+                },
+              })
+            : Option.none(),
       ),
     )
     .getOrElse({
@@ -471,7 +508,17 @@ function streamIteratorForStream(
 
 interface PersistentIteratorValue<Value, Op extends {timestamp: Timestamp}> {
   value: Value;
-  next: () => Option<PersistentIteratorOp<Value, Op>>;
+  // Returns the next value of the iterator, if there is one and its op comes
+  // before `until`.
+  //
+  // We need to check ops against `until` in here, rather than in the caller, to
+  // avoid infinite recursion when we encounter a cycle:
+  // - 0: Add B as a writer on A
+  // - 1: Add A as a writer on B
+  // When processing op 0 we try to build (B until 0) to check for cycles. But
+  // if that processes op 1 before rejecting it based on the timestamp then
+  // we'll build (A until 1), which will process op 0 again, etc.
+  next: (until: Timestamp) => Option<PersistentIteratorOp<Value, Op>>;
   needsReset: boolean;
   reset: () => PersistentIteratorValue<Value, Op>;
 }
@@ -494,9 +541,10 @@ export function advanceIteratorUntil<T, Op extends {timestamp: Timestamp}>(
   }>({iterator, description: "initial"});
   for (let i = 0; i < 10; i++) {
     while (true) {
-      const next = iterator.next();
+      const next = iterator.next(Timestamp.create(value(after) + 1));
       if (next.isNone()) break;
-      if (next.get().op.timestamp > after) break;
+      if (next.get().op.timestamp > after)
+        throw new AssertFailed("`.next()` ignored `until`");
       iterator = next.get().value;
     }
     if (!iterator.needsReset) return iterator;
@@ -506,11 +554,13 @@ export function advanceIteratorUntil<T, Op extends {timestamp: Timestamp}>(
   }
   throw new AssertFailed("Iterator did not stabilize");
 }
+
 function nextOp<Op extends {timestamp: Timestamp}>(
+  until: Timestamp,
   iterators: Seq<PersistentIteratorValue<unknown, Op>>,
 ): Option<Op> {
   const ops = iterators.mapOption((iterator) =>
-    iterator.next().map((next) => next.op),
+    iterator.next(until).map((next) => next.op),
   );
   const opOption = ops.reduce(
     (leftOp: Op, right: Op): Op =>

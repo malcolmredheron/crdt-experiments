@@ -59,9 +59,9 @@ describe("Tree", () => {
 
   const deviceId = DeviceId.create("device");
   const adminId = new StaticPermGroupId({writers: HashSet.of(deviceId)});
-  const admin = new StaticPermGroup({id: adminId, writers: adminId.writers});
   const rootId = new DynamicPermGroupId({admin: adminId, rest: undefined});
   const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
+  const admin = new StaticPermGroup({id: adminId, writers: adminId.writers});
 
   describe("desiredStreams", () => {
     it("writeable by admins but not writers", () => {
@@ -376,22 +376,24 @@ describe("Tree", () => {
           opsList(addWriter(rootId, parentBId)),
         ]),
       });
-      const universe = HashMap.of([
-        new DynamicPermGroupStreamId({
-          permGroupId: adminId,
-          deviceId: deviceId,
-        }),
-        opsList(
-          // Add otherDeviceId as a writer.
-          addWriter(adminId, parentAId),
-          // Remove deviceAId as a writer.
-          removeWriter(adminId, parentAId, {
-            devices: HashMap.of([deviceAId, deviceA]),
-          }),
-        ),
-      ]);
       const root = advanceIteratorUntil(
-        buildDynamicPermGroup(universe, rootId),
+        buildDynamicPermGroup(
+          HashMap.of([
+            new DynamicPermGroupStreamId({
+              permGroupId: adminId,
+              deviceId: deviceId,
+            }),
+            opsList(
+              // Add otherDeviceId as a writer.
+              addWriter(adminId, parentAId),
+              // Remove deviceAId as a writer.
+              removeWriter(adminId, parentAId, {
+                devices: HashMap.of([deviceAId, deviceA]),
+              }),
+            ),
+          ]),
+          rootId,
+        ),
         maxTimestamp,
       ).value;
       // Only the stream for the removed writer gets closed.
@@ -400,6 +402,46 @@ describe("Tree", () => {
       // remove-writer op. Seeing it here shows that we correctly applied the
       // closed stream.
       expectPreludeEqual(root.writers.keySet(), HashSet.of(parentBId));
+    });
+
+    it("avoids cycles", () => {
+      const otherGroup = new DynamicPermGroupId({
+        admin: adminId,
+        rest: "otherGroup",
+      });
+
+      const root = advanceIteratorUntil(
+        buildDynamicPermGroup(
+          HashMap.of(
+            [
+              new DynamicPermGroupStreamId({
+                permGroupId: rootId,
+                deviceId: deviceId,
+              }),
+              opsList(addWriter(rootId, otherGroup)),
+            ],
+            [
+              new DynamicPermGroupStreamId({
+                permGroupId: otherGroup,
+                deviceId: deviceId,
+              }),
+              opsList(addWriter(otherGroup, rootId)),
+            ],
+          ),
+          rootId,
+        ),
+        maxTimestamp,
+      ).value;
+      // The root should have otherGroup as a writer. otherGroup should not have
+      // anyone as a writer, because the attempt to create that edge camge
+      // second and was ignored.
+      expectPreludeEqual(root.writers.keySet(), HashSet.of(otherGroup));
+      expectPreludeEqual(
+        (
+          root.writers.single().getOrThrow()[1] as DynamicPermGroup
+        ).writers.keySet(),
+        HashSet.of(),
+      );
     });
   });
 });
