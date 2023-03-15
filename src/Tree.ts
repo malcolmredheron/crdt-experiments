@@ -11,11 +11,10 @@ import {
 } from "./helper/Collection";
 import {match, P} from "ts-pattern";
 import {AssertFailed} from "./helper/Assert";
-import {Seq} from "prelude-ts/dist/src/Seq";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
-export type StreamId = DynamicPermGroupStreamId;
-export type Op = AddWriter | RemoveWriter;
+export type StreamId = DynamicPermGroupStreamId | TreeStreamId;
+export type Op = DynamicPermGroupOp | TreeOp;
 export type OpStream = LinkedList<Op>;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
 export type ConcreteHeads = HashMap<StreamId, OpStream>;
@@ -110,6 +109,8 @@ export class DynamicPermGroupStreamId extends ObjectValue<{
 }>() {
   readonly type = "DynamicPermGroup";
 }
+
+type DynamicPermGroupOp = AddWriter | RemoveWriter;
 
 export type AddWriter = {
   timestamp: Timestamp;
@@ -275,11 +276,9 @@ function nextDynamicPermGroupIterator(
 ): Option<PersistentIteratorOp<DynamicPermGroup, Op>> {
   const opOption = nextOp(
     until,
-    Vector.of<PersistentIteratorValue<unknown, Op>>(
-      iterators.adminIterator,
-      ...iterators.streamIterators.valueIterable(),
-      ...iterators.writerIterators.valueIterable(),
-    ),
+    iterators.adminIterator,
+    ...iterators.streamIterators.valueIterable(),
+    ...iterators.writerIterators.valueIterable(),
   );
   if (opOption.isNone()) return Option.none();
   const op = opOption.get();
@@ -422,7 +421,7 @@ function nextDynamicPermGroupIterator(
         return group1.copy({closedDevices: closedDevices1});
       },
     )
-    .exhaustive();
+    .otherwise(({group1}) => group1);
 
   const concreteHeads = concreteHeadsForAbstractHeads(
     universe,
@@ -433,7 +432,7 @@ function nextDynamicPermGroupIterator(
     headsNeedReset ||
     adminIterator1.needsReset ||
     writerIterators2.anyMatch(
-      (nodeId, writerIterator) => writerIterator.needsReset,
+      (groupId, writerIterator) => writerIterator.needsReset,
     );
 
   const iterators1: DynamicPermGroupIterators = {
@@ -466,6 +465,245 @@ function nextDynamicPermGroupIterator(
     },
   });
 }
+
+//------------------------------------------------------------------------------
+// Tree
+
+export class TreeId extends ObjectValue<{
+  readonly permGroupId: PermGroupId;
+  readonly rest: string | undefined;
+}>() {
+  readonly type = "tree";
+}
+
+export class TreeStreamId extends ObjectValue<{
+  treeId: TreeId;
+  deviceId: DeviceId;
+}>() {
+  readonly type = "Tree";
+}
+
+type TreeOp = SetParent;
+
+export type SetParent = {
+  timestamp: Timestamp;
+  type: "set parent";
+
+  treeId: TreeId;
+  parentId: TreeId;
+};
+
+export class Tree extends ObjectValue<{
+  readonly id: TreeId;
+  // heads: ConcreteHeads;
+  permGroup: PermGroup;
+  children: HashMap<TreeId, Tree>;
+}>() {
+  // These are the heads that this tree wants included in order to build itself.
+  desiredHeads(): AbstractHeads {
+    const openStreams = mapMapOption(
+      this.permGroup.writerDevices(),
+      (deviceId, openOrDevice) => {
+        const streamId = new TreeStreamId({
+          treeId: this.id,
+          deviceId: deviceId,
+        });
+        const openOrOpStream =
+          openOrDevice === "open"
+            ? Option.of<"open">("open")
+            : openOrDevice.heads.get(streamId);
+        if (!openOrOpStream.isSome())
+          return Option.none<{key: StreamId; value: "open" | OpStream}>();
+        return Option.of({key: streamId, value: openOrOpStream.get()});
+      },
+    );
+    return openStreams;
+  }
+}
+
+type TreeIterators = {
+  readonly permGroupIterator: PersistentIteratorValue<PermGroup, Op>;
+  readonly streamIterators: HashMap<
+    StreamId,
+    PersistentIteratorValue<OpStream, Op>
+  >;
+  readonly childIterators: HashMap<TreeId, PersistentIteratorValue<Tree, Op>>;
+};
+
+export function buildTree(
+  universe: ConcreteHeads,
+  id: TreeId,
+): PersistentIteratorValue<Tree, Op> {
+  const permGroupIterator = buildPermGroup(universe, id.permGroupId);
+  const streamIterators = concreteHeadsForAbstractHeads(
+    universe,
+    new Tree({
+      id,
+      permGroup: permGroupIterator.value,
+      children: HashMap.of(),
+    }).desiredHeads(),
+  ).mapValues((stream) => streamIteratorForStream(stream));
+  return buildTreeInternal(universe, id, {
+    permGroupIterator,
+    streamIterators,
+    childIterators: HashMap.of(),
+  });
+}
+
+function buildTreeInternal(
+  universe: ConcreteHeads,
+  id: TreeId,
+  iterators: TreeIterators,
+): PersistentIteratorValue<Tree, Op> {
+  const tree = new Tree({
+    id,
+    permGroup: iterators.permGroupIterator.value,
+    children: HashMap.of(),
+  });
+  const iterator = {
+    value: tree,
+    next: (until: Timestamp) =>
+      nextTreeIterator(universe, until, tree, iterators),
+    needsReset: false,
+    reset: () => iterator,
+    _iterators: iterators,
+  };
+  return iterator;
+}
+
+function nextTreeIterator(
+  universe: ConcreteHeads,
+  until: Timestamp,
+  tree: Tree,
+  iterators: TreeIterators,
+): Option<PersistentIteratorOp<Tree, Op>> {
+  const opOption = nextOp(
+    until,
+    iterators.permGroupIterator,
+    ...iterators.streamIterators.valueIterable(),
+    ...iterators.childIterators.valueIterable(),
+  );
+  if (opOption.isNone()) return Option.none();
+  const op = opOption.get();
+
+  const permGroupIterator1 = iterators.permGroupIterator
+    .next(until)
+    .flatMap((permGroupOp) =>
+      permGroupOp.op === op
+        ? Option.of(permGroupOp.value)
+        : Option.none<typeof permGroupOp.value>(),
+    )
+    .getOrElse(iterators.permGroupIterator);
+
+  const childIterators1 = iterators.childIterators.mapValues((i) =>
+    i
+      .next(until)
+      .map((next) => (next.op === op ? next.value : i))
+      .getOrElse(i),
+  );
+  const children1 = mapValuesStable(tree.children, (child) =>
+    childIterators1
+      .get(child.id)
+      .map((iterator) => iterator.value)
+      .getOrElse(child),
+  );
+  const streamIterators1 = iterators.streamIterators.mapValues(
+    (streamIterator) => {
+      return streamIterator
+        .next(until)
+        .map((next) => (next.op === op ? next.value : streamIterator))
+        .getOrElse(streamIterator);
+    },
+  );
+  const opHeads = mapMapValueOption(
+    iterators.streamIterators,
+    (streamId, streamIterator) => {
+      return streamIterator
+        .next(until)
+        .flatMap((next) =>
+          next.op === op
+            ? Option.of(next.value.value)
+            : Option.none<OpStream>(),
+        )
+        .orElse(Option.none<OpStream>());
+    },
+  );
+  const tree1 = tree.copy({
+    permGroup: permGroupIterator1.value,
+    children: children1,
+  });
+
+  const {tree: tree2, childIterators: childIterators2} = match({
+    op,
+    opHeads: opHeads,
+  })
+    .with(
+      {op: {type: "set parent"}},
+      ({opHeads}) => !opHeads.isEmpty(),
+      ({op, opHeads}) => {
+        if (childIterators1.containsKey(op.treeId))
+          return {tree: tree1, childIterators: childIterators1};
+        const childIterator = buildTree(universe, op.treeId);
+        return {
+          tree: tree1.copy({
+            children: tree1.children.put(op.treeId, childIterator.value),
+          }),
+          childIterators: childIterators1.put(op.treeId, childIterator),
+        };
+      },
+    )
+    .with(
+      {},
+      ({opHeads}) => !opHeads.isEmpty(),
+      () =>
+        throwError<{tree: Tree; childIterators: typeof childIterators1}>(
+          "Op not handled",
+        ),
+    )
+    .with(P._, () => ({tree: tree1, childIterators: childIterators1}))
+    .exhaustive();
+
+  const concreteHeads = concreteHeadsForAbstractHeads(
+    universe,
+    tree2.desiredHeads(),
+  );
+  const headsNeedReset = false; //!headsEqual(concreteHeads, tree2.heads);
+  const needsReset =
+    headsNeedReset ||
+    permGroupIterator1.needsReset ||
+    childIterators2.anyMatch((id, childIterator) => childIterator.needsReset);
+
+  const iterators1: TreeIterators = {
+    permGroupIterator: permGroupIterator1,
+    streamIterators: streamIterators1,
+    childIterators: childIterators2,
+  };
+  return Option.of({
+    op,
+    value: {
+      value: tree2,
+      next: () => nextTreeIterator(universe, until, tree2, iterators1),
+      needsReset,
+      reset: () =>
+        buildTreeInternal(universe, tree2.id, {
+          permGroupIterator: permGroupIterator1.reset(),
+          streamIterators: concreteHeads.mapValues((stream) =>
+            streamIteratorForStream(stream),
+          ),
+          childIterators: iterators1.childIterators.mapValues((iterator) =>
+            iterator.reset(),
+          ),
+        }),
+      _iterators: iterators,
+      _iterators1: iterators1,
+      _headsNeedReset: headsNeedReset,
+      _concreteHeads: concreteHeads,
+    },
+  });
+}
+
+//------------------------------------------------------------------------------
+// Iterators and generic ops
 
 function streamIteratorForStream(
   stream: OpStream,
@@ -502,9 +740,6 @@ function streamIteratorForStream(
       },
     });
 }
-
-//------------------------------------------------------------------------------
-// Iterators and generic ops
 
 interface PersistentIteratorValue<Value, Op extends {timestamp: Timestamp}> {
   value: Value;
@@ -558,9 +793,9 @@ export function advanceIteratorUntil<T, Op extends {timestamp: Timestamp}>(
 
 function nextOp<Op extends {timestamp: Timestamp}>(
   until: Timestamp,
-  iterators: Seq<PersistentIteratorValue<unknown, Op>>,
+  ...iterators: Array<PersistentIteratorValue<unknown, Op>>
 ): Option<Op> {
-  const ops = iterators.mapOption((iterator) =>
+  const ops = Vector.ofIterable(iterators).mapOption((iterator) =>
     iterator.next(until).map((next) => next.op),
   );
   const opOption = ops.reduce(

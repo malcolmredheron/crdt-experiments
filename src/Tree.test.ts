@@ -2,6 +2,7 @@ import {
   AddWriter,
   advanceIteratorUntil,
   buildDynamicPermGroup,
+  buildTree,
   Device,
   DeviceId,
   DynamicPermGroup,
@@ -14,6 +15,8 @@ import {
   StaticPermGroup,
   StaticPermGroupId,
   StreamId,
+  TreeId,
+  TreeStreamId,
 } from "./Tree";
 import {HashMap, HashSet, LinkedList} from "prelude-ts";
 import {Timestamp} from "./helper/Timestamp";
@@ -22,13 +25,13 @@ import {CountingClock} from "./helper/Clock.testing";
 import {Clock} from "./helper/Clock";
 import {headsEqual} from "./StreamHeads";
 
-describe("Tree", () => {
+function opsList(...ops: Op[]): OpStream {
+  return LinkedList.ofIterable(ops).reverse() as OpStream;
+}
+
+describe("DynamicPermGroup", () => {
   let clock: Clock;
   beforeEach(() => (clock = new CountingClock()));
-
-  function opsList(...ops: Op[]): OpStream {
-    return LinkedList.ofIterable(ops).reverse() as OpStream;
-  }
 
   function addWriter(
     groupId: DynamicPermGroupId,
@@ -443,5 +446,43 @@ describe("Tree", () => {
         HashSet.of(),
       );
     });
+  });
+});
+
+describe("Tree", () => {
+  let clock: Clock;
+  beforeEach(() => (clock = new CountingClock()));
+
+  const deviceId = DeviceId.create("device");
+  const adminId = new StaticPermGroupId({writers: HashSet.of(deviceId)});
+  const rootId = new TreeId({permGroupId: adminId, rest: "root"});
+  const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
+
+  it("creates a single-node tree", () => {
+    const root = advanceIteratorUntil(
+      buildTree(HashMap.of(), rootId),
+      maxTimestamp,
+    ).value;
+    expectPreludeEqual(root.children, HashMap.of());
+  });
+
+  it("adds a child", () => {
+    const childId = new TreeId({permGroupId: adminId, rest: "child"});
+    const root = advanceIteratorUntil(
+      buildTree(
+        HashMap.of([
+          new TreeStreamId({treeId: rootId, deviceId}),
+          opsList({
+            type: "set parent",
+            timestamp: clock.now(),
+            parentId: rootId,
+            treeId: childId,
+          }),
+        ]),
+        rootId,
+      ),
+      maxTimestamp,
+    ).value;
+    expectPreludeEqual(root.children.keySet(), HashSet.of(childId));
   });
 });
