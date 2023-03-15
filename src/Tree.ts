@@ -489,7 +489,7 @@ export type SetParent = {
   timestamp: Timestamp;
   type: "set parent";
 
-  treeId: TreeId;
+  childId: TreeId;
   parentId: TreeId;
 };
 
@@ -641,14 +641,14 @@ function nextTreeIterator(
       {op: {type: "set parent"}},
       ({opHeads}) => !opHeads.isEmpty(),
       ({op, opHeads}) => {
-        if (childIterators1.containsKey(op.treeId))
+        if (childIterators1.containsKey(op.childId))
           return {tree: tree1, childIterators: childIterators1};
-        const childIterator = buildTree(universe, op.treeId);
+        const childIterator = buildTree(universe, op.childId);
         return {
           tree: tree1.copy({
-            children: tree1.children.put(op.treeId, childIterator.value),
+            children: tree1.children.put(op.childId, childIterator.value),
           }),
-          childIterators: childIterators1.put(op.treeId, childIterator),
+          childIterators: childIterators1.put(op.childId, childIterator),
         };
       },
     )

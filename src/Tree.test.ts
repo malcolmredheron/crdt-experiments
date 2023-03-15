@@ -476,7 +476,7 @@ describe("Tree", () => {
             type: "set parent",
             timestamp: clock.now(),
             parentId: rootId,
-            treeId: childId,
+            childId: childId,
           }),
         ]),
         rootId,
