@@ -16,7 +16,8 @@ import {
   StaticPermGroupId,
   StreamId,
   TreeId,
-  TreeStreamId,
+  TreeParentStreamId,
+  TreeValueStreamId,
 } from "./Tree";
 import {HashMap, HashSet, LinkedList} from "prelude-ts";
 import {Timestamp} from "./helper/Timestamp";
@@ -460,7 +461,7 @@ describe("Tree", () => {
 
   it("creates a single-node tree", () => {
     const root = advanceIteratorUntil(
-      buildTree(HashMap.of(), rootId),
+      buildTree(HashMap.of(), rootId, adminId),
       maxTimestamp,
     ).value;
     expectPreludeEqual(root.children, HashMap.of());
@@ -468,18 +469,30 @@ describe("Tree", () => {
 
   it("adds a child", () => {
     const childId = new TreeId({permGroupId: adminId, rest: "child"});
+    const op = {
+      type: "set parent",
+      timestamp: clock.now(),
+      parentId: rootId,
+      childId: childId,
+    } as const;
     const root = advanceIteratorUntil(
       buildTree(
-        HashMap.of([
-          new TreeStreamId({treeId: rootId, deviceId}),
-          opsList({
-            type: "set parent",
-            timestamp: clock.now(),
-            parentId: rootId,
-            childId: childId,
-          }),
-        ]),
+        HashMap.of(
+          [
+            new TreeValueStreamId({treeId: rootId, deviceId}) as StreamId,
+            opsList(op),
+          ],
+          [
+            new TreeParentStreamId({
+              treeId: childId,
+              parentPermGroupId: adminId,
+              deviceId,
+            }) as StreamId,
+            opsList(op),
+          ],
+        ),
         rootId,
+        adminId,
       ),
       maxTimestamp,
     ).value;

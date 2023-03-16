@@ -1,5 +1,5 @@
 import {ObjectValue} from "./helper/ObjectValue";
-import {TypedValue} from "./helper/TypedValue";
+import {TypedValue, value} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
 import {HashMap, HashSet, LinkedList, Option, Vector} from "prelude-ts";
 import {concreteHeadsForAbstractHeads, headsEqual} from "./StreamHeads";
@@ -13,7 +13,10 @@ import {match, P} from "ts-pattern";
 import {AssertFailed} from "./helper/Assert";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
-export type StreamId = DynamicPermGroupStreamId | TreeStreamId;
+export type StreamId =
+  | DynamicPermGroupStreamId
+  | TreeValueStreamId
+  | TreeParentStreamId;
 export type Op = DynamicPermGroupOp | TreeOp;
 export type OpStream = LinkedList<Op>;
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
@@ -476,11 +479,19 @@ export class TreeId extends ObjectValue<{
   readonly type = "tree";
 }
 
-export class TreeStreamId extends ObjectValue<{
+export class TreeValueStreamId extends ObjectValue<{
   treeId: TreeId;
   deviceId: DeviceId;
 }>() {
-  readonly type = "Tree";
+  readonly type = "tree value";
+}
+
+export class TreeParentStreamId extends ObjectValue<{
+  treeId: TreeId;
+  parentPermGroupId: PermGroupId;
+  deviceId: DeviceId;
+}>() {
+  readonly type = "tree parent";
 }
 
 type TreeOp = SetParent;
@@ -495,16 +506,17 @@ export type SetParent = {
 
 export class Tree extends ObjectValue<{
   readonly id: TreeId;
-  // heads: ConcreteHeads;
+  readonly parentPermGroupId: PermGroupId;
   permGroup: PermGroup;
+  parentId: Option<TreeId>; // We don't know this until we get the SetParent op
   children: HashMap<TreeId, Tree>;
 }>() {
   // These are the heads that this tree wants included in order to build itself.
   desiredHeads(): AbstractHeads {
-    const openStreams = mapMapOption(
+    const valueStreams = mapMapOption(
       this.permGroup.writerDevices(),
       (deviceId, openOrDevice) => {
-        const streamId = new TreeStreamId({
+        const streamId = new TreeValueStreamId({
           treeId: this.id,
           deviceId: deviceId,
         });
@@ -517,7 +529,29 @@ export class Tree extends ObjectValue<{
         return Option.of({key: streamId, value: openOrOpStream.get()});
       },
     );
-    return openStreams;
+
+    const parentStreams = mapMapOption(
+      // TODO: this should use parentPermGroup istead of our own perm group.
+      this.permGroup.writerDevices(),
+      (deviceId, openOrDevice) => {
+        const streamId = new TreeParentStreamId({
+          treeId: this.id,
+          parentPermGroupId: this.parentPermGroupId,
+          deviceId: deviceId,
+        });
+        const openOrOpStream =
+          openOrDevice === "open"
+            ? Option.of<"open">("open")
+            : openOrDevice.heads.get(streamId);
+        if (!openOrOpStream.isSome())
+          return Option.none<{key: StreamId; value: "open" | OpStream}>();
+        return Option.of({key: streamId, value: openOrOpStream.get()});
+      },
+    );
+
+    return valueStreams.mergeWith(parentStreams, () =>
+      throwError("Stream ids should not collide"),
+    );
   }
 }
 
@@ -533,17 +567,20 @@ type TreeIterators = {
 export function buildTree(
   universe: ConcreteHeads,
   id: TreeId,
+  parentPermGroupId: PermGroupId,
 ): PersistentIteratorValue<Tree, Op> {
   const permGroupIterator = buildPermGroup(universe, id.permGroupId);
   const streamIterators = concreteHeadsForAbstractHeads(
     universe,
     new Tree({
       id,
+      parentPermGroupId,
       permGroup: permGroupIterator.value,
+      parentId: Option.none(),
       children: HashMap.of(),
     }).desiredHeads(),
   ).mapValues((stream) => streamIteratorForStream(stream));
-  return buildTreeInternal(universe, id, {
+  return buildTreeInternal(universe, id, parentPermGroupId, {
     permGroupIterator,
     streamIterators,
     childIterators: HashMap.of(),
@@ -553,11 +590,14 @@ export function buildTree(
 function buildTreeInternal(
   universe: ConcreteHeads,
   id: TreeId,
+  parentPermGroupId: PermGroupId,
   iterators: TreeIterators,
 ): PersistentIteratorValue<Tree, Op> {
   const tree = new Tree({
     id,
+    parentPermGroupId,
     permGroup: iterators.permGroupIterator.value,
+    parentId: Option.none(),
     children: HashMap.of(),
   });
   const iterator = {
@@ -639,16 +679,34 @@ function nextTreeIterator(
   })
     .with(
       {op: {type: "set parent"}},
-      ({opHeads}) => !opHeads.isEmpty(),
+      ({op, opHeads}) => op.parentId.equals(tree.id) && !opHeads.isEmpty(),
       ({op, opHeads}) => {
         if (childIterators1.containsKey(op.childId))
           return {tree: tree1, childIterators: childIterators1};
-        const childIterator = buildTree(universe, op.childId);
+        const childIterator = advanceIteratorUntil(
+          buildTree(universe, op.childId, tree.id.permGroupId),
+          Timestamp.create(value(op.timestamp) + 1),
+        );
+        const childParentId = childIterator.value.parentId;
+        if (childParentId.isNone() || !childParentId.get().equals(tree.id))
+          return {tree: tree1, childIterators: childIterators1};
         return {
           tree: tree1.copy({
             children: tree1.children.put(op.childId, childIterator.value),
           }),
           childIterators: childIterators1.put(op.childId, childIterator),
+        };
+      },
+    )
+    .with(
+      {op: {type: "set parent"}},
+      ({op, opHeads}) => op.childId.equals(tree.id) && !opHeads.isEmpty(),
+      ({op, opHeads}) => {
+        return {
+          tree: tree1.copy({
+            parentId: Option.of(op.parentId),
+          }),
+          childIterators: childIterators1,
         };
       },
     )
@@ -685,7 +743,7 @@ function nextTreeIterator(
       next: () => nextTreeIterator(universe, until, tree2, iterators1),
       needsReset,
       reset: () =>
-        buildTreeInternal(universe, tree2.id, {
+        buildTreeInternal(universe, tree2.id, tree2.parentPermGroupId, {
           permGroupIterator: permGroupIterator1.reset(),
           streamIterators: concreteHeads.mapValues((stream) =>
             streamIteratorForStream(stream),
