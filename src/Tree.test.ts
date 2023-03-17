@@ -467,7 +467,59 @@ describe("Tree", () => {
     expectPreludeEqual(root.children, HashMap.of());
   });
 
-  it("adds a child", () => {
+  it("sets a parent", () => {
+    const otherId = new TreeId({permGroupId: adminId, rest: "other"});
+    const op = {
+      type: "set parent",
+      timestamp: clock.now(),
+      parentId: otherId,
+      childId: rootId,
+    } as const;
+    const root = advanceIteratorBeyond(
+      buildTree(
+        HashMap.of([
+          new TreeParentStreamId({
+            treeId: rootId,
+            parentPermGroupId: adminId,
+            deviceId,
+          }) as StreamId,
+          opsList(op),
+        ]),
+        rootId,
+        adminId,
+      ),
+      maxTimestamp,
+    ).value;
+    expectPreludeEqual(root.parentId.getOrThrow(), otherId);
+  });
+
+  it("does not add a child if the child disagrees", () => {
+    const childId = new TreeId({permGroupId: adminId, rest: "child"});
+    const op = {
+      type: "set parent",
+      timestamp: clock.now(),
+      parentId: rootId,
+      childId: childId,
+    } as const;
+    const root = advanceIteratorBeyond(
+      buildTree(
+        HashMap.of([
+          new TreeParentStreamId({
+            treeId: childId,
+            parentPermGroupId: adminId,
+            deviceId,
+          }) as StreamId,
+          opsList(op),
+        ]),
+        rootId,
+        adminId,
+      ),
+      maxTimestamp,
+    ).value;
+    expectPreludeEqual(root.children.keySet(), HashSet.of());
+  });
+
+  it("adds a child if the child agrees", () => {
     const childId = new TreeId({permGroupId: adminId, rest: "child"});
     const op = {
       type: "set parent",
