@@ -342,9 +342,9 @@ function nextDynamicPermGroupIterator(
       {op: {type: "add writer"}},
       ({opHeads}) => !opHeads.isEmpty(),
       ({op, opHeads}) => {
-        const writerIterator = advanceIteratorUntil(
+        const writerIterator = advanceIteratorBeyond(
           buildPermGroup(universe, op.writerId),
-          op.timestamp,
+          Timestamp.create(value(op.timestamp) - 1),
         );
         if (writerIterator.value.writerGroups().contains(group.id))
           return {group: group1, writerIterators: writerIterators1};
@@ -683,9 +683,9 @@ function nextTreeIterator(
       ({op, opHeads}) => {
         if (childIterators1.containsKey(op.childId))
           return {tree: tree1, childIterators: childIterators1};
-        const childIterator = advanceIteratorUntil(
+        const childIterator = advanceIteratorBeyond(
           buildTree(universe, op.childId, tree.id.permGroupId),
-          Timestamp.create(value(op.timestamp) + 1),
+          op.timestamp,
         );
         const childParentId = childIterator.value.parentId;
         if (childParentId.isNone() || !childParentId.get().equals(tree.id))
@@ -774,7 +774,7 @@ function streamIteratorForStream(
       streamIteratorForStream(
         stream.tail().getOrElse(LinkedList.of()),
         (until: Timestamp) =>
-          until > head.timestamp
+          until >= head.timestamp
             ? Option.of({
                 op: head,
                 value: {
@@ -822,8 +822,8 @@ interface PersistentIteratorOp<Value, Op extends {timestamp: Timestamp}> {
 }
 
 // Advances the iterator until there are no more ops or the next op is greater
-// than or equal to `until`.
-export function advanceIteratorUntil<T, Op extends {timestamp: Timestamp}>(
+// than `until`.
+export function advanceIteratorBeyond<T, Op extends {timestamp: Timestamp}>(
   iterator: PersistentIteratorValue<T, Op>,
   until: Timestamp,
 ): PersistentIteratorValue<T, Op> {
@@ -837,7 +837,7 @@ export function advanceIteratorUntil<T, Op extends {timestamp: Timestamp}>(
     while (true) {
       const next = iterator.next(until);
       if (next.isNone()) break;
-      if (next.get().op.timestamp >= until)
+      if (next.get().op.timestamp > until)
         throw new AssertFailed("`.next()` ignored `until`");
       iterator = next.get().value;
     }

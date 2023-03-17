@@ -1,6 +1,6 @@
 import {
   AddWriter,
-  advanceIteratorUntil,
+  advanceIteratorBeyond,
   buildDynamicPermGroup,
   buildTree,
   Device,
@@ -178,7 +178,7 @@ describe("DynamicPermGroup", () => {
         }),
         opsList(op),
       ]);
-      const root = advanceIteratorUntil(
+      const root = advanceIteratorBeyond(
         buildDynamicPermGroup(universe, rootId),
         maxTimestamp,
       ).value;
@@ -200,9 +200,9 @@ describe("DynamicPermGroup", () => {
         opsList(op),
       ]);
       expectIdentical(op.timestamp, Timestamp.create(0));
-      const root = advanceIteratorUntil(
+      const root = advanceIteratorBeyond(
         buildDynamicPermGroup(universe, rootId),
-        Timestamp.create(0),
+        Timestamp.create(-1),
       ).value;
       expectPreludeEqual(root.writers, HashMap.of());
     });
@@ -232,7 +232,7 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(rootId, parentId)),
         ],
       );
-      const root = advanceIteratorUntil(
+      const root = advanceIteratorBeyond(
         buildDynamicPermGroup(universe, rootId),
         maxTimestamp,
       ).value;
@@ -278,7 +278,7 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(parentId, grandparentId)),
         ],
       );
-      const root = advanceIteratorUntil(
+      const root = advanceIteratorBeyond(
         buildDynamicPermGroup(universe, rootId),
         maxTimestamp,
       ).value;
@@ -331,7 +331,7 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(rootId, parentAId)),
         ],
       );
-      const iterator = advanceIteratorUntil(
+      const iterator = advanceIteratorBeyond(
         buildDynamicPermGroup(universe, childId),
         maxTimestamp,
       );
@@ -380,7 +380,7 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(rootId, parentBId)),
         ]),
       });
-      const root = advanceIteratorUntil(
+      const root = advanceIteratorBeyond(
         buildDynamicPermGroup(
           HashMap.of([
             new DynamicPermGroupStreamId({
@@ -414,7 +414,7 @@ describe("DynamicPermGroup", () => {
         rest: "otherGroup",
       });
 
-      const root = advanceIteratorUntil(
+      const root = advanceIteratorBeyond(
         buildDynamicPermGroup(
           HashMap.of(
             [
@@ -460,7 +460,7 @@ describe("Tree", () => {
   const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
 
   it("creates a single-node tree", () => {
-    const root = advanceIteratorUntil(
+    const root = advanceIteratorBeyond(
       buildTree(HashMap.of(), rootId, adminId),
       maxTimestamp,
     ).value;
@@ -475,7 +475,7 @@ describe("Tree", () => {
       parentId: rootId,
       childId: childId,
     } as const;
-    const root = advanceIteratorUntil(
+    const root = advanceIteratorBeyond(
       buildTree(
         HashMap.of(
           [
