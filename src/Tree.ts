@@ -290,15 +290,15 @@ function nextDynamicPermGroupIterator(
     .next(until)
     .flatMap((adminOp) =>
       adminOp.op === op
-        ? Option.of(adminOp.value)
-        : Option.none<typeof adminOp.value>(),
+        ? Option.of(adminOp.value())
+        : Option.none<PersistentIteratorValue<PermGroup, Op>>(),
     )
     .getOrElse(iterators.adminIterator);
 
   const writerIterators1 = iterators.writerIterators.mapValues((i) =>
     i
       .next(until)
-      .map((next) => (next.op === op ? next.value : i))
+      .map((next) => (next.op === op ? next.value() : i))
       .getOrElse(i),
   );
   const writers1 = mapValuesStable(group.writers, (writer) =>
@@ -311,7 +311,7 @@ function nextDynamicPermGroupIterator(
     (streamIterator) => {
       return streamIterator
         .next(until)
-        .map((next) => (next.op === op ? next.value : streamIterator))
+        .map((next) => (next.op === op ? next.value() : streamIterator))
         .getOrElse(streamIterator);
     },
   );
@@ -322,7 +322,7 @@ function nextDynamicPermGroupIterator(
         .next(until)
         .flatMap((next) =>
           next.op === op
-            ? Option.of(next.value.value)
+            ? Option.of(next.value().value)
             : Option.none<OpStream>(),
         )
         .orElse(Option.none<OpStream>());
@@ -445,7 +445,7 @@ function nextDynamicPermGroupIterator(
   };
   return Option.of({
     op,
-    value: {
+    value: () => ({
       value: group3,
       next: () =>
         nextDynamicPermGroupIterator(universe, until, group3, iterators1),
@@ -465,7 +465,7 @@ function nextDynamicPermGroupIterator(
       _iterators1: iterators1,
       _headsNeedReset: headsNeedReset,
       _concreteHeads: concreteHeads,
-    },
+    }),
   });
 }
 
@@ -630,15 +630,15 @@ function nextTreeIterator(
     .next(until)
     .flatMap((permGroupOp) =>
       permGroupOp.op === op
-        ? Option.of(permGroupOp.value)
-        : Option.none<typeof permGroupOp.value>(),
+        ? Option.of(permGroupOp.value())
+        : Option.none<PersistentIteratorValue<PermGroup, Op>>(),
     )
     .getOrElse(iterators.permGroupIterator);
 
   const childIterators1 = iterators.childIterators.mapValues((i) =>
     i
       .next(until)
-      .map((next) => (next.op === op ? next.value : i))
+      .map((next) => (next.op === op ? next.value() : i))
       .getOrElse(i),
   );
   const children1 = mapValuesStable(tree.children, (child) =>
@@ -651,7 +651,7 @@ function nextTreeIterator(
     (streamIterator) => {
       return streamIterator
         .next(until)
-        .map((next) => (next.op === op ? next.value : streamIterator))
+        .map((next) => (next.op === op ? next.value() : streamIterator))
         .getOrElse(streamIterator);
     },
   );
@@ -662,7 +662,7 @@ function nextTreeIterator(
         .next(until)
         .flatMap((next) =>
           next.op === op
-            ? Option.of(next.value.value)
+            ? Option.of(next.value().value)
             : Option.none<OpStream>(),
         )
         .orElse(Option.none<OpStream>());
@@ -738,7 +738,7 @@ function nextTreeIterator(
   };
   return Option.of({
     op,
-    value: {
+    value: () => ({
       value: tree2,
       next: () => nextTreeIterator(universe, until, tree2, iterators1),
       needsReset,
@@ -756,7 +756,7 @@ function nextTreeIterator(
       _iterators1: iterators1,
       _headsNeedReset: headsNeedReset,
       _concreteHeads: concreteHeads,
-    },
+    }),
   });
 }
 
@@ -777,14 +777,14 @@ function streamIteratorForStream(
           until >= head.timestamp
             ? Option.of({
                 op: head,
-                value: {
+                value: () => ({
                   value: stream,
                   next,
                   needsReset: false,
                   reset: () => {
                     throw new AssertFailed("not implemented");
                   },
-                },
+                }),
               })
             : Option.none(),
       ),
@@ -818,7 +818,7 @@ interface PersistentIteratorValue<Value, Op extends {timestamp: Timestamp}> {
 
 interface PersistentIteratorOp<Value, Op extends {timestamp: Timestamp}> {
   op: Op;
-  value: PersistentIteratorValue<Value, Op>;
+  value: () => PersistentIteratorValue<Value, Op>;
 }
 
 // Advances the iterator until there are no more ops or the next op is greater
@@ -839,7 +839,7 @@ export function advanceIteratorBeyond<T, Op extends {timestamp: Timestamp}>(
       if (next.isNone()) break;
       if (next.get().op.timestamp > until)
         throw new AssertFailed("`.next()` ignored `until`");
-      iterator = next.get().value;
+      iterator = next.get().value();
     }
     if (!iterator.needsReset) return iterator;
     iterators = iterators.prepend({iterator, description: "before reset"});
