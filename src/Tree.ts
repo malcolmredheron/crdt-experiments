@@ -717,44 +717,50 @@ function nextTreeIterator(
         .with(P._, () => ({tree: tree1, childIterators: childIterators1}))
         .exhaustive();
 
-      const concreteHeads = concreteHeadsForAbstractHeads(
-        universe,
-        tree2.desiredHeads(),
-      );
-      const headsNeedReset = false; //!headsEqual(concreteHeads, tree2.heads);
-      const needsReset =
-        headsNeedReset ||
-        permGroupIterator1.needsReset ||
-        childIterators2.anyMatch(
-          (id, childIterator) => childIterator.needsReset,
-        );
-
-      const iterators1: TreeIterators = {
+      return treeIterator(universe, tree2, {
         permGroupIterator: permGroupIterator1,
         streamIterators: streamIterators1,
         childIterators: childIterators2,
-      };
-      return {
-        value: tree2,
-        next: nextTreeIterator(universe, tree2, iterators1),
-        needsReset,
-        reset: () =>
-          buildTreeInternal(universe, tree2.id, tree2.parentPermGroupId, {
-            permGroupIterator: permGroupIterator1.reset(),
-            streamIterators: concreteHeads.mapValues((stream) =>
-              streamIteratorForStream(stream),
-            ),
-            childIterators: iterators1.childIterators.mapValues((iterator) =>
-              iterator.reset(),
-            ),
-          }),
-        _iterators: iterators,
-        _iterators1: iterators1,
-        _headsNeedReset: headsNeedReset,
-        _concreteHeads: concreteHeads,
-      };
+      });
     },
   });
+}
+
+function treeIterator(
+  universe: ConcreteHeads,
+  tree: Tree,
+  iterators: TreeIterators,
+): PersistentIteratorValue<Tree, Op> {
+  const concreteHeads = concreteHeadsForAbstractHeads(
+    universe,
+    tree.desiredHeads(),
+  );
+  const headsNeedReset = false; //!headsEqual(concreteHeads, tree2.heads);
+  const needsReset =
+    headsNeedReset ||
+    iterators.permGroupIterator.needsReset ||
+    iterators.childIterators.anyMatch(
+      (id, childIterator) => childIterator.needsReset,
+    );
+  return {
+    value: tree,
+    next: nextTreeIterator(universe, tree, iterators),
+    needsReset,
+    reset: () =>
+      buildTreeInternal(universe, tree.id, tree.parentPermGroupId, {
+        permGroupIterator: iterators.permGroupIterator.reset(),
+        streamIterators: concreteHeads.mapValues((stream) =>
+          streamIteratorForStream(stream),
+        ),
+        childIterators: iterators.childIterators.mapValues((iterator) =>
+          iterator.reset(),
+        ),
+      }),
+    // _iterators: iterators,
+    // _iterators1: iterators1,
+    // _headsNeedReset: headsNeedReset,
+    // _concreteHeads: concreteHeads,
+  };
 }
 
 //------------------------------------------------------------------------------
