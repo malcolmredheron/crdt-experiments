@@ -548,6 +548,13 @@ export class Tree extends ObjectValue<{
       throwError("Stream ids should not collide"),
     );
   }
+
+  containsId(id: TreeId): boolean {
+    if (this.id.equals(id)) return true;
+    return Vector.ofIterable(this.children.valueIterable()).anyMatch((tree) =>
+      tree.containsId(id),
+    );
+  }
 }
 
 type TreeIterators = {
