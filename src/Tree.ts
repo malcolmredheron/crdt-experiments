@@ -830,11 +830,20 @@ export function advanceIteratorBeyond<T, Op extends {timestamp: Timestamp}>(
     description: string;
   }>({iterator, description: "initial"});
   for (let i = 0; i < 10; i++) {
+    let lastOp = Option.none<Op>();
     while (true) {
       const next = iterator.next;
       if (next.isNone()) break;
-      if (next.get().op.timestamp > until) break;
-      iterator = next.get().value();
+      const nextIteratorOp = next.get();
+      if (
+        lastOp.isSome() &&
+        lastOp.get().timestamp >= nextIteratorOp.op.timestamp
+      ) {
+        throw new AssertFailed("Timestamp failed to progress");
+      }
+      if (nextIteratorOp.op.timestamp > until) break;
+      iterator = nextIteratorOp.value();
+      lastOp = Option.of(nextIteratorOp.op);
     }
     if (!iterator.needsReset) return iterator;
     iterators = iterators.prepend({iterator, description: "before reset"});
