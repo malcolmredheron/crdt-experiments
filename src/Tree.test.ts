@@ -551,54 +551,58 @@ describe("Tree", () => {
     expectPreludeEqual(root.children.keySet(), HashSet.of(childId));
   });
 
-  // it("avoids cycles", () => {
-  //   const otherId = new TreeId({permGroupId: adminId, rest: "other"});
-  //   const otherInRoot = {
-  //     type: "set parent",
-  //     timestamp: clock.now(),
-  //     parentId: rootId,
-  //     childId: otherId,
-  //   } as const;
-  //   const rootInOther = {
-  //     type: "set parent",
-  //     timestamp: clock.now(),
-  //     parentId: otherId,
-  //     childId: rootId,
-  //   } as const;
-  //   const root = advanceIteratorBeyond(
-  //     buildTree(
-  //       HashMap.of(
-  //         [
-  //           new TreeValueStreamId({treeId: rootId, deviceId}) as StreamId,
-  //           opsList(otherInRoot),
-  //         ],
-  //         [
-  //           new TreeParentStreamId({
-  //             treeId: otherId,
-  //             parentPermGroupId: adminId,
-  //             deviceId,
-  //           }) as StreamId,
-  //           opsList(otherInRoot),
-  //         ],
-  //         [
-  //           new TreeValueStreamId({treeId: otherId, deviceId}) as StreamId,
-  //           opsList(rootInOther),
-  //         ],
-  //         [
-  //           new TreeParentStreamId({
-  //             treeId: rootId,
-  //             parentPermGroupId: adminId,
-  //             deviceId,
-  //           }) as StreamId,
-  //           opsList(rootInOther),
-  //         ],
-  //       ),
-  //       rootId,
-  //       adminId,
-  //     ),
-  //     maxTimestamp,
-  //   ).value;
-  //   expectPreludeEqual(root.children.keySet(), HashSet.of(otherId));
-  //   expectIdentical(root.parentId.isNone(), true);
-  // });
+  it("avoids cycles", () => {
+    const otherId = new TreeId({permGroupId: adminId, rest: "other"});
+    const otherInRoot = {
+      type: "set parent",
+      timestamp: clock.now(),
+      parentId: rootId,
+      childId: otherId,
+    } as const;
+    const rootInOther = {
+      type: "set parent",
+      timestamp: clock.now(),
+      parentId: otherId,
+      childId: rootId,
+    } as const;
+    const root = advanceIteratorBeyond(
+      buildTree(
+        HashMap.of(
+          [
+            new TreeValueStreamId({treeId: rootId, deviceId}) as StreamId,
+            opsList(otherInRoot),
+          ],
+          [
+            new TreeParentStreamId({
+              treeId: otherId,
+              parentPermGroupId: adminId,
+              deviceId,
+            }) as StreamId,
+            opsList(otherInRoot),
+          ],
+          [
+            new TreeValueStreamId({treeId: otherId, deviceId}) as StreamId,
+            opsList(rootInOther),
+          ],
+          [
+            new TreeParentStreamId({
+              treeId: rootId,
+              parentPermGroupId: adminId,
+              deviceId,
+            }) as StreamId,
+            opsList(rootInOther),
+          ],
+        ),
+        rootId,
+        adminId,
+      ),
+      maxTimestamp,
+    ).value;
+    expectPreludeEqual(root.children.keySet(), HashSet.of(otherId));
+    expectPreludeEqual(
+      root.children.single().getOrThrow()[1].children,
+      HashMap.of(),
+    );
+    expectIdentical(root.parentId.isNone(), true);
+  });
 });

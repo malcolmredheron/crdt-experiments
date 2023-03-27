@@ -679,18 +679,30 @@ function nextTreeIterator(
           ({op, opHeads}) => {
             if (childIterators1.containsKey(op.childId))
               return {tree: tree1, childIterators: childIterators1};
+
+            // #TreeCycles: In order to avoid infinite recursion when
+            // confronting a cycle, we must avoid computing the next value of
+            // the child iterator here in the case where there will be a cycle.
             const childIterator = advanceIteratorBeyond(
               buildTree(universe, op.childId, tree.id.permGroupId),
-              op.timestamp,
+              Timestamp.create(value(op.timestamp) - 1),
             );
-            const childParentId = childIterator.value.parentId;
+            const childIteratorNext = childIterator.next;
+            const childIterator1 =
+              childIteratorNext.isSome() &&
+              childIteratorNext.get().op === op &&
+              !childIterator.value.containsId(op.parentId)
+                ? childIteratorNext.get().value()
+                : childIterator;
+
+            const childParentId = childIterator1.value.parentId;
             if (childParentId.isNone() || !childParentId.get().equals(tree.id))
               return {tree: tree1, childIterators: childIterators1};
             return {
               tree: tree1.copy({
-                children: tree1.children.put(op.childId, childIterator.value),
+                children: tree1.children.put(op.childId, childIterator1.value),
               }),
-              childIterators: childIterators1.put(op.childId, childIterator),
+              childIterators: childIterators1.put(op.childId, childIterator1),
             };
           },
         )
@@ -698,6 +710,13 @@ function nextTreeIterator(
           {op: {type: "set parent"}},
           ({op, opHeads}) => op.childId.equals(tree.id) && !opHeads.isEmpty(),
           ({op, opHeads}) => {
+            // ##TreeCycles: This is the logical place to avoid cycles, and it's
+            // necessary. But it's not sufficient.
+            if (tree1.containsId(op.parentId))
+              return {
+                tree: tree1,
+                childIterators: childIterators1,
+              };
             return {
               tree: tree1.copy({
                 parentId: Option.of(op.parentId),
