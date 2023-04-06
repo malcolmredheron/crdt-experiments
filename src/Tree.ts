@@ -215,7 +215,6 @@ export class DynamicPermGroup
 }
 
 type DynamicPermGroupIterators = {
-  readonly adminIterator: PersistentIteratorValue<PermGroup, Op>;
   readonly streamIterators: HashMap<
     StreamId,
     PersistentIteratorValue<OpStream, Op>
@@ -230,37 +229,29 @@ export function buildDynamicPermGroup(
   universe: ConcreteHeads,
   id: DynamicPermGroupId,
 ): PersistentIteratorValue<DynamicPermGroup, Op> {
-  const adminIterator = advanceIteratorBeyond(
+  const admin = advanceIteratorBeyond(
     buildPermGroup(universe, id.admin),
     maxTimestamp,
-  );
+  ).value;
   const streamIterators = concreteHeadsForAbstractHeads(
     universe,
     new DynamicPermGroup({
       id,
       heads: HashMap.of(),
       closedDevices: HashMap.of(),
-      admin: adminIterator.value,
+      admin: admin,
       writers: HashMap.of(),
     }).desiredHeads(),
   ).mapValues((stream) => streamIteratorForStream(stream));
-  return buildDynamicPermGroupInternal(universe, id, {
-    adminIterator,
+  const iterators: DynamicPermGroupIterators = {
     streamIterators,
     writerIterators: HashMap.of(),
-  });
-}
-
-function buildDynamicPermGroupInternal(
-  universe: ConcreteHeads,
-  id: DynamicPermGroupId,
-  iterators: DynamicPermGroupIterators,
-): PersistentIteratorValue<DynamicPermGroup, Op> {
+  };
   const group = new DynamicPermGroup({
     id,
     heads: HashMap.of(),
     closedDevices: HashMap.of(),
-    admin: iterators.adminIterator.value,
+    admin: admin,
     writers: HashMap.of(),
   });
   const iterator = {
@@ -277,7 +268,6 @@ function nextDynamicPermGroupIterator(
   iterators: DynamicPermGroupIterators,
 ): Option<PersistentIteratorOp<DynamicPermGroup, Op>> {
   const opOption = nextOp(
-    iterators.adminIterator,
     ...iterators.streamIterators.valueIterable(),
     ...iterators.writerIterators.valueIterable(),
   );
@@ -287,14 +277,6 @@ function nextDynamicPermGroupIterator(
   return Option.of({
     op,
     value: () => {
-      const adminIterator1 = iterators.adminIterator.next
-        .flatMap((adminOp) =>
-          adminOp.op === op
-            ? Option.of(adminOp.value())
-            : Option.none<PersistentIteratorValue<PermGroup, Op>>(),
-        )
-        .getOrElse(iterators.adminIterator);
-
       const writerIterators1 = iterators.writerIterators.mapValues((i) =>
         i.next.map((next) => (next.op === op ? next.value() : i)).getOrElse(i),
       );
@@ -324,7 +306,6 @@ function nextDynamicPermGroupIterator(
         },
       );
       const group1 = group.copy({
-        admin: adminIterator1.value,
         writers: writers1,
         heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
       });
@@ -434,22 +415,13 @@ function nextDynamicPermGroupIterator(
       //   .filterKeys((deviceId) => openDeviceIds(group2).contains(deviceId));
       // const group3 = group2.copy({closedDevices});
 
-      const concreteHeads = concreteHeadsForAbstractHeads(
-        universe,
-        group3.desiredHeads(),
-      );
-
       const iterators1: DynamicPermGroupIterators = {
-        adminIterator: adminIterator1,
         streamIterators: streamIterators1,
         writerIterators: writerIterators2,
       };
       return {
         value: group3,
         next: nextDynamicPermGroupIterator(universe, group3, iterators1),
-        _iterators: iterators,
-        _iterators1: iterators1,
-        _concreteHeads: concreteHeads,
       };
     },
   });
@@ -549,7 +521,6 @@ export class Tree extends ObjectValue<{
 }
 
 type TreeIterators = {
-  readonly permGroupIterator: PersistentIteratorValue<PermGroup, Op>;
   readonly streamIterators: HashMap<
     StreamId,
     PersistentIteratorValue<OpStream, Op>
@@ -562,37 +533,29 @@ export function buildTree(
   id: TreeId,
   parentPermGroupId: PermGroupId,
 ): PersistentIteratorValue<Tree, Op> {
-  const permGroupIterator = advanceIteratorBeyond(
+  const permGroup = advanceIteratorBeyond(
     buildPermGroup(universe, id.permGroupId),
     maxTimestamp,
-  );
+  ).value;
   const streamIterators = concreteHeadsForAbstractHeads(
     universe,
     new Tree({
       id,
       parentPermGroupId,
-      permGroup: permGroupIterator.value,
+      permGroup,
       parentId: Option.none(),
       children: HashMap.of(),
     }).desiredHeads(),
   ).mapValues((stream) => streamIteratorForStream(stream));
-  return buildTreeInternal(universe, id, parentPermGroupId, {
-    permGroupIterator,
+
+  const iterators: TreeIterators = {
     streamIterators,
     childIterators: HashMap.of(),
-  });
-}
-
-function buildTreeInternal(
-  universe: ConcreteHeads,
-  id: TreeId,
-  parentPermGroupId: PermGroupId,
-  iterators: TreeIterators,
-): PersistentIteratorValue<Tree, Op> {
+  };
   const tree = new Tree({
     id,
     parentPermGroupId,
-    permGroup: iterators.permGroupIterator.value,
+    permGroup,
     parentId: Option.none(),
     children: HashMap.of(),
   });
@@ -610,7 +573,6 @@ function nextTreeIterator(
   iterators: TreeIterators,
 ): Option<PersistentIteratorOp<Tree, Op>> {
   const opOption = nextOp(
-    iterators.permGroupIterator,
     ...iterators.streamIterators.valueIterable(),
     ...iterators.childIterators.valueIterable(),
   );
@@ -620,14 +582,6 @@ function nextTreeIterator(
   return Option.of({
     op,
     value: () => {
-      const permGroupIterator1 = iterators.permGroupIterator.next
-        .flatMap((permGroupOp) =>
-          permGroupOp.op === op
-            ? Option.of(permGroupOp.value())
-            : Option.none<PersistentIteratorValue<PermGroup, Op>>(),
-        )
-        .getOrElse(iterators.permGroupIterator);
-
       const childIterators1 = iterators.childIterators.mapValues((i) =>
         i.next.map((next) => (next.op === op ? next.value() : i)).getOrElse(i),
       );
@@ -657,7 +611,6 @@ function nextTreeIterator(
         },
       );
       const tree1 = tree.copy({
-        permGroup: permGroupIterator1.value,
         children: children1,
       });
 
@@ -729,7 +682,6 @@ function nextTreeIterator(
         .exhaustive();
 
       return treeIterator(universe, tree2, {
-        permGroupIterator: permGroupIterator1,
         streamIterators: streamIterators1,
         childIterators: childIterators2,
       });
