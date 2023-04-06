@@ -1,8 +1,7 @@
 import {
   AddWriter,
-  advanceIteratorBeyond,
-  buildDynamicPermGroup,
-  buildTree,
+  createDynamicPermGroup,
+  createTree,
   Device,
   DeviceId,
   DynamicPermGroup,
@@ -161,7 +160,7 @@ describe("DynamicPermGroup", () => {
 
   describe("buildDynamicPermGroup", () => {
     it("initial value", () => {
-      const root = buildDynamicPermGroup(HashMap.of(), rootId).value;
+      const root = createDynamicPermGroup(HashMap.of(), maxTimestamp, rootId);
       expectPreludeEqual(root.id, rootId);
     });
 
@@ -178,10 +177,7 @@ describe("DynamicPermGroup", () => {
         }),
         opsList(op),
       ]);
-      const root = advanceIteratorBeyond(
-        buildDynamicPermGroup(universe, rootId),
-        maxTimestamp,
-      ).value;
+      const root = createDynamicPermGroup(universe, maxTimestamp, rootId);
       const parent = root.writers.single().getOrThrow()[1];
       expectPreludeEqual(parent.id, parentId);
     });
@@ -200,10 +196,11 @@ describe("DynamicPermGroup", () => {
         opsList(op),
       ]);
       expectIdentical(op.timestamp, Timestamp.create(0));
-      const root = advanceIteratorBeyond(
-        buildDynamicPermGroup(universe, rootId),
+      const root = createDynamicPermGroup(
+        universe,
         Timestamp.create(-1),
-      ).value;
+        rootId,
+      );
       expectPreludeEqual(root.writers, HashMap.of());
     });
 
@@ -232,10 +229,7 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(rootId, parentId)),
         ],
       );
-      const root = advanceIteratorBeyond(
-        buildDynamicPermGroup(universe, rootId),
-        maxTimestamp,
-      ).value;
+      const root = createDynamicPermGroup(universe, maxTimestamp, rootId);
       expectIdentical(
         headsEqual(
           root.heads,
@@ -278,10 +272,7 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(parentId, grandparentId)),
         ],
       );
-      const root = advanceIteratorBeyond(
-        buildDynamicPermGroup(universe, rootId),
-        maxTimestamp,
-      ).value;
+      const root = createDynamicPermGroup(universe, maxTimestamp, rootId);
       expectIdentical(
         headsEqual(
           root.heads,
@@ -331,11 +322,7 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(rootId, parentAId)),
         ],
       );
-      const iterator = advanceIteratorBeyond(
-        buildDynamicPermGroup(universe, childId),
-        maxTimestamp,
-      );
-      const root = iterator.value;
+      const root = createDynamicPermGroup(universe, maxTimestamp, childId);
       expectIdentical(
         headsEqual(
           root.heads,
@@ -382,26 +369,24 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(rootId, parentBId)),
         ]),
       });
-      const root = advanceIteratorBeyond(
-        buildDynamicPermGroup(
-          HashMap.of([
-            new DynamicPermGroupStreamId({
-              permGroupId: adminId,
-              deviceId: deviceId,
+      const root = createDynamicPermGroup(
+        HashMap.of([
+          new DynamicPermGroupStreamId({
+            permGroupId: adminId,
+            deviceId: deviceId,
+          }),
+          opsList(
+            // Add otherDeviceId as a writer.
+            addWriter(adminId, parentAId),
+            // Remove deviceAId as a writer.
+            removeWriter(adminId, parentAId, {
+              devices: HashMap.of([deviceAId, deviceA]),
             }),
-            opsList(
-              // Add otherDeviceId as a writer.
-              addWriter(adminId, parentAId),
-              // Remove deviceAId as a writer.
-              removeWriter(adminId, parentAId, {
-                devices: HashMap.of([deviceAId, deviceA]),
-              }),
-            ),
-          ]),
-          rootId,
-        ),
+          ),
+        ]),
         maxTimestamp,
-      ).value;
+        rootId,
+      );
       // Only the stream for the removed writer gets closed.
       expectPreludeEqual(root.closedDevices, HashMap.of([deviceAId, deviceA]));
       // deviceB was added as a writer by the ops in the stream in the
@@ -416,28 +401,26 @@ describe("DynamicPermGroup", () => {
         rest: "otherGroup",
       });
 
-      const root = advanceIteratorBeyond(
-        buildDynamicPermGroup(
-          HashMap.of(
-            [
-              new DynamicPermGroupStreamId({
-                permGroupId: rootId,
-                deviceId: deviceId,
-              }),
-              opsList(addWriter(rootId, otherGroup)),
-            ],
-            [
-              new DynamicPermGroupStreamId({
-                permGroupId: otherGroup,
-                deviceId: deviceId,
-              }),
-              opsList(addWriter(otherGroup, rootId)),
-            ],
-          ),
-          rootId,
+      const root = createDynamicPermGroup(
+        HashMap.of(
+          [
+            new DynamicPermGroupStreamId({
+              permGroupId: rootId,
+              deviceId: deviceId,
+            }),
+            opsList(addWriter(rootId, otherGroup)),
+          ],
+          [
+            new DynamicPermGroupStreamId({
+              permGroupId: otherGroup,
+              deviceId: deviceId,
+            }),
+            opsList(addWriter(otherGroup, rootId)),
+          ],
         ),
         maxTimestamp,
-      ).value;
+        rootId,
+      );
       // The root should have otherGroup as a writer. otherGroup should not have
       // anyone as a writer, because the attempt to create that edge camge
       // second and was ignored.
@@ -462,10 +445,7 @@ describe("Tree", () => {
   const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
 
   it("creates a single-node tree", () => {
-    const root = advanceIteratorBeyond(
-      buildTree(HashMap.of(), rootId, adminId),
-      maxTimestamp,
-    ).value;
+    const root = createTree(HashMap.of(), maxTimestamp, rootId, adminId);
     expectPreludeEqual(root.children, HashMap.of());
   });
 
@@ -477,21 +457,19 @@ describe("Tree", () => {
       parentId: otherId,
       childId: rootId,
     } as const;
-    const root = advanceIteratorBeyond(
-      buildTree(
-        HashMap.of([
-          new TreeParentStreamId({
-            treeId: rootId,
-            parentPermGroupId: adminId,
-            deviceId,
-          }) as StreamId,
-          opsList(op),
-        ]),
-        rootId,
-        adminId,
-      ),
+    const root = createTree(
+      HashMap.of([
+        new TreeParentStreamId({
+          treeId: rootId,
+          parentPermGroupId: adminId,
+          deviceId,
+        }) as StreamId,
+        opsList(op),
+      ]),
       maxTimestamp,
-    ).value;
+      rootId,
+      adminId,
+    );
     expectPreludeEqual(root.parentId.getOrThrow(), otherId);
   });
 
@@ -503,21 +481,19 @@ describe("Tree", () => {
       parentId: rootId,
       childId: childId,
     } as const;
-    const root = advanceIteratorBeyond(
-      buildTree(
-        HashMap.of([
-          new TreeParentStreamId({
-            treeId: childId,
-            parentPermGroupId: adminId,
-            deviceId,
-          }) as StreamId,
-          opsList(op),
-        ]),
-        rootId,
-        adminId,
-      ),
+    const root = createTree(
+      HashMap.of([
+        new TreeParentStreamId({
+          treeId: childId,
+          parentPermGroupId: adminId,
+          deviceId,
+        }) as StreamId,
+        opsList(op),
+      ]),
       maxTimestamp,
-    ).value;
+      rootId,
+      adminId,
+    );
     expectPreludeEqual(root.children.keySet(), HashSet.of());
   });
 
@@ -529,27 +505,25 @@ describe("Tree", () => {
       parentId: rootId,
       childId: childId,
     } as const;
-    const root = advanceIteratorBeyond(
-      buildTree(
-        HashMap.of(
-          [
-            new TreeValueStreamId({treeId: rootId, deviceId}) as StreamId,
-            opsList(op),
-          ],
-          [
-            new TreeParentStreamId({
-              treeId: childId,
-              parentPermGroupId: adminId,
-              deviceId,
-            }) as StreamId,
-            opsList(op),
-          ],
-        ),
-        rootId,
-        adminId,
+    const root = createTree(
+      HashMap.of(
+        [
+          new TreeValueStreamId({treeId: rootId, deviceId}) as StreamId,
+          opsList(op),
+        ],
+        [
+          new TreeParentStreamId({
+            treeId: childId,
+            parentPermGroupId: adminId,
+            deviceId,
+          }) as StreamId,
+          opsList(op),
+        ],
       ),
       maxTimestamp,
-    ).value;
+      rootId,
+      adminId,
+    );
     expectPreludeEqual(root.children.keySet(), HashSet.of(childId));
   });
 
@@ -567,39 +541,37 @@ describe("Tree", () => {
       parentId: otherId,
       childId: rootId,
     } as const;
-    const root = advanceIteratorBeyond(
-      buildTree(
-        HashMap.of(
-          [
-            new TreeValueStreamId({treeId: rootId, deviceId}) as StreamId,
-            opsList(otherInRoot),
-          ],
-          [
-            new TreeParentStreamId({
-              treeId: otherId,
-              parentPermGroupId: adminId,
-              deviceId,
-            }) as StreamId,
-            opsList(otherInRoot),
-          ],
-          [
-            new TreeValueStreamId({treeId: otherId, deviceId}) as StreamId,
-            opsList(rootInOther),
-          ],
-          [
-            new TreeParentStreamId({
-              treeId: rootId,
-              parentPermGroupId: adminId,
-              deviceId,
-            }) as StreamId,
-            opsList(rootInOther),
-          ],
-        ),
-        rootId,
-        adminId,
+    const root = createTree(
+      HashMap.of(
+        [
+          new TreeValueStreamId({treeId: rootId, deviceId}) as StreamId,
+          opsList(otherInRoot),
+        ],
+        [
+          new TreeParentStreamId({
+            treeId: otherId,
+            parentPermGroupId: adminId,
+            deviceId,
+          }) as StreamId,
+          opsList(otherInRoot),
+        ],
+        [
+          new TreeValueStreamId({treeId: otherId, deviceId}) as StreamId,
+          opsList(rootInOther),
+        ],
+        [
+          new TreeParentStreamId({
+            treeId: rootId,
+            parentPermGroupId: adminId,
+            deviceId,
+          }) as StreamId,
+          opsList(rootInOther),
+        ],
       ),
       maxTimestamp,
-    ).value;
+      rootId,
+      adminId,
+    );
     expectPreludeEqual(root.children.keySet(), HashSet.of(otherId));
     expectPreludeEqual(
       root.children.single().getOrThrow()[1].children,

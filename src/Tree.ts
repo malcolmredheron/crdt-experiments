@@ -55,7 +55,7 @@ export function buildPermGroup(
     case "static":
       return buildStaticPermGroup(id);
     case "dynamic":
-      return buildDynamicPermGroup(universe, id);
+      return createDynamicPermGroupIterator(universe, id);
   }
 }
 
@@ -225,7 +225,18 @@ type DynamicPermGroupIterators = {
   >;
 };
 
-export function buildDynamicPermGroup(
+export function createDynamicPermGroup(
+  universe: ConcreteHeads,
+  including: Timestamp,
+  id: DynamicPermGroupId,
+): DynamicPermGroup {
+  return advanceIteratorBeyond(
+    createDynamicPermGroupIterator(universe, id),
+    including,
+  ).value;
+}
+
+export function createDynamicPermGroupIterator(
   universe: ConcreteHeads,
   id: DynamicPermGroupId,
 ): PersistentIteratorValue<DynamicPermGroup, Op> {
@@ -528,7 +539,19 @@ type TreeIterators = {
   readonly childIterators: HashMap<TreeId, PersistentIteratorValue<Tree, Op>>;
 };
 
-export function buildTree(
+export function createTree(
+  universe: ConcreteHeads,
+  including: Timestamp,
+  id: TreeId,
+  parentPermGroupId: PermGroupId,
+): Tree {
+  return advanceIteratorBeyond(
+    createTreeIterator(universe, id, parentPermGroupId),
+    including,
+  ).value;
+}
+
+export function createTreeIterator(
   universe: ConcreteHeads,
   id: TreeId,
   parentPermGroupId: PermGroupId,
@@ -629,7 +652,7 @@ function nextTreeIterator(
             // confronting a cycle, we must avoid computing the next value of
             // the child iterator here in the case where there will be a cycle.
             const childIterator = advanceIteratorBeyond(
-              buildTree(universe, op.childId, tree.id.permGroupId),
+              createTreeIterator(universe, op.childId, tree.id.permGroupId),
               Timestamp.create(value(op.timestamp) - 1),
             );
             const childIteratorNext = childIterator.next;
