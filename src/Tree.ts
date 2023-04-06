@@ -34,6 +34,8 @@ export class Device extends ObjectValue<{
   }
 }
 
+const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
+
 //------------------------------------------------------------------------------
 // Perm group
 
@@ -90,8 +92,6 @@ export function buildStaticPermGroup(
   const value: PersistentIteratorValue<StaticPermGroup, Op> = {
     next: Option.none(),
     value: new StaticPermGroup({id, writers: id.writers}),
-    needsReset: false,
-    reset: () => value,
   };
   return value;
 }
@@ -230,7 +230,10 @@ export function buildDynamicPermGroup(
   universe: ConcreteHeads,
   id: DynamicPermGroupId,
 ): PersistentIteratorValue<DynamicPermGroup, Op> {
-  const adminIterator = buildPermGroup(universe, id.admin);
+  const adminIterator = advanceIteratorBeyond(
+    buildPermGroup(universe, id.admin),
+    maxTimestamp,
+  );
   const streamIterators = concreteHeadsForAbstractHeads(
     universe,
     new DynamicPermGroup({
@@ -263,8 +266,6 @@ function buildDynamicPermGroupInternal(
   const iterator = {
     value: group,
     next: nextDynamicPermGroupIterator(universe, group, iterators),
-    needsReset: false,
-    reset: () => iterator,
     _iterators: iterators,
   };
   return iterator;
@@ -422,18 +423,21 @@ function nextDynamicPermGroupIterator(
           },
         )
         .otherwise(({group1}) => group1);
+      // const closedDevices = group2.writers
+      //   .foldLeft(group2.admin._closedDevices(), (current, [, writer]) =>
+      //     current.mergeWith(
+      //       writer._closedDevices(),
+      //       (curentDevice, newDevice) =>
+      //         throwError("Device closed twice -- not supported yet"),
+      //     ),
+      //   )
+      //   .filterKeys((deviceId) => openDeviceIds(group2).contains(deviceId));
+      // const group3 = group2.copy({closedDevices});
 
       const concreteHeads = concreteHeadsForAbstractHeads(
         universe,
         group3.desiredHeads(),
       );
-      const headsNeedReset = !headsEqual(concreteHeads, group3.heads);
-      const needsReset =
-        headsNeedReset ||
-        adminIterator1.needsReset ||
-        writerIterators2.anyMatch(
-          (groupId, writerIterator) => writerIterator.needsReset,
-        );
 
       const iterators1: DynamicPermGroupIterators = {
         adminIterator: adminIterator1,
@@ -443,21 +447,8 @@ function nextDynamicPermGroupIterator(
       return {
         value: group3,
         next: nextDynamicPermGroupIterator(universe, group3, iterators1),
-        needsReset,
-        reset: () => {
-          return buildDynamicPermGroupInternal(universe, group3.id, {
-            adminIterator: adminIterator1.reset(),
-            streamIterators: concreteHeads.mapValues((stream) =>
-              streamIteratorForStream(stream),
-            ),
-            writerIterators: iterators1.writerIterators.mapValues((iterator) =>
-              iterator.reset(),
-            ),
-          });
-        },
         _iterators: iterators,
         _iterators1: iterators1,
-        _headsNeedReset: headsNeedReset,
         _concreteHeads: concreteHeads,
       };
     },
@@ -571,7 +562,10 @@ export function buildTree(
   id: TreeId,
   parentPermGroupId: PermGroupId,
 ): PersistentIteratorValue<Tree, Op> {
-  const permGroupIterator = buildPermGroup(universe, id.permGroupId);
+  const permGroupIterator = advanceIteratorBeyond(
+    buildPermGroup(universe, id.permGroupId),
+    maxTimestamp,
+  );
   const streamIterators = concreteHeadsForAbstractHeads(
     universe,
     new Tree({
@@ -605,8 +599,6 @@ function buildTreeInternal(
   const iterator = {
     value: tree,
     next: nextTreeIterator(universe, tree, iterators),
-    needsReset: false,
-    reset: () => iterator,
     _iterators: iterators,
   };
   return iterator;
@@ -750,35 +742,11 @@ function treeIterator(
   tree: Tree,
   iterators: TreeIterators,
 ): PersistentIteratorValue<Tree, Op> {
-  const concreteHeads = concreteHeadsForAbstractHeads(
-    universe,
-    tree.desiredHeads(),
-  );
-  const headsNeedReset = false; //!headsEqual(concreteHeads, tree2.heads);
-  const needsReset =
-    headsNeedReset ||
-    iterators.permGroupIterator.needsReset ||
-    iterators.childIterators.anyMatch(
-      (id, childIterator) => childIterator.needsReset,
-    );
   return {
     value: tree,
     next: nextTreeIterator(universe, tree, iterators),
-    needsReset,
-    reset: () =>
-      buildTreeInternal(universe, tree.id, tree.parentPermGroupId, {
-        permGroupIterator: iterators.permGroupIterator.reset(),
-        streamIterators: concreteHeads.mapValues((stream) =>
-          streamIteratorForStream(stream),
-        ),
-        childIterators: iterators.childIterators.mapValues((iterator) =>
-          iterator.reset(),
-        ),
-      }),
     // _iterators: iterators,
     // _iterators1: iterators1,
-    // _headsNeedReset: headsNeedReset,
-    // _concreteHeads: concreteHeads,
   };
 }
 
@@ -799,10 +767,6 @@ function streamIteratorForStream(
           value: () => ({
             value: stream,
             next,
-            needsReset: false,
-            reset: () => {
-              throw new AssertFailed("not implemented");
-            },
           }),
         }),
       ),
@@ -810,18 +774,12 @@ function streamIteratorForStream(
     .getOrElse({
       value: stream,
       next: next,
-      needsReset: false,
-      reset: () => {
-        throw new AssertFailed("not implemented");
-      },
     });
 }
 
 interface PersistentIteratorValue<Value, Op extends {timestamp: Timestamp}> {
   value: Value;
   next: Option<PersistentIteratorOp<Value, Op>>;
-  needsReset: boolean;
-  reset: () => PersistentIteratorValue<Value, Op>;
 }
 
 interface PersistentIteratorOp<Value, Op extends {timestamp: Timestamp}> {
@@ -842,34 +800,22 @@ export function advanceIteratorBeyond<T, Op extends {timestamp: Timestamp}>(
   iterator: PersistentIteratorValue<T, Op>,
   until: Timestamp,
 ): PersistentIteratorValue<T, Op> {
-  // `iterators` and the limit of 10 times through the loop are for debugging.
-  // We will have to find a more sophisticated way to handle this at some point.
-  let iterators = LinkedList.of<{
-    iterator: PersistentIteratorValue<T, Op>;
-    description: string;
-  }>({iterator, description: "initial"});
-  for (let i = 0; i < 10; i++) {
-    let lastOp = Option.none<Op>();
-    while (true) {
-      const next = iterator.next;
-      if (next.isNone()) break;
-      const nextIteratorOp = next.get();
-      if (
-        lastOp.isSome() &&
-        lastOp.get().timestamp >= nextIteratorOp.op.timestamp
-      ) {
-        throw new AssertFailed("Timestamp failed to progress");
-      }
-      if (nextIteratorOp.op.timestamp > until) break;
-      iterator = nextIteratorOp.value();
-      lastOp = Option.of(nextIteratorOp.op);
+  let lastOp = Option.none<Op>();
+  while (true) {
+    const next = iterator.next;
+    if (next.isNone()) break;
+    const nextIteratorOp = next.get();
+    if (
+      lastOp.isSome() &&
+      lastOp.get().timestamp >= nextIteratorOp.op.timestamp
+    ) {
+      throw new AssertFailed("Timestamp failed to progress");
     }
-    if (!iterator.needsReset) return iterator;
-    iterators = iterators.prepend({iterator, description: "before reset"});
-    iterator = iterator.reset();
-    iterators = iterators.prepend({iterator, description: "after reset"});
+    if (nextIteratorOp.op.timestamp > until) break;
+    iterator = nextIteratorOp.value();
+    lastOp = Option.of(nextIteratorOp.op);
   }
-  throw new AssertFailed("Iterator did not stabilize");
+  return iterator;
 }
 
 function nextOp<Op extends {timestamp: Timestamp}>(
