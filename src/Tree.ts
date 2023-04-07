@@ -3,13 +3,8 @@ import {TypedValue, value} from "./helper/TypedValue";
 import {Timestamp} from "./helper/Timestamp";
 import {HashMap, HashSet, LinkedList, Option, Vector} from "prelude-ts";
 import {concreteHeadsForAbstractHeads, headsEqual} from "./StreamHeads";
-import {
-  mapMapOption,
-  mapMapValueOption,
-  mapValuesStable,
-  throwError,
-} from "./helper/Collection";
-import {match, P} from "ts-pattern";
+import {mapMapOption, mapMapValueOption, throwError} from "./helper/Collection";
+import {match} from "ts-pattern";
 import {AssertFailed} from "./helper/Assert";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
@@ -47,15 +42,16 @@ interface PermGroup {
   writerGroups(): HashSet<PermGroupId>;
 }
 
-export function buildPermGroup(
+function createPermGroup(
   universe: ConcreteHeads,
+  including: Timestamp,
   id: PermGroupId,
-): PersistentIteratorValue<PermGroup, Op> {
+): PermGroup {
   switch (id.type) {
     case "static":
-      return buildStaticPermGroup(id);
+      return advanceIteratorBeyond(buildStaticPermGroup(id), including).value;
     case "dynamic":
-      return createDynamicPermGroupIterator(universe, id);
+      return createDynamicPermGroup(universe, including, id);
   }
 }
 
@@ -138,8 +134,8 @@ export type RemoveWriter = {
 export class DynamicPermGroup
   extends ObjectValue<{
     readonly id: DynamicPermGroupId;
-    heads: ConcreteHeads;
-    closedDevices: HashMap<DeviceId, Device>;
+    // heads: ConcreteHeads;
+    // closedDevices: HashMap<DeviceId, Device>;
 
     // Admins can write to this perm group -- that is, they can add and remove
     // writers.
@@ -191,7 +187,7 @@ export class DynamicPermGroup
       ...openWriterDevices
         .toVector()
         .map((deviceId) => [deviceId, "open"] as [DeviceId, "open" | Device]),
-      ...this.closedDevices,
+      // ...this.closedDevices,
     );
   }
 
@@ -205,237 +201,81 @@ export class DynamicPermGroup
     );
   }
 
-  excludeFromEquals = HashSet.of("closedStreams", "heads");
-  equals(other: unknown): boolean {
-    if (Object.getPrototypeOf(this) !== Object.getPrototypeOf(other))
-      return false;
-
-    return super.equals(other) && headsEqual(this.heads, (other as this).heads);
-  }
+  // excludeFromEquals = HashSet.of("closedStreams", "heads");
+  // equals(other: unknown): boolean {
+  //   if (Object.getPrototypeOf(this) !== Object.getPrototypeOf(other))
+  //     return false;
+  //
+  //   return super.equals(other) && headsEqual(this.heads, (other as this).heads);
+  // }
 }
-
-type DynamicPermGroupIterators = {
-  readonly streamIterators: HashMap<
-    StreamId,
-    PersistentIteratorValue<OpStream, Op>
-  >;
-  readonly writerIterators: HashMap<
-    PermGroupId,
-    PersistentIteratorValue<PermGroup, Op>
-  >;
-};
 
 export function createDynamicPermGroup(
   universe: ConcreteHeads,
   including: Timestamp,
   id: DynamicPermGroupId,
 ): DynamicPermGroup {
-  return advanceIteratorBeyond(
-    createDynamicPermGroupIterator(universe, id),
-    including,
-  ).value;
-}
-
-export function createDynamicPermGroupIterator(
-  universe: ConcreteHeads,
-  id: DynamicPermGroupId,
-): PersistentIteratorValue<DynamicPermGroup, Op> {
-  const admin = advanceIteratorBeyond(
-    buildPermGroup(universe, id.admin),
-    maxTimestamp,
-  ).value;
-  const streamIterators = concreteHeadsForAbstractHeads(
-    universe,
-    new DynamicPermGroup({
-      id,
-      heads: HashMap.of(),
-      closedDevices: HashMap.of(),
-      admin: admin,
-      writers: HashMap.of(),
-    }).desiredHeads(),
-  ).mapValues((stream) => streamIteratorForStream(stream));
-  const iterators: DynamicPermGroupIterators = {
-    streamIterators,
-    writerIterators: HashMap.of(),
-  };
-  const group = new DynamicPermGroup({
+  let group = new DynamicPermGroup({
     id,
-    heads: HashMap.of(),
-    closedDevices: HashMap.of(),
-    admin: admin,
+    admin: createPermGroup(universe, maxTimestamp, id.admin),
     writers: HashMap.of(),
   });
-  const iterator = {
-    value: group,
-    next: nextDynamicPermGroupIterator(universe, group, iterators),
-    _iterators: iterators,
-  };
-  return iterator;
-}
+  let streamIterators = concreteHeadsForAbstractHeads(
+    universe,
+    group.desiredHeads(),
+  ).mapValues((stream) => streamIteratorForStream(stream));
 
-function nextDynamicPermGroupIterator(
-  universe: ConcreteHeads,
-  group: DynamicPermGroup,
-  iterators: DynamicPermGroupIterators,
-): Option<PersistentIteratorOp<DynamicPermGroup, Op>> {
-  const opOption = nextOp(
-    ...iterators.streamIterators.valueIterable(),
-    ...iterators.writerIterators.valueIterable(),
-  );
-  if (opOption.isNone()) return Option.none();
-  const op = opOption.get();
+  while (true) {
+    const opOption = nextOp(...streamIterators.valueIterable()).flatMap((op) =>
+      op.timestamp > including ? Option.none<Op>() : Option.some(op),
+    );
 
-  return Option.of({
-    op,
-    value: () => {
-      const writerIterators1 = iterators.writerIterators.mapValues((i) =>
-        i.next.map((next) => (next.op === op ? next.value() : i)).getOrElse(i),
-      );
-      const writers1 = mapValuesStable(group.writers, (writer) =>
-        writerIterators1
-          .get(writer.id)
-          .map((iterator) => iterator.value)
-          .getOrElse(writer),
-      );
-      const streamIterators1 = iterators.streamIterators.mapValues(
-        (streamIterator) => {
-          return streamIterator.next
-            .map((next) => (next.op === op ? next.value() : streamIterator))
-            .getOrElse(streamIterator);
-        },
-      );
-      const opHeads = mapMapValueOption(
-        iterators.streamIterators,
-        (streamId, streamIterator) => {
-          return streamIterator.next
-            .flatMap((next) =>
-              next.op === op
-                ? Option.of(next.value().value)
-                : Option.none<OpStream>(),
-            )
-            .orElse(Option.none<OpStream>());
-        },
-      );
-      const group1 = group.copy({
-        writers: writers1,
-        heads: group.heads.mergeWith(opHeads, (v0, v1) => v1),
-      });
+    const opTimestamp = opOption.map((op) => op.timestamp).getOrElse(including);
 
-      const {group: group2, writerIterators: writerIterators2} = match({
-        op,
-        opHeads: opHeads,
+    const group1 = group.copy({
+      writers: group.writers.mapValues((writer) =>
+        createPermGroup(universe, opTimestamp, writer.id),
+      ),
+    });
+
+    if (opOption.isNone()) {
+      group = group1;
+      break;
+    }
+
+    const op = opOption.get();
+    group = match({op, group: group1})
+      .with({op: {type: "add writer"}}, ({op, group}) => {
+        if (group.writers.containsKey(op.writerId)) return group;
+
+        const earlierWriter = createPermGroup(
+          universe,
+          Timestamp.create(value(op.timestamp) - 1),
+          op.writerId,
+        );
+        if (earlierWriter.writerGroups().contains(group.id)) return group;
+
+        return group.copy({
+          writers: group.writers.put(
+            op.writerId,
+            createPermGroup(universe, op.timestamp, op.writerId),
+          ),
+        });
       })
-        .with(
-          {op: {type: "add writer"}},
-          ({opHeads}) => !opHeads.isEmpty(),
-          ({op, opHeads}) => {
-            const writerIterator = advanceIteratorBeyond(
-              buildPermGroup(universe, op.writerId),
-              Timestamp.create(value(op.timestamp) - 1),
-            );
-            if (writerIterator.value.writerGroups().contains(group.id))
-              return {group: group1, writerIterators: writerIterators1};
+      .with({op: {type: "remove writer"}}, ({op, group}) =>
+        group.copy({
+          writers: group.writers.remove(op.writerId),
+        }),
+      )
+      .otherwise(({group}) => group);
+    streamIterators = streamIterators.mapValues((streamIterator) => {
+      return streamIterator.next
+        .map((next) => (next.op === op ? next.value() : streamIterator))
+        .getOrElse(streamIterator);
+    });
+  }
 
-            const writerIterators2 = !writerIterators1.containsKey(op.writerId)
-              ? writerIterators1.put(op.writerId, writerIterator)
-              : writerIterators1;
-            return {
-              group: group1.copy({
-                writers: group1.writers.put(
-                  op.writerId,
-                  writerIterators2.get(op.writerId).getOrThrow().value,
-                ),
-              }),
-              writerIterators: writerIterators2,
-            };
-          },
-        )
-        .with(
-          {op: {type: "remove writer"}},
-          ({opHeads}) => !opHeads.isEmpty(),
-          ({op, opHeads}) => {
-            return {
-              group: group1.copy({
-                writers: group1.writers.remove(op.writerId),
-              }),
-              writerIterators: writerIterators1,
-            };
-          },
-        )
-        .with(
-          {},
-          ({opHeads}) => !opHeads.isEmpty(),
-          () =>
-            throwError<{
-              group: DynamicPermGroup;
-              writerIterators: typeof writerIterators1;
-            }>("Op not handled"),
-        )
-        .with(P._, () => ({group: group1, writerIterators: writerIterators1}))
-        .exhaustive();
-
-      const openDeviceIds = (group: PermGroup): HashSet<DeviceId> =>
-        group
-          .writerDevices()
-          .filterValues((openOrDevice) => openOrDevice === "open")
-          .keySet();
-      const group3 = match({
-        op,
-        group,
-        group1: group2,
-        openDeviceIds0: openDeviceIds(group),
-        openDeviceIds1: openDeviceIds(group2),
-      })
-        .with(
-          {op: {type: "add writer"}},
-          ({group, group1, openDeviceIds0, openDeviceIds1}) => {
-            const openedWriterDeviceIds =
-              openDeviceIds1.removeAll(openDeviceIds0);
-            const closedDevices1 = group1.closedDevices.filterKeys(
-              (deviceId) =>
-                !(openedWriterDeviceIds.contains(deviceId) as boolean),
-            );
-            return group1.copy({closedDevices: closedDevices1});
-          },
-        )
-        .with(
-          {op: {type: "remove writer"}},
-          ({op, group, group1, openDeviceIds0, openDeviceIds1}) => {
-            const removedWriterDeviceIds =
-              openDeviceIds0.removeAll(openDeviceIds1);
-            const closedDevices1 = group1.closedDevices.mergeWith(
-              removedWriterDeviceIds.toVector().mapOption((removedWriterId) => {
-                return op.contributingDevices
-                  .get(removedWriterId)
-                  .map((device) => [removedWriterId, device]);
-              }),
-              (ops0, ops1) => throwError("Should not have stream-id collision"),
-            );
-            return group1.copy({closedDevices: closedDevices1});
-          },
-        )
-        .otherwise(({group1}) => group1);
-      // const closedDevices = group2.writers
-      //   .foldLeft(group2.admin._closedDevices(), (current, [, writer]) =>
-      //     current.mergeWith(
-      //       writer._closedDevices(),
-      //       (curentDevice, newDevice) =>
-      //         throwError("Device closed twice -- not supported yet"),
-      //     ),
-      //   )
-      //   .filterKeys((deviceId) => openDeviceIds(group2).contains(deviceId));
-      // const group3 = group2.copy({closedDevices});
-
-      const iterators1: DynamicPermGroupIterators = {
-        streamIterators: streamIterators1,
-        writerIterators: writerIterators2,
-      };
-      return {
-        value: group3,
-        next: nextDynamicPermGroupIterator(universe, group3, iterators1),
-      };
-    },
-  });
+  return group;
 }
 
 //------------------------------------------------------------------------------
@@ -540,10 +380,7 @@ export function createTree(
   let tree = new Tree({
     id,
     parentPermGroupId,
-    permGroup: advanceIteratorBeyond(
-      buildPermGroup(universe, id.permGroupId),
-      maxTimestamp,
-    ).value,
+    permGroup: createPermGroup(universe, maxTimestamp, id.permGroupId),
     parentId: Option.none(),
     children: HashMap.of(),
   });
