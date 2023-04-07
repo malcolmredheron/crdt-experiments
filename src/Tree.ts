@@ -12,7 +12,8 @@ export type StreamId =
   | TreeValueStreamId
   | TreeParentStreamId;
 export type Op = DynamicPermGroupOp | TreeOp;
-export type OpStream = LinkedList<Op>;
+export type OpStream = LinkedList<Op>; // The newest op is at the front.
+export type OpIterable = LinkedList<Op>; // The oldest op is at the front.
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
 export type ConcreteHeads = HashMap<StreamId, OpStream>;
 
@@ -261,11 +262,16 @@ export function buildDynamicPermGroup(
         }),
       )
       .otherwise(({group}) => group);
-    streamIterators = streamIterators.mapValues((streamIterator) => {
-      return streamIterator.next
-        .map((next) => (next.op === op ? next.value() : streamIterator))
-        .getOrElse(streamIterator);
-    });
+    streamIterators = mapMapValueOption(
+      streamIterators,
+      (streamId, streamIterator) => {
+        return streamIterator
+          .head()
+          .flatMap((head) =>
+            head === op ? streamIterator.tail() : Option.some(streamIterator),
+          );
+      },
+    );
   }
 
   return group;
@@ -459,11 +465,16 @@ export function buildTree(
         },
       )
       .otherwise(({tree}) => tree);
-    streamIterators = streamIterators.mapValues((streamIterator) => {
-      return streamIterator.next
-        .map((next) => (next.op === op ? next.value() : streamIterator))
-        .getOrElse(streamIterator);
-    });
+    streamIterators = mapMapValueOption(
+      streamIterators,
+      (streamId, streamIterator) => {
+        return streamIterator
+          .head()
+          .flatMap((head) =>
+            head === op ? streamIterator.tail() : Option.some(streamIterator),
+          );
+      },
+    );
   }
 
   return tree;
@@ -472,52 +483,15 @@ export function buildTree(
 //------------------------------------------------------------------------------
 // Iterators and generic ops
 
-function streamIteratorForStream(
-  stream: OpStream,
-  next: Option<PersistentIteratorOp<OpStream, Op>> = Option.none(),
-): PersistentIteratorValue<OpStream, Op> {
-  return stream
-    .head()
-    .map((head) =>
-      streamIteratorForStream(
-        stream.tail().getOrElse(LinkedList.of()),
-        Option.of({
-          op: head,
-          value: () => ({
-            value: stream,
-            next,
-          }),
-        }),
-      ),
-    )
-    .getOrElse({
-      value: stream,
-      next: next,
-    });
-}
-
-interface PersistentIteratorValue<Value, Op extends {timestamp: Timestamp}> {
-  value: Value;
-  next: Option<PersistentIteratorOp<Value, Op>>;
-}
-
-interface PersistentIteratorOp<Value, Op extends {timestamp: Timestamp}> {
-  op: Op;
-  // This is lazy so that the caller can inspect the op before computing the
-  // value, which is necessary for avoiding cycles:
-  // - 0: Add B as a writer on A
-  // - 1: Add A as a writer on B
-  // When processing op 0 we try to build (B until 0) to check for cycles. But
-  // if that processes op 1 before rejecting it based on the timestamp then
-  // we'll build (A until 1), which will process op 0 again, etc.
-  value: () => PersistentIteratorValue<Value, Op>;
+function streamIteratorForStream(stream: OpStream): OpIterable {
+  return stream.reverse();
 }
 
 function nextOp<Op extends {timestamp: Timestamp}>(
-  ...iterators: Array<PersistentIteratorValue<unknown, Op>>
+  ...iterators: Array<LinkedList<Op>>
 ): Option<Op> {
   const ops = Vector.ofIterable(iterators).mapOption((iterator) =>
-    iterator.next.map((next) => next.op),
+    iterator.head(),
   );
   const opOption = ops.reduce(
     (leftOp: Op, right: Op): Op =>
