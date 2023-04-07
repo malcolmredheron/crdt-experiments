@@ -5,6 +5,7 @@ import {
   Device,
   DeviceId,
   DynamicPermGroup,
+  dynamicPermGroupDesiredHeads,
   DynamicPermGroupId,
   DynamicPermGroupStreamId,
   Op,
@@ -84,7 +85,7 @@ describe("DynamicPermGroup", () => {
         ]),
       });
       expectPreludeEqual(
-        root.desiredHeads(),
+        dynamicPermGroupDesiredHeads(admin, rootId),
         HashMap.of([
           new DynamicPermGroupStreamId({
             deviceId: deviceId,
@@ -136,7 +137,7 @@ describe("DynamicPermGroup", () => {
       });
       expectIdentical(
         headsEqual(
-          child.desiredHeads(),
+          dynamicPermGroupDesiredHeads(root, dummyId),
           HashMap.of<StreamId, "open" | OpStream>(
             [
               new DynamicPermGroupStreamId({

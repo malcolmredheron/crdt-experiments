@@ -139,28 +139,6 @@ export class DynamicPermGroup
   }>()
   implements PermGroup
 {
-  // These are the heads that this perm group wants included in order to build
-  // itself.
-  desiredHeads(): AbstractHeads {
-    const openStreams = mapMapOption(
-      this.admin.writerDevices(),
-      (deviceId, openOrDevice) => {
-        const streamId = new DynamicPermGroupStreamId({
-          permGroupId: this.id,
-          deviceId: deviceId,
-        });
-        const openOrOpStream =
-          openOrDevice === "open"
-            ? Option.of<"open">("open")
-            : openOrDevice.heads.get(streamId);
-        if (!openOrOpStream.isSome())
-          return Option.none<{key: StreamId; value: "open" | OpStream}>();
-        return Option.of({key: streamId, value: openOrOpStream.get()});
-      },
-    );
-    return openStreams;
-  }
-
   // These are the devices that should be used as writers for anything using
   // this perm group to decide who can write. *This is not the list of devices
   // that can write to this perm group*.
@@ -208,12 +186,19 @@ export function buildDynamicPermGroup(
   including: Timestamp,
   id: DynamicPermGroupId,
 ): DynamicPermGroup {
-  function initialValue(admin: PermGroup): DynamicPermGroup {
-    return new DynamicPermGroup({
+  function initialValue(admin: PermGroup): {
+    value: DynamicPermGroup;
+    desiredHeads: AbstractHeads;
+  } {
+    const group = new DynamicPermGroup({
       id,
       admin,
       writers: HashMap.of(),
     });
+    return {
+      value: group,
+      desiredHeads: dynamicPermGroupDesiredHeads(admin, id),
+    };
   }
   function updateChildren(
     including: Timestamp,
@@ -261,6 +246,29 @@ export function buildDynamicPermGroup(
   );
 }
 
+export function dynamicPermGroupDesiredHeads(
+  admin: PermGroup,
+  id: DynamicPermGroupId,
+): AbstractHeads {
+  const openStreams = mapMapOption(
+    admin.writerDevices(),
+    (deviceId, openOrDevice) => {
+      const streamId = new DynamicPermGroupStreamId({
+        permGroupId: id,
+        deviceId,
+      });
+      const openOrOpStream =
+        openOrDevice === "open"
+          ? Option.of<"open">("open")
+          : openOrDevice.heads.get(streamId);
+      if (!openOrOpStream.isSome())
+        return Option.none<{key: StreamId; value: "open" | OpStream}>();
+      return Option.of({key: streamId, value: openOrOpStream.get()});
+    },
+  );
+  return openStreams;
+}
+
 //------------------------------------------------------------------------------
 // Tree
 
@@ -303,49 +311,6 @@ export class Tree extends ObjectValue<{
   parentId: Option<TreeId>; // We don't know this until we get the SetParent op
   children: HashMap<TreeId, Tree>;
 }>() {
-  // These are the heads that this tree wants included in order to build itself.
-  desiredHeads(): AbstractHeads {
-    const valueStreams = mapMapOption(
-      this.admin.writerDevices(),
-      (deviceId, openOrDevice) => {
-        const streamId = new TreeValueStreamId({
-          treeId: this.id,
-          deviceId: deviceId,
-        });
-        const openOrOpStream =
-          openOrDevice === "open"
-            ? Option.of<"open">("open")
-            : openOrDevice.heads.get(streamId);
-        if (!openOrOpStream.isSome())
-          return Option.none<{key: StreamId; value: "open" | OpStream}>();
-        return Option.of({key: streamId, value: openOrOpStream.get()});
-      },
-    );
-
-    const parentStreams = mapMapOption(
-      // TODO: this should use parentPermGroup istead of our own perm group.
-      this.admin.writerDevices(),
-      (deviceId, openOrDevice) => {
-        const streamId = new TreeParentStreamId({
-          treeId: this.id,
-          parentPermGroupId: this.parentPermGroupId,
-          deviceId: deviceId,
-        });
-        const openOrOpStream =
-          openOrDevice === "open"
-            ? Option.of<"open">("open")
-            : openOrDevice.heads.get(streamId);
-        if (!openOrOpStream.isSome())
-          return Option.none<{key: StreamId; value: "open" | OpStream}>();
-        return Option.of({key: streamId, value: openOrOpStream.get()});
-      },
-    );
-
-    return valueStreams.mergeWith(parentStreams, () =>
-      throwError("Stream ids should not collide"),
-    );
-  }
-
   containsId(id: TreeId): boolean {
     if (this.id.equals(id)) return true;
     return Vector.ofIterable(this.children.valueIterable()).anyMatch((tree) =>
@@ -360,14 +325,57 @@ export function buildTree(
   id: TreeId,
   parentPermGroupId: PermGroupId,
 ): Tree {
-  function initialValue(admin: PermGroup): Tree {
-    return new Tree({
+  function initialValue(admin: PermGroup): {
+    value: Tree;
+    desiredHeads: AbstractHeads;
+  } {
+    const tree = new Tree({
       id,
       parentPermGroupId,
       admin: buildPermGroup(universe, maxTimestamp, id.adminId),
       parentId: Option.none(),
       children: HashMap.of(),
     });
+
+    const valueStreams = mapMapOption(
+      admin.writerDevices(),
+      (deviceId, openOrDevice) => {
+        const streamId = new TreeValueStreamId({
+          treeId: id,
+          deviceId: deviceId,
+        });
+        const openOrOpStream =
+          openOrDevice === "open"
+            ? Option.of<"open">("open")
+            : openOrDevice.heads.get(streamId);
+        if (!openOrOpStream.isSome())
+          return Option.none<{key: StreamId; value: "open" | OpStream}>();
+        return Option.of({key: streamId, value: openOrOpStream.get()});
+      },
+    );
+    const parentStreams = mapMapOption(
+      // TODO: this should use parentPermGroup istead of our own perm group.
+      admin.writerDevices(),
+      (deviceId, openOrDevice) => {
+        const streamId = new TreeParentStreamId({
+          treeId: id,
+          parentPermGroupId,
+          deviceId,
+        });
+        const openOrOpStream =
+          openOrDevice === "open"
+            ? Option.of<"open">("open")
+            : openOrDevice.heads.get(streamId);
+        if (!openOrOpStream.isSome())
+          return Option.none<{key: StreamId; value: "open" | OpStream}>();
+        return Option.of({key: streamId, value: openOrOpStream.get()});
+      },
+    );
+    const desiredHeads = valueStreams.mergeWith(parentStreams, () =>
+      throwError("Stream ids should not collide"),
+    );
+
+    return {value: tree, desiredHeads};
   }
   function updateChildren(including: Timestamp, tree: Tree): Tree {
     return tree.copy({
@@ -449,21 +457,25 @@ export function buildTree(
 //------------------------------------------------------------------------------
 // Helpers
 
-function buildValue<
-  Id extends {readonly adminId: PermGroupId},
-  Value extends {desiredHeads: () => AbstractHeads},
->(
+function buildValue<Id extends {readonly adminId: PermGroupId}, Value>(
   universe: ConcreteHeads,
   including: Timestamp,
   id: Id,
-  initialValue: (admin: PermGroup) => Value,
+  initialValue: (admin: PermGroup) => {
+    value: Value;
+    desiredHeads: AbstractHeads;
+  },
   updateChildren: (including: Timestamp, value: Value) => Value,
   updateForOp: (value: Value, op: Op) => Value,
 ): Value {
-  let value = initialValue(buildPermGroup(universe, maxTimestamp, id.adminId));
+  const {value: initial, desiredHeads} = initialValue(
+    buildPermGroup(universe, maxTimestamp, id.adminId),
+  );
+
+  let value = initial;
   let streamIterators = concreteHeadsForAbstractHeads(
     universe,
-    value.desiredHeads(),
+    desiredHeads,
   ).mapValues((stream) => stream.reverse());
 
   while (true) {
