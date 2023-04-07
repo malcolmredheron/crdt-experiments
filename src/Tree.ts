@@ -5,7 +5,6 @@ import {HashMap, HashSet, LinkedList, Option, Vector} from "prelude-ts";
 import {concreteHeadsForAbstractHeads, headsEqual} from "./StreamHeads";
 import {mapMapOption, mapMapValueOption, throwError} from "./helper/Collection";
 import {match} from "ts-pattern";
-import {AssertFailed} from "./helper/Assert";
 
 export class DeviceId extends TypedValue<"DeviceId", string> {}
 export type StreamId =
@@ -42,16 +41,16 @@ interface PermGroup {
   writerGroups(): HashSet<PermGroupId>;
 }
 
-function createPermGroup(
+function buildPermGroup(
   universe: ConcreteHeads,
   including: Timestamp,
   id: PermGroupId,
 ): PermGroup {
   switch (id.type) {
     case "static":
-      return advanceIteratorBeyond(buildStaticPermGroup(id), including).value;
+      return buildStaticPermGroup(id);
     case "dynamic":
-      return createDynamicPermGroup(universe, including, id);
+      return buildDynamicPermGroup(universe, including, id);
   }
 }
 
@@ -82,14 +81,8 @@ export class StaticPermGroup
   }
 }
 
-export function buildStaticPermGroup(
-  id: StaticPermGroupId,
-): PersistentIteratorValue<StaticPermGroup, Op> {
-  const value: PersistentIteratorValue<StaticPermGroup, Op> = {
-    next: Option.none(),
-    value: new StaticPermGroup({id, writers: id.writers}),
-  };
-  return value;
+export function buildStaticPermGroup(id: StaticPermGroupId): StaticPermGroup {
+  return new StaticPermGroup({id, writers: id.writers});
 }
 
 //------------------------------------------------------------------------------
@@ -210,14 +203,14 @@ export class DynamicPermGroup
   // }
 }
 
-export function createDynamicPermGroup(
+export function buildDynamicPermGroup(
   universe: ConcreteHeads,
   including: Timestamp,
   id: DynamicPermGroupId,
 ): DynamicPermGroup {
   let group = new DynamicPermGroup({
     id,
-    admin: createPermGroup(universe, maxTimestamp, id.admin),
+    admin: buildPermGroup(universe, maxTimestamp, id.admin),
     writers: HashMap.of(),
   });
   let streamIterators = concreteHeadsForAbstractHeads(
@@ -234,7 +227,7 @@ export function createDynamicPermGroup(
 
     const group1 = group.copy({
       writers: group.writers.mapValues((writer) =>
-        createPermGroup(universe, opTimestamp, writer.id),
+        buildPermGroup(universe, opTimestamp, writer.id),
       ),
     });
 
@@ -248,7 +241,7 @@ export function createDynamicPermGroup(
       .with({op: {type: "add writer"}}, ({op, group}) => {
         if (group.writers.containsKey(op.writerId)) return group;
 
-        const earlierWriter = createPermGroup(
+        const earlierWriter = buildPermGroup(
           universe,
           Timestamp.create(value(op.timestamp) - 1),
           op.writerId,
@@ -258,7 +251,7 @@ export function createDynamicPermGroup(
         return group.copy({
           writers: group.writers.put(
             op.writerId,
-            createPermGroup(universe, op.timestamp, op.writerId),
+            buildPermGroup(universe, op.timestamp, op.writerId),
           ),
         });
       })
@@ -371,7 +364,7 @@ export class Tree extends ObjectValue<{
   }
 }
 
-export function createTree(
+export function buildTree(
   universe: ConcreteHeads,
   including: Timestamp,
   id: TreeId,
@@ -380,7 +373,7 @@ export function createTree(
   let tree = new Tree({
     id,
     parentPermGroupId,
-    permGroup: createPermGroup(universe, maxTimestamp, id.permGroupId),
+    permGroup: buildPermGroup(universe, maxTimestamp, id.permGroupId),
     parentId: Option.none(),
     children: HashMap.of(),
   });
@@ -398,7 +391,7 @@ export function createTree(
 
     const tree1 = tree.copy({
       children: mapMapValueOption(tree.children, (childId, child) => {
-        const child1 = createTree(
+        const child1 = buildTree(
           universe,
           opTimestamp,
           child.id,
@@ -439,7 +432,7 @@ export function createTree(
           // #TreeCycles: In order to avoid infinite recursion when
           // confronting a cycle, we must avoid computing the current value of
           // the child here in the case where there will be a cycle.
-          const earlierChild = createTree(
+          const earlierChild = buildTree(
             universe,
             Timestamp.create(value(opTimestamp) - 1),
             childId,
@@ -447,7 +440,7 @@ export function createTree(
           );
           if (earlierChild.containsId(op.parentId)) return tree;
 
-          const child = createTree(
+          const child = buildTree(
             universe,
             opTimestamp,
             childId,
@@ -518,30 +511,6 @@ interface PersistentIteratorOp<Value, Op extends {timestamp: Timestamp}> {
   // if that processes op 1 before rejecting it based on the timestamp then
   // we'll build (A until 1), which will process op 0 again, etc.
   value: () => PersistentIteratorValue<Value, Op>;
-}
-
-// Advances the iterator until there are no more ops or the next op is greater
-// than `until`.
-export function advanceIteratorBeyond<T, Op extends {timestamp: Timestamp}>(
-  iterator: PersistentIteratorValue<T, Op>,
-  until: Timestamp,
-): PersistentIteratorValue<T, Op> {
-  let lastOp = Option.none<Op>();
-  while (true) {
-    const next = iterator.next;
-    if (next.isNone()) break;
-    const nextIteratorOp = next.get();
-    if (
-      lastOp.isSome() &&
-      lastOp.get().timestamp >= nextIteratorOp.op.timestamp
-    ) {
-      throw new AssertFailed("Timestamp failed to progress");
-    }
-    if (nextIteratorOp.op.timestamp > until) break;
-    iterator = nextIteratorOp.value();
-    lastOp = Option.of(nextIteratorOp.op);
-  }
-  return iterator;
 }
 
 function nextOp<Op extends {timestamp: Timestamp}>(

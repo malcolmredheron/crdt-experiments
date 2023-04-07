@@ -1,7 +1,7 @@
 import {
   AddWriter,
-  createDynamicPermGroup,
-  createTree,
+  buildDynamicPermGroup,
+  buildTree,
   Device,
   DeviceId,
   DynamicPermGroup,
@@ -155,7 +155,7 @@ describe("DynamicPermGroup", () => {
 
   describe("buildDynamicPermGroup", () => {
     it("initial value", () => {
-      const root = createDynamicPermGroup(HashMap.of(), maxTimestamp, rootId);
+      const root = buildDynamicPermGroup(HashMap.of(), maxTimestamp, rootId);
       expectPreludeEqual(root.id, rootId);
     });
 
@@ -172,7 +172,7 @@ describe("DynamicPermGroup", () => {
         }),
         opsList(op),
       ]);
-      const root = createDynamicPermGroup(universe, maxTimestamp, rootId);
+      const root = buildDynamicPermGroup(universe, maxTimestamp, rootId);
       const parent = root.writers.single().getOrThrow()[1];
       expectPreludeEqual(parent.id, parentId);
     });
@@ -191,7 +191,7 @@ describe("DynamicPermGroup", () => {
         opsList(op),
       ]);
       expectIdentical(op.timestamp, Timestamp.create(0));
-      const root = createDynamicPermGroup(
+      const root = buildDynamicPermGroup(
         universe,
         Timestamp.create(-1),
         rootId,
@@ -224,7 +224,7 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(rootId, parentId)),
         ],
       );
-      const root = createDynamicPermGroup(universe, maxTimestamp, rootId);
+      const root = buildDynamicPermGroup(universe, maxTimestamp, rootId);
       // expectIdentical(
       //   headsEqual(
       //     root.heads,
@@ -267,7 +267,7 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(parentId, grandparentId)),
         ],
       );
-      const root = createDynamicPermGroup(universe, maxTimestamp, rootId);
+      const root = buildDynamicPermGroup(universe, maxTimestamp, rootId);
       // expectIdentical(
       //   headsEqual(
       //     root.heads,
@@ -317,7 +317,7 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(rootId, parentAId)),
         ],
       );
-      const root = createDynamicPermGroup(universe, maxTimestamp, childId);
+      const root = buildDynamicPermGroup(universe, maxTimestamp, childId);
       // expectIdentical(
       //   headsEqual(
       //     root.heads,
@@ -364,7 +364,7 @@ describe("DynamicPermGroup", () => {
           opsList(addWriter(rootId, parentBId)),
         ]),
       });
-      const root = createDynamicPermGroup(
+      const root = buildDynamicPermGroup(
         HashMap.of([
           new DynamicPermGroupStreamId({
             permGroupId: adminId,
@@ -396,7 +396,7 @@ describe("DynamicPermGroup", () => {
         rest: "otherGroup",
       });
 
-      const root = createDynamicPermGroup(
+      const root = buildDynamicPermGroup(
         HashMap.of(
           [
             new DynamicPermGroupStreamId({
@@ -440,7 +440,7 @@ describe("Tree", () => {
   const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
 
   it("creates a single-node tree", () => {
-    const root = createTree(HashMap.of(), maxTimestamp, rootId, adminId);
+    const root = buildTree(HashMap.of(), maxTimestamp, rootId, adminId);
     expectPreludeEqual(root.children, HashMap.of());
   });
 
@@ -452,7 +452,7 @@ describe("Tree", () => {
       parentId: otherId,
       childId: rootId,
     } as const;
-    const root = createTree(
+    const root = buildTree(
       HashMap.of([
         new TreeParentStreamId({
           treeId: rootId,
@@ -475,7 +475,7 @@ describe("Tree", () => {
       parentId: rootId,
       childId: rootId,
     } as const;
-    const root = createTree(
+    const root = buildTree(
       HashMap.of([
         new TreeParentStreamId({
           treeId: rootId,
@@ -499,7 +499,7 @@ describe("Tree", () => {
       parentId: rootId,
       childId: childId,
     } as const;
-    const root = createTree(
+    const root = buildTree(
       HashMap.of([
         new TreeParentStreamId({
           treeId: childId,
@@ -523,7 +523,7 @@ describe("Tree", () => {
       parentId: rootId,
       childId: childId,
     } as const;
-    const root = createTree(
+    const root = buildTree(
       HashMap.of(
         [
           new TreeValueStreamId({treeId: rootId, deviceId}) as StreamId,
@@ -559,7 +559,7 @@ describe("Tree", () => {
       parentId: otherId,
       childId: rootId,
     } as const;
-    const root = createTree(
+    const root = buildTree(
       HashMap.of(
         [
           new TreeValueStreamId({treeId: rootId, deviceId}) as StreamId,
