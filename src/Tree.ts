@@ -531,198 +531,112 @@ export class Tree extends ObjectValue<{
   }
 }
 
-type TreeIterators = {
-  readonly streamIterators: HashMap<
-    StreamId,
-    PersistentIteratorValue<OpStream, Op>
-  >;
-  readonly childIterators: HashMap<TreeId, PersistentIteratorValue<Tree, Op>>;
-};
-
 export function createTree(
   universe: ConcreteHeads,
   including: Timestamp,
   id: TreeId,
   parentPermGroupId: PermGroupId,
 ): Tree {
-  return advanceIteratorBeyond(
-    createTreeIterator(universe, id, parentPermGroupId),
-    including,
-  ).value;
-}
-
-export function createTreeIterator(
-  universe: ConcreteHeads,
-  id: TreeId,
-  parentPermGroupId: PermGroupId,
-): PersistentIteratorValue<Tree, Op> {
-  const permGroup = advanceIteratorBeyond(
-    buildPermGroup(universe, id.permGroupId),
-    maxTimestamp,
-  ).value;
-  const streamIterators = concreteHeadsForAbstractHeads(
-    universe,
-    new Tree({
-      id,
-      parentPermGroupId,
-      permGroup,
-      parentId: Option.none(),
-      children: HashMap.of(),
-    }).desiredHeads(),
-  ).mapValues((stream) => streamIteratorForStream(stream));
-
-  const iterators: TreeIterators = {
-    streamIterators,
-    childIterators: HashMap.of(),
-  };
-  const tree = new Tree({
+  let tree = new Tree({
     id,
     parentPermGroupId,
-    permGroup,
+    permGroup: advanceIteratorBeyond(
+      buildPermGroup(universe, id.permGroupId),
+      maxTimestamp,
+    ).value,
     parentId: Option.none(),
     children: HashMap.of(),
   });
-  const iterator = {
-    value: tree,
-    next: nextTreeIterator(universe, tree, iterators),
-    _iterators: iterators,
-  };
-  return iterator;
-}
+  let streamIterators = concreteHeadsForAbstractHeads(
+    universe,
+    tree.desiredHeads(),
+  ).mapValues((stream) => streamIteratorForStream(stream));
 
-function nextTreeIterator(
-  universe: ConcreteHeads,
-  tree: Tree,
-  iterators: TreeIterators,
-): Option<PersistentIteratorOp<Tree, Op>> {
-  const opOption = nextOp(
-    ...iterators.streamIterators.valueIterable(),
-    ...iterators.childIterators.valueIterable(),
-  );
-  if (opOption.isNone()) return Option.none();
-  const op = opOption.get();
+  while (true) {
+    const opOption = nextOp(...streamIterators.valueIterable()).flatMap((op) =>
+      op.timestamp > including ? Option.none<Op>() : Option.some(op),
+    );
 
-  return Option.of({
-    op,
-    value: () => {
-      const childIterators1 = iterators.childIterators.mapValues((i) =>
-        i.next.map((next) => (next.op === op ? next.value() : i)).getOrElse(i),
-      );
-      const children1 = mapValuesStable(tree.children, (child) =>
-        childIterators1
-          .get(child.id)
-          .map((iterator) => iterator.value)
-          .getOrElse(child),
-      );
-      const streamIterators1 = iterators.streamIterators.mapValues(
-        (streamIterator) => {
-          return streamIterator.next
-            .map((next) => (next.op === op ? next.value() : streamIterator))
-            .getOrElse(streamIterator);
+    const opTimestamp = opOption.map((op) => op.timestamp).getOrElse(including);
+
+    const tree1 = tree.copy({
+      children: mapMapValueOption(tree.children, (childId, child) => {
+        const child1 = createTree(
+          universe,
+          opTimestamp,
+          child.id,
+          child.parentPermGroupId,
+        );
+        // TODO: we also need to check that the op that set the parent is the op
+        // that we think set the parent.
+        return child1.parentId
+          .map((parentId) => parentId.equals(tree.id))
+          .getOrElse(false)
+          ? Option.some(child1)
+          : Option.none<Tree>();
+      }),
+    });
+
+    if (opOption.isNone()) {
+      tree = tree1;
+      break;
+    }
+
+    const op = opOption.get();
+    tree = match({op, tree: tree1})
+      .with(
+        {op: {type: "set parent"}},
+        ({op, tree}) => op.childId.equals(tree.id),
+        ({op, tree}) =>
+          tree.containsId(op.parentId)
+            ? tree
+            : tree.copy({parentId: Option.some(op.parentId)}),
+      )
+      .with(
+        {op: {type: "set parent"}},
+        ({op, tree}) => op.parentId.equals(tree.id),
+        ({op, tree}) => {
+          const childId = op.childId;
+          if (tree.children.containsKey(childId)) return tree;
+
+          // #TreeCycles: In order to avoid infinite recursion when
+          // confronting a cycle, we must avoid computing the current value of
+          // the child here in the case where there will be a cycle.
+          const earlierChild = createTree(
+            universe,
+            Timestamp.create(value(opTimestamp) - 1),
+            childId,
+            tree.permGroup.id,
+          );
+          if (earlierChild.containsId(op.parentId)) return tree;
+
+          const child = createTree(
+            universe,
+            opTimestamp,
+            childId,
+            tree.permGroup.id,
+          );
+          if (
+            !child.parentId
+              .map((parentId) => parentId.equals(tree.id))
+              .getOrElse(false)
+          )
+            return tree;
+
+          return tree.copy({
+            children: tree.children.put(childId, child),
+          });
         },
-      );
-      const opHeads = mapMapValueOption(
-        iterators.streamIterators,
-        (streamId, streamIterator) => {
-          return streamIterator.next
-            .flatMap((next) =>
-              next.op === op
-                ? Option.of(next.value().value)
-                : Option.none<OpStream>(),
-            )
-            .orElse(Option.none<OpStream>());
-        },
-      );
-      const tree1 = tree.copy({
-        children: children1,
-      });
+      )
+      .otherwise(({tree}) => tree);
+    streamIterators = streamIterators.mapValues((streamIterator) => {
+      return streamIterator.next
+        .map((next) => (next.op === op ? next.value() : streamIterator))
+        .getOrElse(streamIterator);
+    });
+  }
 
-      const {tree: tree2, childIterators: childIterators2} = match({
-        op,
-        opHeads: opHeads,
-      })
-        .with(
-          {op: {type: "set parent"}},
-          ({op, opHeads}) => op.parentId.equals(tree.id) && !opHeads.isEmpty(),
-          ({op, opHeads}) => {
-            if (childIterators1.containsKey(op.childId))
-              return {tree: tree1, childIterators: childIterators1};
-
-            // #TreeCycles: In order to avoid infinite recursion when
-            // confronting a cycle, we must avoid computing the next value of
-            // the child iterator here in the case where there will be a cycle.
-            const childIterator = advanceIteratorBeyond(
-              createTreeIterator(universe, op.childId, tree.id.permGroupId),
-              Timestamp.create(value(op.timestamp) - 1),
-            );
-            const childIteratorNext = childIterator.next;
-            const childIterator1 =
-              childIteratorNext.isSome() &&
-              childIteratorNext.get().op === op &&
-              !childIterator.value.containsId(op.parentId)
-                ? childIteratorNext.get().value()
-                : childIterator;
-
-            const childParentId = childIterator1.value.parentId;
-            if (childParentId.isNone() || !childParentId.get().equals(tree.id))
-              return {tree: tree1, childIterators: childIterators1};
-            return {
-              tree: tree1.copy({
-                children: tree1.children.put(op.childId, childIterator1.value),
-              }),
-              childIterators: childIterators1.put(op.childId, childIterator1),
-            };
-          },
-        )
-        .with(
-          {op: {type: "set parent"}},
-          ({op, opHeads}) => op.childId.equals(tree.id) && !opHeads.isEmpty(),
-          ({op, opHeads}) => {
-            // ##TreeCycles: This is the logical place to avoid cycles, and it's
-            // necessary. But it's not sufficient.
-            if (tree1.containsId(op.parentId))
-              return {
-                tree: tree1,
-                childIterators: childIterators1,
-              };
-            return {
-              tree: tree1.copy({
-                parentId: Option.of(op.parentId),
-              }),
-              childIterators: childIterators1,
-            };
-          },
-        )
-        .with(
-          {},
-          ({opHeads}) => !opHeads.isEmpty(),
-          () =>
-            throwError<{tree: Tree; childIterators: typeof childIterators1}>(
-              "Op not handled",
-            ),
-        )
-        .with(P._, () => ({tree: tree1, childIterators: childIterators1}))
-        .exhaustive();
-
-      return treeIterator(universe, tree2, {
-        streamIterators: streamIterators1,
-        childIterators: childIterators2,
-      });
-    },
-  });
-}
-
-function treeIterator(
-  universe: ConcreteHeads,
-  tree: Tree,
-  iterators: TreeIterators,
-): PersistentIteratorValue<Tree, Op> {
-  return {
-    value: tree,
-    next: nextTreeIterator(universe, tree, iterators),
-    // _iterators: iterators,
-    // _iterators1: iterators1,
-  };
+  return tree;
 }
 
 //------------------------------------------------------------------------------

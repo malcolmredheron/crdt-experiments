@@ -473,6 +473,29 @@ describe("Tree", () => {
     expectPreludeEqual(root.parentId.getOrThrow(), otherId);
   });
 
+  it("does not set parent if it would create a cycle", () => {
+    const op = {
+      type: "set parent",
+      timestamp: clock.now(),
+      parentId: rootId,
+      childId: rootId,
+    } as const;
+    const root = createTree(
+      HashMap.of([
+        new TreeParentStreamId({
+          treeId: rootId,
+          parentPermGroupId: adminId,
+          deviceId,
+        }) as StreamId,
+        opsList(op),
+      ]),
+      maxTimestamp,
+      rootId,
+      adminId,
+    );
+    expectIdentical(root.parentId.isNone(), true);
+  });
+
   it("does not add a child if the child disagrees", () => {
     const childId = new TreeId({permGroupId: adminId, rest: "child"});
     const op = {
