@@ -90,7 +90,7 @@ export function buildStaticPermGroup(id: StaticPermGroupId): StaticPermGroup {
 // Dynamic perm group
 
 export class DynamicPermGroupId extends ObjectValue<{
-  readonly admin: PermGroupId;
+  readonly adminId: PermGroupId;
   readonly rest: string | undefined;
 }>() {
   readonly type = "dynamic";
@@ -133,7 +133,7 @@ export class DynamicPermGroup
 
     // Admins can write to this perm group -- that is, they can add and remove
     // writers.
-    admin: PermGroup;
+    readonly admin: PermGroup;
     // Writers can write to objects that use this perm group to decide on their
     // writers, but can't write to this perm group.
     writers: HashMap<PermGroupId, PermGroup>;
@@ -211,7 +211,7 @@ export function buildDynamicPermGroup(
 ): DynamicPermGroup {
   let group = new DynamicPermGroup({
     id,
-    admin: buildPermGroup(universe, maxTimestamp, id.admin),
+    admin: buildPermGroup(universe, maxTimestamp, id.adminId),
     writers: HashMap.of(),
   });
   let streamIterators = concreteHeadsForAbstractHeads(
@@ -281,7 +281,7 @@ export function buildDynamicPermGroup(
 // Tree
 
 export class TreeId extends ObjectValue<{
-  readonly permGroupId: PermGroupId;
+  readonly adminId: PermGroupId;
   readonly rest: string | undefined;
 }>() {
   readonly type = "tree";
@@ -315,14 +315,14 @@ export type SetParent = {
 export class Tree extends ObjectValue<{
   readonly id: TreeId;
   readonly parentPermGroupId: PermGroupId;
-  permGroup: PermGroup;
+  readonly admin: PermGroup;
   parentId: Option<TreeId>; // We don't know this until we get the SetParent op
   children: HashMap<TreeId, Tree>;
 }>() {
   // These are the heads that this tree wants included in order to build itself.
   desiredHeads(): AbstractHeads {
     const valueStreams = mapMapOption(
-      this.permGroup.writerDevices(),
+      this.admin.writerDevices(),
       (deviceId, openOrDevice) => {
         const streamId = new TreeValueStreamId({
           treeId: this.id,
@@ -340,7 +340,7 @@ export class Tree extends ObjectValue<{
 
     const parentStreams = mapMapOption(
       // TODO: this should use parentPermGroup istead of our own perm group.
-      this.permGroup.writerDevices(),
+      this.admin.writerDevices(),
       (deviceId, openOrDevice) => {
         const streamId = new TreeParentStreamId({
           treeId: this.id,
@@ -379,7 +379,7 @@ export function buildTree(
   let tree = new Tree({
     id,
     parentPermGroupId,
-    permGroup: buildPermGroup(universe, maxTimestamp, id.permGroupId),
+    admin: buildPermGroup(universe, maxTimestamp, id.adminId),
     parentId: Option.none(),
     children: HashMap.of(),
   });
@@ -442,7 +442,7 @@ export function buildTree(
             universe,
             Timestamp.create(value(opTimestamp) - 1),
             childId,
-            tree.permGroup.id,
+            tree.admin.id,
           );
           if (earlierChild.containsId(op.parentId)) return tree;
 
@@ -450,7 +450,7 @@ export function buildTree(
             universe,
             opTimestamp,
             childId,
-            tree.permGroup.id,
+            tree.admin.id,
           );
           if (
             !child.parentId

@@ -62,7 +62,7 @@ describe("DynamicPermGroup", () => {
 
   const deviceId = DeviceId.create("device");
   const adminId = new StaticPermGroupId({writers: HashSet.of(deviceId)});
-  const rootId = new DynamicPermGroupId({admin: adminId, rest: undefined});
+  const rootId = new DynamicPermGroupId({adminId: adminId, rest: undefined});
   const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
   const admin = new StaticPermGroup({id: adminId, writers: adminId.writers});
 
@@ -74,7 +74,7 @@ describe("DynamicPermGroup", () => {
       });
       const root = new DynamicPermGroup({
         id: rootId,
-        admin: admin,
+        admin,
         writers: HashMap.of([
           parentId,
           new StaticPermGroup({
@@ -107,7 +107,7 @@ describe("DynamicPermGroup", () => {
       const parentId = new StaticPermGroupId({
         writers: HashSet.of(otherDeviceId),
       });
-      const dummyId = new DynamicPermGroupId({admin: rootId, rest: "foo"});
+      const dummyId = new DynamicPermGroupId({adminId: rootId, rest: "foo"});
       const otherDeviceOps = opsList(addWriter(rootId, parentId));
       const otherStreamId = new DynamicPermGroupStreamId({
         permGroupId: dummyId,
@@ -161,7 +161,7 @@ describe("DynamicPermGroup", () => {
 
     it("applies one op", () => {
       const parentId = new DynamicPermGroupId({
-        admin: adminId,
+        adminId: adminId,
         rest: "parent",
       });
       const op = addWriter(rootId, parentId);
@@ -179,7 +179,7 @@ describe("DynamicPermGroup", () => {
 
     it("ignores later op", () => {
       const parentId = new DynamicPermGroupId({
-        admin: adminId,
+        adminId: adminId,
         rest: "parent",
       });
       const op = addWriter(rootId, parentId);
@@ -201,11 +201,11 @@ describe("DynamicPermGroup", () => {
 
     it("applies one op, adds a parent and updates it with an earlier op", () => {
       const parentId = new DynamicPermGroupId({
-        admin: adminId,
+        adminId: adminId,
         rest: "parent",
       });
       const grandparentId = new DynamicPermGroupId({
-        admin: adminId,
+        adminId: adminId,
         rest: "grandparent",
       });
       const universe = HashMap.of(
@@ -244,11 +244,11 @@ describe("DynamicPermGroup", () => {
 
     it("applies one op, adds a parent and updates it with a later op", () => {
       const parentId = new DynamicPermGroupId({
-        admin: adminId,
+        adminId: adminId,
         rest: "parent",
       });
       const grandparentId = new DynamicPermGroupId({
-        admin: adminId,
+        adminId: adminId,
         rest: "grandparent",
       });
       const universe = HashMap.of(
@@ -290,7 +290,7 @@ describe("DynamicPermGroup", () => {
       const deviceAId = DeviceId.create("device a");
       const deviceBId = DeviceId.create("device b");
       const childId = new DynamicPermGroupId({
-        admin: rootId,
+        adminId: rootId,
         rest: "child",
       });
       const parentAId = new StaticPermGroupId({
@@ -350,10 +350,13 @@ describe("DynamicPermGroup", () => {
         writers: HashSet.of(deviceBId),
       });
       const adminId = new DynamicPermGroupId({
-        admin: new StaticPermGroupId({writers: HashSet.of(deviceId)}),
+        adminId: new StaticPermGroupId({writers: HashSet.of(deviceId)}),
         rest: undefined,
       });
-      const rootId = new DynamicPermGroupId({admin: adminId, rest: undefined});
+      const rootId = new DynamicPermGroupId({
+        adminId: adminId,
+        rest: undefined,
+      });
 
       const deviceA = new Device({
         heads: HashMap.of([
@@ -392,7 +395,7 @@ describe("DynamicPermGroup", () => {
 
     it("avoids cycles", () => {
       const otherGroup = new DynamicPermGroupId({
-        admin: adminId,
+        adminId: adminId,
         rest: "otherGroup",
       });
 
@@ -436,7 +439,7 @@ describe("Tree", () => {
 
   const deviceId = DeviceId.create("device");
   const adminId = new StaticPermGroupId({writers: HashSet.of(deviceId)});
-  const rootId = new TreeId({permGroupId: adminId, rest: "root"});
+  const rootId = new TreeId({adminId, rest: "root"});
   const maxTimestamp = Timestamp.create(Number.MAX_SAFE_INTEGER);
 
   it("creates a single-node tree", () => {
@@ -445,7 +448,7 @@ describe("Tree", () => {
   });
 
   it("sets a parent", () => {
-    const otherId = new TreeId({permGroupId: adminId, rest: "other"});
+    const otherId = new TreeId({adminId, rest: "other"});
     const op = {
       type: "set parent",
       timestamp: clock.now(),
@@ -492,7 +495,7 @@ describe("Tree", () => {
   });
 
   it("does not add a child if the child disagrees", () => {
-    const childId = new TreeId({permGroupId: adminId, rest: "child"});
+    const childId = new TreeId({adminId, rest: "child"});
     const op = {
       type: "set parent",
       timestamp: clock.now(),
@@ -516,7 +519,7 @@ describe("Tree", () => {
   });
 
   it("adds a child if the child agrees", () => {
-    const childId = new TreeId({permGroupId: adminId, rest: "child"});
+    const childId = new TreeId({adminId, rest: "child"});
     const op = {
       type: "set parent",
       timestamp: clock.now(),
@@ -546,7 +549,7 @@ describe("Tree", () => {
   });
 
   it("avoids cycles", () => {
-    const otherId = new TreeId({permGroupId: adminId, rest: "other"});
+    const otherId = new TreeId({adminId, rest: "other"});
     const otherInRoot = {
       type: "set parent",
       timestamp: clock.now(),
