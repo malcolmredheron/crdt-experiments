@@ -13,7 +13,6 @@ export type StreamId =
   | TreeParentStreamId;
 export type Op = DynamicPermGroupOp | TreeOp;
 export type OpStream = LinkedList<Op>; // The newest op is at the front.
-export type OpIterable = LinkedList<Op>; // The oldest op is at the front.
 export type AbstractHeads = HashMap<StreamId, "open" | OpStream>;
 export type ConcreteHeads = HashMap<StreamId, OpStream>;
 
@@ -448,10 +447,52 @@ export function buildTree(
 }
 
 //------------------------------------------------------------------------------
-// Iterators and generic ops
+// Helpers
 
-function streamIteratorForStream(stream: OpStream): OpIterable {
-  return stream.reverse();
+function buildValue<
+  Id extends {readonly adminId: PermGroupId},
+  Value extends {desiredHeads: () => AbstractHeads},
+>(
+  universe: ConcreteHeads,
+  including: Timestamp,
+  id: Id,
+  initialValue: (admin: PermGroup) => Value,
+  updateChildren: (including: Timestamp, value: Value) => Value,
+  updateForOp: (value: Value, op: Op) => Value,
+): Value {
+  let value = initialValue(buildPermGroup(universe, maxTimestamp, id.adminId));
+  let streamIterators = concreteHeadsForAbstractHeads(
+    universe,
+    value.desiredHeads(),
+  ).mapValues((stream) => stream.reverse());
+
+  while (true) {
+    const opOption = nextOp(...streamIterators.valueIterable()).flatMap((op) =>
+      op.timestamp > including ? Option.none<Op>() : Option.some(op),
+    );
+    const opTimestamp = opOption.map((op) => op.timestamp).getOrElse(including);
+    const value1 = updateChildren(opTimestamp, value);
+
+    if (opOption.isNone()) {
+      value = value1;
+      break;
+    }
+
+    const op = opOption.get();
+    value = updateForOp(value1, op);
+    streamIterators = mapMapValueOption(
+      streamIterators,
+      (streamId, streamIterator) => {
+        return streamIterator
+          .head()
+          .flatMap((head) =>
+            head === op ? streamIterator.tail() : Option.some(streamIterator),
+          );
+      },
+    );
+  }
+
+  return value;
 }
 
 function nextOp<Op extends {timestamp: Timestamp}>(
@@ -471,52 +512,4 @@ function nextOp<Op extends {timestamp: Timestamp}>(
         : throwError("non-identical ops have the same timestamp"),
   );
   return opOption;
-}
-
-function buildValue<
-  Id extends {readonly adminId: PermGroupId},
-  Value extends {desiredHeads: () => AbstractHeads},
->(
-  universe: ConcreteHeads,
-  including: Timestamp,
-  id: Id,
-  initialValue: (admin: PermGroup) => Value,
-  updateChildren: (including: Timestamp, value: Value) => Value,
-  updateForOp: (value: Value, op: Op) => Value,
-): Value {
-  let group = initialValue(buildPermGroup(universe, maxTimestamp, id.adminId));
-  let streamIterators = concreteHeadsForAbstractHeads(
-    universe,
-    group.desiredHeads(),
-  ).mapValues((stream) => streamIteratorForStream(stream));
-
-  while (true) {
-    const opOption = nextOp(...streamIterators.valueIterable()).flatMap((op) =>
-      op.timestamp > including ? Option.none<Op>() : Option.some(op),
-    );
-
-    const opTimestamp = opOption.map((op) => op.timestamp).getOrElse(including);
-
-    const group1 = updateChildren(opTimestamp, group);
-
-    if (opOption.isNone()) {
-      group = group1;
-      break;
-    }
-
-    const op = opOption.get();
-    group = updateForOp(group1, op);
-    streamIterators = mapMapValueOption(
-      streamIterators,
-      (streamId, streamIterator) => {
-        return streamIterator
-          .head()
-          .flatMap((head) =>
-            head === op ? streamIterator.tail() : Option.some(streamIterator),
-          );
-      },
-    );
-  }
-
-  return group;
 }
