@@ -120,8 +120,8 @@ export type RemoveWriter = {
   groupId: DynamicPermGroupId;
   writerId: PermGroupId;
 
-  // This indicates the final heads that we'll use for any writers devices that get
-  // removed by this op.
+  // This indicates the final heads that we'll use for any writers devices that
+  // get removed by this op.
   contributingDevices: HashMap<DeviceId, Device>;
 };
 
@@ -209,36 +209,25 @@ export function buildDynamicPermGroup(
   including: Timestamp,
   id: DynamicPermGroupId,
 ): DynamicPermGroup {
-  let group = new DynamicPermGroup({
-    id,
-    admin: buildPermGroup(universe, maxTimestamp, id.adminId),
-    writers: HashMap.of(),
-  });
-  let streamIterators = concreteHeadsForAbstractHeads(
-    universe,
-    group.desiredHeads(),
-  ).mapValues((stream) => streamIteratorForStream(stream));
-
-  while (true) {
-    const opOption = nextOp(...streamIterators.valueIterable()).flatMap((op) =>
-      op.timestamp > including ? Option.none<Op>() : Option.some(op),
-    );
-
-    const opTimestamp = opOption.map((op) => op.timestamp).getOrElse(including);
-
-    const group1 = group.copy({
+  function initialValue(admin: PermGroup): DynamicPermGroup {
+    return new DynamicPermGroup({
+      id,
+      admin,
+      writers: HashMap.of(),
+    });
+  }
+  function updateChildren(
+    including: Timestamp,
+    group: DynamicPermGroup,
+  ): DynamicPermGroup {
+    return group.copy({
       writers: group.writers.mapValues((writer) =>
-        buildPermGroup(universe, opTimestamp, writer.id),
+        buildPermGroup(universe, including, writer.id),
       ),
     });
-
-    if (opOption.isNone()) {
-      group = group1;
-      break;
-    }
-
-    const op = opOption.get();
-    group = match({op, group: group1})
+  }
+  function updateForOp(group: DynamicPermGroup, op: Op): DynamicPermGroup {
+    return match({op, group})
       .with({op: {type: "add writer"}}, ({op, group}) => {
         if (group.writers.containsKey(op.writerId)) return group;
 
@@ -262,19 +251,15 @@ export function buildDynamicPermGroup(
         }),
       )
       .otherwise(({group}) => group);
-    streamIterators = mapMapValueOption(
-      streamIterators,
-      (streamId, streamIterator) => {
-        return streamIterator
-          .head()
-          .flatMap((head) =>
-            head === op ? streamIterator.tail() : Option.some(streamIterator),
-          );
-      },
-    );
   }
-
-  return group;
+  return buildValue(
+    universe,
+    including,
+    id,
+    initialValue,
+    updateChildren,
+    updateForOp,
+  );
 }
 
 //------------------------------------------------------------------------------
@@ -376,30 +361,21 @@ export function buildTree(
   id: TreeId,
   parentPermGroupId: PermGroupId,
 ): Tree {
-  let tree = new Tree({
-    id,
-    parentPermGroupId,
-    admin: buildPermGroup(universe, maxTimestamp, id.adminId),
-    parentId: Option.none(),
-    children: HashMap.of(),
-  });
-  let streamIterators = concreteHeadsForAbstractHeads(
-    universe,
-    tree.desiredHeads(),
-  ).mapValues((stream) => streamIteratorForStream(stream));
-
-  while (true) {
-    const opOption = nextOp(...streamIterators.valueIterable()).flatMap((op) =>
-      op.timestamp > including ? Option.none<Op>() : Option.some(op),
-    );
-
-    const opTimestamp = opOption.map((op) => op.timestamp).getOrElse(including);
-
-    const tree1 = tree.copy({
+  function initialValue(admin: PermGroup): Tree {
+    return new Tree({
+      id,
+      parentPermGroupId,
+      admin: buildPermGroup(universe, maxTimestamp, id.adminId),
+      parentId: Option.none(),
+      children: HashMap.of(),
+    });
+  }
+  function updateChildren(including: Timestamp, tree: Tree): Tree {
+    return tree.copy({
       children: mapMapValueOption(tree.children, (childId, child) => {
         const child1 = buildTree(
           universe,
-          opTimestamp,
+          including,
           child.id,
           child.parentPermGroupId,
         );
@@ -412,14 +388,9 @@ export function buildTree(
           : Option.none<Tree>();
       }),
     });
-
-    if (opOption.isNone()) {
-      tree = tree1;
-      break;
-    }
-
-    const op = opOption.get();
-    tree = match({op, tree: tree1})
+  }
+  function updateForOp(tree: Tree, op: Op): Tree {
+    return match({op, tree})
       .with(
         {op: {type: "set parent"}},
         ({op, tree}) => op.childId.equals(tree.id),
@@ -440,7 +411,7 @@ export function buildTree(
           // the child here in the case where there will be a cycle.
           const earlierChild = buildTree(
             universe,
-            Timestamp.create(value(opTimestamp) - 1),
+            Timestamp.create(value(op.timestamp) - 1),
             childId,
             tree.admin.id,
           );
@@ -448,7 +419,7 @@ export function buildTree(
 
           const child = buildTree(
             universe,
-            opTimestamp,
+            op.timestamp,
             childId,
             tree.admin.id,
           );
@@ -465,19 +436,15 @@ export function buildTree(
         },
       )
       .otherwise(({tree}) => tree);
-    streamIterators = mapMapValueOption(
-      streamIterators,
-      (streamId, streamIterator) => {
-        return streamIterator
-          .head()
-          .flatMap((head) =>
-            head === op ? streamIterator.tail() : Option.some(streamIterator),
-          );
-      },
-    );
   }
-
-  return tree;
+  return buildValue(
+    universe,
+    including,
+    id,
+    initialValue,
+    updateChildren,
+    updateForOp,
+  );
 }
 
 //------------------------------------------------------------------------------
@@ -504,4 +471,52 @@ function nextOp<Op extends {timestamp: Timestamp}>(
         : throwError("non-identical ops have the same timestamp"),
   );
   return opOption;
+}
+
+function buildValue<
+  Id extends {readonly adminId: PermGroupId},
+  Value extends {desiredHeads: () => AbstractHeads},
+>(
+  universe: ConcreteHeads,
+  including: Timestamp,
+  id: Id,
+  initialValue: (admin: PermGroup) => Value,
+  updateChildren: (including: Timestamp, value: Value) => Value,
+  updateForOp: (value: Value, op: Op) => Value,
+): Value {
+  let group = initialValue(buildPermGroup(universe, maxTimestamp, id.adminId));
+  let streamIterators = concreteHeadsForAbstractHeads(
+    universe,
+    group.desiredHeads(),
+  ).mapValues((stream) => streamIteratorForStream(stream));
+
+  while (true) {
+    const opOption = nextOp(...streamIterators.valueIterable()).flatMap((op) =>
+      op.timestamp > including ? Option.none<Op>() : Option.some(op),
+    );
+
+    const opTimestamp = opOption.map((op) => op.timestamp).getOrElse(including);
+
+    const group1 = updateChildren(opTimestamp, group);
+
+    if (opOption.isNone()) {
+      group = group1;
+      break;
+    }
+
+    const op = opOption.get();
+    group = updateForOp(group1, op);
+    streamIterators = mapMapValueOption(
+      streamIterators,
+      (streamId, streamIterator) => {
+        return streamIterator
+          .head()
+          .flatMap((head) =>
+            head === op ? streamIterator.tail() : Option.some(streamIterator),
+          );
+      },
+    );
+  }
+
+  return group;
 }
